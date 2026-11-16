@@ -1,0 +1,1917 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MyGO!!!!! 迷子扫雷 — 迷子でも進め</title>
+  <style>
+:root {
+  --bg-deep: #0b101b;
+  --bg-panel: rgba(18, 26, 42, 0.88);
+  --bg-card: rgba(24, 34, 54, 0.92);
+  --border-subtle: rgba(103, 183, 225, 0.2);
+  --border-bright: rgba(103, 183, 225, 0.5);
+  --mygo-teal: #55b2d6;
+  --mygo-teal-soft: rgba(85, 178, 214, 0.16);
+  --text-main: #edf4fb;
+  --text-muted: #93a7c2;
+  --member-color: #67b7e1;
+  --cell-size: 34px;
+  --cell-font: 15px;
+  --radius: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: radial-gradient(circle at 18% 10%, #172742 0%, #0b101b 55%, #070a12 100%);
+  color: var(--text-main);
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.bg-rain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1px 16px at 14% 20%, rgba(103, 183, 225, 0.14), transparent),
+    radial-gradient(1px 22px at 42% 65%, rgba(103, 183, 225, 0.12), transparent),
+    radial-gradient(1px 18px at 78% 35%, rgba(240, 122, 164, 0.09), transparent),
+    radial-gradient(1px 20px at 88% 80%, rgba(103, 183, 225, 0.12), transparent);
+  z-index: 0;
+}
+
+.app-shell {
+  position: relative;
+  z-index: 1;
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 20px 18px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.top-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(85, 178, 214, 0.12);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: 0.04em;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.brand h1 span {
+  color: var(--mygo-teal);
+  font-weight: 700;
+}
+
+.subtitle {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  color: inherit;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  transition: transform 0.1s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--border-bright);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.pill-btn,
+.icon-btn {
+  padding: 7px 13px;
+  border-radius: 999px;
+  font-size: 0.83rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.pill-btn .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #64748b;
+}
+
+.pill-btn.active {
+  background: rgba(85, 178, 214, 0.2);
+  border-color: var(--mygo-teal);
+  color: #e6f7ff;
+}
+
+.pill-btn.active .dot {
+  background: var(--mygo-teal);
+  box-shadow: 0 0 8px var(--mygo-teal);
+}
+
+.controls-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  backdrop-filter: blur(10px);
+}
+
+.difficulty-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.diff-tab {
+  padding: 6px 12px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  background: rgba(15, 22, 36, 0.75);
+}
+
+.diff-tab strong {
+  font-size: 0.85rem;
+}
+
+.diff-tab span {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.diff-tab.active {
+  background: rgba(85, 178, 214, 0.2);
+  border-color: var(--mygo-teal);
+  box-shadow: inset 0 0 0 1px rgba(85, 178, 214, 0.25);
+}
+
+.diff-tab.active span {
+  color: #b8e6fa;
+}
+
+.custom-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.custom-panel.hidden {
+  display: none;
+}
+
+.custom-panel input {
+  width: 56px;
+  margin-left: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: #0d1422;
+  color: var(--text-main);
+  font-family: inherit;
+}
+
+.small-btn,
+.tool-btn {
+  padding: 6px 11px;
+  border-radius: 9px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.tool-toggles {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tool-btn.active {
+  background: rgba(240, 122, 164, 0.18);
+  border-color: #f07aa4;
+  color: #ffdbe8;
+}
+
+.member-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.member-roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.member-chip {
+  flex: 1 1 130px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 22, 36, 0.8);
+  text-align: left;
+}
+
+.member-chip .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.member-chip .m-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.member-chip .m-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.member-chip .m-skill {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.member-chip.active {
+  border-color: var(--member-color);
+  background: color-mix(in srgb, var(--member-color) 16%, #111827);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--member-color) 20%, transparent);
+}
+
+.dialogue-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: rgba(12, 18, 30, 0.86);
+  border: 1px solid color-mix(in srgb, var(--member-color) 40%, transparent);
+}
+
+.dialogue-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--member-color) 18%, #0f172a);
+  border: 1px solid color-mix(in srgb, var(--member-color) 55%, transparent);
+}
+
+.dialogue-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.dialogue-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 3px;
+}
+
+.member-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--member-color);
+}
+
+.member-role {
+  font-size: 0.74rem;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+}
+
+.skill-tag {
+  font-size: 0.74rem;
+  color: #d8e7f5;
+  opacity: 0.88;
+}
+
+.dialogue-text {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: #f1f5f9;
+}
+
+.skill-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 0.83rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--member-color) 24%, #162033);
+  border-color: var(--member-color);
+  color: #ffffff;
+}
+
+.skill-charges {
+  font-size: 0.76rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.board-stage {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.42);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.hud-bar {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(10, 15, 26, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hud-counter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.hud-digits {
+  font-family: "Cascadia Mono", "Consolas", "Courier New", monospace;
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #67d4f6;
+  background: #060911;
+  padding: 3px 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(103, 183, 225, 0.22);
+  min-width: 58px;
+  text-align: center;
+}
+
+.hud-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.best-badge {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #cbd5e1;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.reset-btn {
+  padding: 7px 16px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 0.88rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(85, 178, 214, 0.16);
+  border-color: rgba(85, 178, 214, 0.45);
+}
+
+.grid-scroll {
+  width: 100%;
+  overflow-x: auto;
+  display: flex;
+  justify-content: center;
+  padding-bottom: 4px;
+}
+
+.mine-grid {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-radius: 12px;
+  background: #0a0f1a;
+  border: 1px solid rgba(103, 183, 225, 0.22);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.mine-grid.lost-shake {
+  animation: shake 0.36s ease;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+
+.cell {
+  width: var(--cell-size);
+  height: var(--cell-size);
+  padding: 0;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: var(--cell-font);
+  font-weight: 800;
+  position: relative;
+  border: 1px solid rgba(148, 179, 214, 0.22);
+  background: linear-gradient(155deg, #273754 0%, #1b273e 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 2px 3px rgba(0, 0, 0, 0.35);
+}
+
+.cell:hover:not(.revealed):not(:disabled) {
+  background: linear-gradient(155deg, #314568 0%, #22314d 100%);
+  border-color: rgba(103, 183, 225, 0.6);
+}
+
+.cell.chord-preview:not(.revealed):not(.flagged) {
+  background: #2b3f60;
+  border-color: #67b7e1;
+  transform: scale(0.95);
+}
+
+.cell.revealed {
+  background: #101726;
+  border-color: rgba(148, 163, 184, 0.14);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55);
+  cursor: default;
+}
+
+.cell.revealed.has-number {
+  cursor: pointer;
+}
+
+.cell.revealed.has-number:hover {
+  background: #151f33;
+}
+
+.cell.flagged {
+  background: linear-gradient(155deg, #283b54 0%, #1c2c42 100%);
+  border-color: rgba(103, 183, 225, 0.52);
+}
+
+.cell.shield-saved {
+  border-color: #e8a849;
+  box-shadow: 0 0 10px rgba(232, 168, 73, 0.45);
+}
+
+.cell.exploded {
+  background: radial-gradient(circle, #dc2626 0%, #7f1d1d 100%);
+  border-color: #fca5a5;
+}
+
+.cell.wrong-flag {
+  background: #3b1c29;
+  border-color: #fb7185;
+}
+
+.cell.skill-pop {
+  animation: skillPop 0.45s ease;
+}
+
+@keyframes skillPop {
+  0% { transform: scale(0.8); box-shadow: 0 0 16px var(--member-color); }
+  60% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+/* MyGO member-tinted numbers 1-8 */
+.num-1 { color: #67b7e1; } /* Tomori */
+.num-2 { color: #68c178; } /* Rana */
+.num-3 { color: #f07aa4; } /* Anon */
+.num-4 { color: #a78bfa; } /* Taki */
+.num-5 { color: #f5b041; } /* Soyorin */
+.num-6 { color: #22d3ee; }
+.num-7 { color: #fb7185; }
+.num-8 { color: #cbd5e1; }
+
+.footer-tips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  padding: 0 4px;
+}
+
+kbd {
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.72rem;
+  color: #e2e8f0;
+}
+
+@media (max-width: 720px) {
+  .dialogue-card {
+    flex-wrap: wrap;
+  }
+  .skill-btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .hud-bar {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
+
+</style>
+</head>
+<body>
+  <div class="bg-rain" aria-hidden="true"></div>
+  <main class="app-shell">
+    <header class="top-header">
+      <div class="brand">
+        <div class="brand-badge" aria-hidden="true">
+          <svg viewBox="0 0 36 36" width="32" height="32" fill="none">
+            <circle cx="18" cy="18" r="15.5" stroke="#55B2D6" stroke-width="2" stroke-dasharray="4 3" />
+            <path d="M18 4L21.5 14.5L32 18L21.5 21.5L18 32L14.5 21.5L4 18L14.5 14.5L18 4Z" fill="#55B2D6" fill-opacity="0.22" stroke="#67B7E1" stroke-width="1.6" />
+            <circle cx="18" cy="18" r="3" fill="#F8FAFC" />
+          </svg>
+        </div>
+        <div>
+          <h1>MyGO!!!!! <span>迷子扫雷</span></h1>
+          <p class="subtitle">「迷子でもいい、迷子でも進め。」</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="mode-toggle" class="pill-btn active" type="button" title="切换乐队技能模式 / 纯正经典模式">
+          <span class="dot"></span>
+          <span id="mode-toggle-label">乐队应援模式</span>
+        </button>
+        <button id="sound-toggle" class="icon-btn" type="button" title="开关音效" aria-label="开关音效">
+          🔊 音效开
+        </button>
+      </div>
+    </header>
+
+    <section class="controls-bar" aria-label="难度与操作设置">
+      <div class="difficulty-tabs" role="tablist" aria-label="选择难度">
+        <button class="diff-tab active" data-diff="easy" type="button">
+          <strong>羽丘中庭</strong>
+          <span>9×9 · 10雷</span>
+        </button>
+        <button class="diff-tab" data-diff="normal" type="button">
+          <strong>RiNG Live</strong>
+          <span>16×16 · 40雷</span>
+        </button>
+        <button class="diff-tab" data-diff="hard" type="button">
+          <strong>春日影舞台</strong>
+          <span>30×16 · 99雷</span>
+        </button>
+        <button class="diff-tab" data-diff="custom" type="button">
+          <strong>自定义</strong>
+          <span>自由排练</span>
+        </button>
+      </div>
+
+      <div id="custom-panel" class="custom-panel hidden">
+        <label>宽 <input id="custom-cols" type="number" min="5" max="40" value="12" /></label>
+        <label>高 <input id="custom-rows" type="number" min="5" max="30" value="12" /></label>
+        <label>雷数 <input id="custom-mines" type="number" min="1" max="300" value="20" /></label>
+        <button id="apply-custom" class="small-btn" type="button">开局</button>
+      </div>
+
+      <div class="tool-toggles">
+        <button id="flag-mode-btn" class="tool-btn" type="button" title="快捷键 F：左键直接插旗">
+          🩹 标旗模式：<span id="flag-mode-state">关</span>
+        </button>
+        <button id="question-mode-btn" class="tool-btn" type="button" title="右键循环是否包含问号标记">
+          ❓ 问号：<span id="question-mode-state">关</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="member-panel" aria-label="MyGO成员应援">
+      <div class="member-roster" id="member-roster">
+        <!-- Populated by main.js -->
+      </div>
+
+      <div class="dialogue-card" id="dialogue-card">
+        <div class="dialogue-avatar" id="dialogue-avatar"></div>
+        <div class="dialogue-body">
+          <div class="dialogue-meta">
+            <span class="member-name" id="active-member-name">高松灯</span>
+            <span class="member-role" id="active-member-role">Vo.</span>
+            <span class="skill-tag" id="active-skill-tag">捡来的石头</span>
+          </div>
+          <p class="dialogue-text" id="dialogue-text">「就算会迷路……也想和大家一起把这片雷区走完。」</p>
+        </div>
+        <button id="skill-btn" class="skill-btn" type="button">
+          <span id="skill-btn-text">发动技能</span>
+          <span class="skill-charges" id="skill-charges">×1</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="board-stage" aria-label="扫雷棋盘">
+      <div class="hud-bar">
+        <div class="hud-counter" title="剩余未标记地雷数">
+          <span class="hud-label">MINES</span>
+          <span class="hud-digits" id="mines-left">010</span>
+        </div>
+
+        <button id="reset-btn" class="reset-btn" type="button" title="重新开始 (快捷键 R)">
+          <span id="reset-emoji">🧭</span>
+          <span id="reset-text">迷子出发</span>
+        </button>
+
+        <div class="hud-right">
+          <div class="hud-counter" title="当前用时">
+            <span class="hud-label">TIME</span>
+            <span class="hud-digits" id="timer-digits">000</span>
+          </div>
+          <div class="best-badge" id="best-badge" title="当前难度最快纪录">
+            BEST <span id="best-time">--</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-scroll">
+        <div id="mine-grid" class="mine-grid" role="grid" aria-label="扫雷网格"></div>
+      </div>
+    </section>
+
+    <footer class="footer-tips">
+      <span>左键翻开 · 右键标旗 · 点击已翻开数字可快速周围排雷 (Chord)</span>
+      <span>快捷键：<kbd>R</kbd> 重开 · <kbd>F</kbd> 标旗模式 · <kbd>E</kbd> 成员技能</span>
+    </footer>
+  </main>
+
+  <script>
+(() => {
+const DIFFICULTIES = {
+  easy: { id: 'easy', label: '羽丘中庭', subtitle: '9×9 · 10 雷', rows: 9, cols: 9, mines: 10, skillCharges: 1 },
+  normal: { id: 'normal', label: 'RiNG Live', subtitle: '16×16 · 40 雷', rows: 16, cols: 16, mines: 40, skillCharges: 2 },
+  hard: { id: 'hard', label: '春日影舞台', subtitle: '30×16 · 99 雷', rows: 16, cols: 30, mines: 99, skillCharges: 3 },
+};
+
+const MEMBERS = {
+  tomori: {
+    id: 'tomori',
+    name: '高松灯',
+    role: 'Vo.',
+    color: '#67B7E1',
+    skillName: '捡来的石头',
+    skillDesc: '主动：安全翻开 1 个非地雷格',
+    passive: false,
+  },
+  anon: {
+    id: 'anon',
+    name: '千早爱音',
+    role: 'Gt.',
+    color: '#F07AA4',
+    skillName: 'SNS 高光',
+    skillDesc: '主动：同时翻开最多 2 个安全格',
+    passive: false,
+  },
+  soyorin: {
+    id: 'soyorin',
+    name: '长崎爽世',
+    role: 'Ba.',
+    color: '#E8A849',
+    skillName: '温柔的微笑',
+    skillDesc: '被动：误触地雷时自动免疫并插旗',
+    passive: true,
+  },
+  taki: {
+    id: 'taki',
+    name: '椎名立希',
+    role: 'Dr.',
+    color: '#9B7CE8',
+    skillName: '精准节拍',
+    skillDesc: '主动：自动标记 1 个未标旗的地雷',
+    passive: false,
+  },
+  rana: {
+    id: 'rana',
+    name: '要乐奈',
+    role: 'Gt.',
+    color: '#68C178',
+    skillName: '随性巡演',
+    skillDesc: '主动：直接翻开 1 个空白连锁区域',
+    passive: false,
+  },
+};
+
+function createGame({
+  rows = 9,
+  cols = 9,
+  mines = 10,
+  bandMode = true,
+  memberId = 'tomori',
+  skillCharges = null,
+} = {}) {
+  const safeRows = Math.max(5, Math.min(30, Math.floor(rows)));
+  const safeCols = Math.max(5, Math.min(40, Math.floor(cols)));
+  const total = safeRows * safeCols;
+  const maxMines = Math.max(1, total - 1);
+  const safeMines = Math.max(1, Math.min(maxMines, Math.floor(mines)));
+
+  let defaultCharges = 1;
+  if (safeMines >= 80) defaultCharges = 3;
+  else if (safeMines >= 30) defaultCharges = 2;
+
+  const charges = skillCharges !== null ? skillCharges : defaultCharges;
+
+  const cells = [];
+  for (let r = 0; r < safeRows; r++) {
+    for (let c = 0; c < safeCols; c++) {
+      cells.push({
+        row: r,
+        col: c,
+        isMine: false,
+        adjacentMines: 0,
+        revealed: false,
+        flagged: false,
+        questioned: false,
+        exploded: false,
+        wrongFlag: false,
+        shieldSaved: false,
+        skillHighlighted: false,
+      });
+    }
+  }
+
+  return {
+    rows: safeRows,
+    cols: safeCols,
+    mines: safeMines,
+    bandMode: Boolean(bandMode),
+    memberId: MEMBERS[memberId] ? memberId : 'tomori',
+    status: 'idle', // 'idle' | 'playing' | 'won' | 'lost'
+    firstClickDone: false,
+    flagsPlaced: 0,
+    revealedSafeCount: 0,
+    skillUsesLeft: bandMode ? charges : 0,
+    maxSkillUses: bandMode ? charges : 0,
+    cells,
+  };
+}
+
+function getCell(game, row, col) {
+  if (row < 0 || row >= game.rows || col < 0 || col >= game.cols) return null;
+  return game.cells[row * game.cols + col];
+}
+
+function getNeighbors(game, row, col) {
+  const neighbors = [];
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dr === 0 && dc === 0) continue;
+      const cell = getCell(game, row + dr, col + dc);
+      if (cell) neighbors.push(cell);
+    }
+  }
+  return neighbors;
+}
+
+function placeMines(game, safeRow, safeCol, rng = Math.random) {
+  const total = game.rows * game.cols;
+  const safeSet = new Set();
+  const safeRadiusCount = getNeighbors(game, safeRow, safeCol).length + 1;
+
+  if (total - safeRadiusCount >= game.mines) {
+    safeSet.add(safeRow * game.cols + safeCol);
+    for (const n of getNeighbors(game, safeRow, safeCol)) {
+      safeSet.add(n.row * game.cols + n.col);
+    }
+  } else {
+    safeSet.add(safeRow * game.cols + safeCol);
+  }
+
+  const candidates = [];
+  for (let i = 0; i < total; i++) {
+    if (!safeSet.has(i)) candidates.push(i);
+  }
+
+  // Fisher-Yates shuffle
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+
+  for (let k = 0; k < game.mines; k++) {
+    game.cells[candidates[k]].isMine = true;
+  }
+
+  for (const cell of game.cells) {
+    if (cell.isMine) {
+      cell.adjacentMines = -1;
+      continue;
+    }
+    let count = 0;
+    for (const n of getNeighbors(game, cell.row, cell.col)) {
+      if (n.isMine) count++;
+    }
+    cell.adjacentMines = count;
+  }
+}
+
+function finalizeLoss(game, explodedCell) {
+  game.status = 'lost';
+  explodedCell.exploded = true;
+  explodedCell.revealed = true;
+  for (const cell of game.cells) {
+    if (cell.isMine && !cell.flagged) {
+      cell.revealed = true;
+    } else if (!cell.isMine && cell.flagged) {
+      cell.wrongFlag = true;
+    }
+  }
+}
+
+function finalizeWinIfComplete(game) {
+  const safeTotal = game.rows * game.cols - game.mines;
+  if (game.revealedSafeCount >= safeTotal) {
+    game.status = 'won';
+    for (const cell of game.cells) {
+      if (cell.isMine && !cell.flagged) {
+        cell.flagged = true;
+        cell.questioned = false;
+        game.flagsPlaced++;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+function revealCell(game, row, col, rng = Math.random) {
+  if (game.status === 'won' || game.status === 'lost') {
+    return { action: 'noop', revealedCells: [] };
+  }
+
+  const startCell = getCell(game, row, col);
+  if (!startCell || startCell.revealed || startCell.flagged) {
+    return { action: 'noop', revealedCells: [] };
+  }
+
+  if (!game.firstClickDone) {
+    placeMines(game, row, col, rng);
+    game.firstClickDone = true;
+    game.status = 'playing';
+  }
+
+  startCell.questioned = false;
+
+  if (startCell.isMine) {
+    if (game.bandMode && game.memberId === 'soyorin' && game.skillUsesLeft > 0) {
+      game.skillUsesLeft--;
+      startCell.flagged = true;
+      startCell.shieldSaved = true;
+      game.flagsPlaced++;
+      return { action: 'shielded', revealedCells: [], shieldedCell: startCell };
+    }
+    finalizeLoss(game, startCell);
+    return { action: 'lost', revealedCells: [], explodedCell: startCell };
+  }
+
+  // BFS flood fill
+  const queue = [startCell];
+  const visited = new Set([startCell.row * game.cols + startCell.col]);
+  const revealedCells = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current.revealed || current.flagged || current.isMine) continue;
+
+    current.revealed = true;
+    current.questioned = false;
+    game.revealedSafeCount++;
+    revealedCells.push(current);
+
+    if (current.adjacentMines === 0) {
+      for (const n of getNeighbors(game, current.row, current.col)) {
+        const idx = n.row * game.cols + n.col;
+        if (!visited.has(idx) && !n.revealed && !n.flagged && !n.isMine) {
+          visited.add(idx);
+          queue.push(n);
+        }
+      }
+    }
+  }
+
+  const won = finalizeWinIfComplete(game);
+  return {
+    action: won ? 'won' : 'revealed',
+    revealedCells,
+  };
+}
+
+function chordCell(game, row, col) {
+  if (game.status !== 'playing') {
+    return { action: 'noop', revealedCells: [] };
+  }
+
+  const center = getCell(game, row, col);
+  if (!center || !center.revealed || center.adjacentMines <= 0) {
+    return { action: 'noop', revealedCells: [] };
+  }
+
+  const neighbors = getNeighbors(game, row, col);
+  const flaggedCount = neighbors.filter((n) => n.flagged).length;
+  if (flaggedCount !== center.adjacentMines) {
+    return { action: 'noop', revealedCells: [] };
+  }
+
+  const allRevealed = [];
+  for (const n of neighbors) {
+    if (!n.revealed && !n.flagged) {
+      const res = revealCell(game, n.row, n.col);
+      allRevealed.push(...res.revealedCells);
+      if (res.action === 'lost') {
+        return { action: 'lost', revealedCells: allRevealed, explodedCell: res.explodedCell };
+      }
+      if (res.action === 'shielded') {
+        return { action: 'shielded', revealedCells: allRevealed, shieldedCell: res.shieldedCell };
+      }
+      if (res.action === 'won') {
+        return { action: 'won', revealedCells: allRevealed };
+      }
+    }
+  }
+
+  return {
+    action: allRevealed.length > 0 ? 'revealed' : 'noop',
+    revealedCells: allRevealed,
+  };
+}
+
+function toggleFlag(game, row, col, allowQuestion = false) {
+  if (game.status === 'won' || game.status === 'lost') {
+    return { action: 'noop' };
+  }
+
+  const cell = getCell(game, row, col);
+  if (!cell || cell.revealed) {
+    return { action: 'noop' };
+  }
+
+  if (!allowQuestion) {
+    if (cell.flagged) {
+      cell.flagged = false;
+      game.flagsPlaced--;
+      return { action: 'unflagged', cell };
+    } else {
+      cell.flagged = true;
+      cell.questioned = false;
+      game.flagsPlaced++;
+      return { action: 'flagged', cell };
+    }
+  }
+
+  // 3-state cycle: none -> flagged -> questioned -> none
+  if (!cell.flagged && !cell.questioned) {
+    cell.flagged = true;
+    game.flagsPlaced++;
+    return { action: 'flagged', cell };
+  } else if (cell.flagged) {
+    cell.flagged = false;
+    cell.questioned = true;
+    game.flagsPlaced--;
+    return { action: 'questioned', cell };
+  } else {
+    cell.questioned = false;
+    return { action: 'cleared', cell };
+  }
+}
+
+function useMemberSkill(game, rng = Math.random) {
+  if (!game.bandMode || game.status !== 'playing' || game.skillUsesLeft <= 0) {
+    return { action: 'noop', reason: 'unavailable' };
+  }
+
+  const member = MEMBERS[game.memberId];
+  if (!member || member.passive) {
+    return { action: 'noop', reason: 'passive' };
+  }
+
+  if (game.memberId === 'tomori') {
+    const safeCells = game.cells.filter((c) => !c.isMine && !c.revealed && !c.flagged);
+    if (safeCells.length === 0) return { action: 'noop', reason: 'no-target' };
+
+    // Prefer cells adjacent to already revealed cells for tactical usefulness
+    const frontier = safeCells.filter((c) =>
+      getNeighbors(game, c.row, c.col).some((n) => n.revealed)
+    );
+    const pool = frontier.length > 0 ? frontier : safeCells;
+    const pick = pool[Math.floor(rng() * pool.length)];
+
+    game.skillUsesLeft--;
+    pick.skillHighlighted = true;
+    const res = revealCell(game, pick.row, pick.col, rng);
+    return { action: 'skill', memberId: 'tomori', affected: res.revealedCells, gameStatus: game.status };
+  }
+
+  if (game.memberId === 'anon') {
+    const safeCells = game.cells.filter((c) => !c.isMine && !c.revealed && !c.flagged);
+    if (safeCells.length === 0) return { action: 'noop', reason: 'no-target' };
+
+    game.skillUsesLeft--;
+    const affected = [];
+    for (let i = 0; i < 2; i++) {
+      const remaining = game.cells.filter((c) => !c.isMine && !c.revealed && !c.flagged);
+      if (remaining.length === 0) break;
+      const pick = remaining[Math.floor(rng() * remaining.length)];
+      pick.skillHighlighted = true;
+      const res = revealCell(game, pick.row, pick.col, rng);
+      affected.push(...res.revealedCells);
+      if (game.status === 'won') break;
+    }
+    return { action: 'skill', memberId: 'anon', affected, gameStatus: game.status };
+  }
+
+  if (game.memberId === 'taki') {
+    const hiddenMines = game.cells.filter((c) => c.isMine && !c.flagged);
+    if (hiddenMines.length === 0) return { action: 'noop', reason: 'no-target' };
+
+    const frontierMines = hiddenMines.filter((c) =>
+      getNeighbors(game, c.row, c.col).some((n) => n.revealed)
+    );
+    const pool = frontierMines.length > 0 ? frontierMines : hiddenMines;
+    const pick = pool[Math.floor(rng() * pool.length)];
+
+    game.skillUsesLeft--;
+    pick.flagged = true;
+    pick.questioned = false;
+    pick.skillHighlighted = true;
+    game.flagsPlaced++;
+    return { action: 'skill', memberId: 'taki', affected: [pick], gameStatus: game.status };
+  }
+
+  if (game.memberId === 'rana') {
+    const zeroCells = game.cells.filter(
+      (c) => !c.isMine && c.adjacentMines === 0 && !c.revealed && !c.flagged
+    );
+    const fallbackCells = game.cells.filter((c) => !c.isMine && !c.revealed && !c.flagged);
+    const pool = zeroCells.length > 0 ? zeroCells : fallbackCells;
+    if (pool.length === 0) return { action: 'noop', reason: 'no-target' };
+
+    const pick = pool[Math.floor(rng() * pool.length)];
+    game.skillUsesLeft--;
+    pick.skillHighlighted = true;
+    const res = revealCell(game, pick.row, pick.col, rng);
+    return { action: 'skill', memberId: 'rana', affected: res.revealedCells, gameStatus: game.status };
+  }
+
+  return { action: 'noop' };
+}
+
+
+const QUOTES = {
+  tomori: {
+    start: [
+      '「就算会迷路……也想和大家一起把这片雷区走完。」',
+      '「每一块石头底下，说不定都有不一样的心情。」',
+      '「没关系的，慢慢确认每一个数字吧。」',
+    ],
+    revealBig: [
+      '「哇……前面一下子变得好开阔。」',
+      '「顺着这些数字走，就不会迷失方向了。」',
+    ],
+    flag: [
+      '「贴上创可贴标记好……这样就不会踩到了。」',
+      '「这里很危险，要好好记住。」',
+    ],
+    skill: [
+      '「这是我捡来的石头……这一格，应该是安全的。」',
+    ],
+    won: [
+      '「太好了……我们谁都没有走散呢。一辈子一起扫雷吧。」',
+      '「大家都在这里，真是太好了。」',
+    ],
+    lost: [
+      '「对不起……都是因为我没看清那里的数字吗……」',
+      '「是不是又把事情搞砸了……」',
+    ],
+  },
+  anon: {
+    start: [
+      '「这局就由我千早爱音来担任C位扫雷手！关注度UP！」',
+      '「轻轻松松啦，这种推理游戏我可是很有自信的~」',
+      '「伦敦留学经验告诉我，开局先点中间准没错！」',
+    ],
+    revealBig: [
+      '「哦哦哦！这波直接连开一片，快截图发SNS！」',
+      '「不愧是我，节奏感拉满了！」',
+    ],
+    flag: [
+      '「哼哼，这颗雷已经被我完美锁定啦。」',
+      '「危险标志贴上！爱音大人可不会上当~」',
+    ],
+    skill: [
+      '「全员注目！看我用SNS高光雷达连开两格！」',
+    ],
+    won: [
+      '「完美通关！果然有我在，MyGO!!!!!就是最强！」',
+      '「快看计时器！这波操作绝对能涨粉吧~」',
+    ],
+    lost: [
+      '「诶诶诶？！怎么突然就爆了啊喂！刚才明明算好的！」',
+      '「不算不算！这局肯定是我手指滑了，重开重开！」',
+    ],
+  },
+  soyorin: {
+    start: [
+      '「只要大家保持步调一致，这片雷区很快就能排完吧。」',
+      '「请大家不要急躁，安安静静地确认每一格呢。」',
+      '「……今天不会演奏那首曲子吧？」',
+    ],
+    revealBig: [
+      '「真是顺利呢，这样下去很快就能结束了。」',
+      '「配合得很不错哦，继续保持吧。」',
+    ],
+    flag: [
+      '「把危险的地方先标记起来，这样大家才安心。」',
+      '「这里我就先帮忙记下来了哦。」',
+    ],
+    shield: [
+      '「……刚才那一下，就当作没有发生过吧。（微笑）」',
+      '「没事的哦，这次我帮你挡下来了。下次小心一点呢。」',
+    ],
+    won: [
+      '「真是太好了呢，大家都平平安安的。（微笑）」',
+      '「辛苦了，接下来一起去喝茶吧。」',
+    ],
+    lost: [
+      '「……为什么要去点那一格呢？（眼神失去高光）」',
+      '「为什么要演奏春日影……我是说，为什么要盲猜这一格？！」',
+    ],
+  },
+  taki: {
+    start: [
+      '「哈？连这点基础定式都推不出来吗？看着点数字！」',
+      '「别磨蹭了，跟上我的节拍把这局拿下。」',
+      '「行了，要开局就认真点，别连累灯。」',
+    ],
+    revealBig: [
+      '「切，算你运气好，连开了一大片。」',
+      '「节奏不错，别在最后关头掉链子就行。」',
+    ],
+    flag: [
+      '「这种一眼雷还不赶紧标上？动作快点。」',
+      '「标好了，继续推下一片。」',
+    ],
+    skill: [
+      '「啧，连这颗雷都要我提醒吗？拿去，标好了！」',
+    ],
+    won: [
+      '「哼，勉强算合格吧。灯，水给你。」',
+      '「搞定了。下一把要不要直接上春日影难度？」',
+    ],
+    lost: [
+      '「喂！你在按什么啊！！数字1旁边两个雷都看不见吗？！」',
+      '「哈？！明明能确定的地方不去推，偏要瞎蒙？！」',
+    ],
+  },
+  rana: {
+    start: [
+      '「抹茶芭菲……这里好像有好玩的格子。」',
+      '「（抱着吉他蹲在雷区旁边）……有趣。」',
+      '「喵？开始了？」',
+    ],
+    revealBig: [
+      '「哦，一下子全开了。有趣。」',
+      '「像吉他的滑音一样，哗啦一下全开了。」',
+    ],
+    flag: [
+      '「（用小黄瓜标记了一格）……这里不行。」',
+      '「喵，有雷的味道。」',
+    ],
+    skill: [
+      '「随性巡演开始——（直接弹向一片安全区）」',
+    ],
+    won: [
+      '「排完了？那我去吃抹茶芭菲了。」',
+      '「有趣的女人……哦不，有趣的扫雷。」',
+    ],
+    lost: [
+      '「没意思，走了。（背起吉他离开现场）」',
+      '「轰的一声……吉他音箱爆掉了？」',
+    ],
+  },
+};
+
+function pickQuote(memberId, event) {
+  const pool = QUOTES[memberId]?.[event] || QUOTES.tomori[event] || ['「迷子でも進め！」'];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+
+class SoundEngine {
+  constructor() {
+    this.ctx = null;
+    this.muted = false;
+  }
+
+  ensureContext() {
+    if (this.muted) return null;
+    if (!this.ctx && typeof window !== 'undefined') {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        this.ctx = new AudioCtx();
+      }
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+    return this.ctx;
+  }
+
+  playTone({ freq = 440, type = 'triangle', duration = 0.08, gain = 0.08, delay = 0, slideTo = null }) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime + delay;
+    const osc = ctx.createOscillator();
+    const vol = ctx.createGain();
+
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, now);
+    if (slideTo) {
+      osc.frequency.exponentialRampToValueAtTime(slideTo, now + duration);
+    }
+
+    vol.gain.setValueAtTime(0.0001, now);
+    vol.gain.exponentialRampToValueAtTime(gain, now + 0.01);
+    vol.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    osc.connect(vol);
+    vol.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + duration + 0.02);
+  }
+
+  reveal(count = 1) {
+    if (count >= 8) {
+      // Bright guitar arpeggio cascade
+      [392, 493.88, 587.33, 783.99].forEach((f, idx) => {
+        this.playTone({ freq: f, type: 'triangle', duration: 0.14, gain: 0.06, delay: idx * 0.035 });
+      });
+    } else {
+      this.playTone({ freq: 520, slideTo: 640, type: 'sine', duration: 0.055, gain: 0.06 });
+    }
+  }
+
+  flag(isFlagged) {
+    if (isFlagged) {
+      this.playTone({ freq: 660, type: 'triangle', duration: 0.06, gain: 0.06 });
+      this.playTone({ freq: 880, type: 'triangle', duration: 0.08, gain: 0.05, delay: 0.04 });
+    } else {
+      this.playTone({ freq: 440, slideTo: 330, type: 'sine', duration: 0.06, gain: 0.05 });
+    }
+  }
+
+  skill() {
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, idx) => {
+      this.playTone({ freq: f, type: 'triangle', duration: 0.15, gain: 0.07, delay: idx * 0.04 });
+    });
+  }
+
+  shield() {
+    this.playTone({ freq: 440, type: 'sine', duration: 0.22, gain: 0.09 });
+    this.playTone({ freq: 554.37, type: 'triangle', duration: 0.25, gain: 0.07, delay: 0.06 });
+  }
+
+  boom() {
+    // Broken guitar string + low impact
+    this.playTone({ freq: 180, slideTo: 48, type: 'sawtooth', duration: 0.38, gain: 0.12 });
+    this.playTone({ freq: 233, slideTo: 110, type: 'square', duration: 0.25, gain: 0.07, delay: 0.03 });
+  }
+
+  win() {
+    const notes = [523.25, 659.25, 783.99, 987.77, 1046.5];
+    notes.forEach((f, idx) => {
+      this.playTone({ freq: f, type: 'triangle', duration: 0.24, gain: 0.08, delay: idx * 0.07 });
+    });
+  }
+}
+
+const sound = new SoundEngine();
+
+
+
+const STORAGE_BEST_KEY = 'mygo_minesweeper_best_v1';
+
+const ICONS = {
+  flag: `<svg viewBox="0 0 24 24" width="68%" height="68%" fill="none" aria-hidden="true">
+    <rect x="4" y="8" width="16" height="8" rx="3" transform="rotate(-25 12 12)" fill="#FDE68A" stroke="#F59E0B" stroke-width="1.4"/>
+    <circle cx="10.5" cy="12.5" r="0.9" fill="#D97706"/>
+    <circle cx="13.5" cy="11.2" r="0.9" fill="#D97706"/>
+  </svg>`,
+  shieldFlag: `<svg viewBox="0 0 24 24" width="68%" height="68%" fill="none" aria-hidden="true">
+    <path d="M12 3L19 6V11.5C19 16 15.9 19.8 12 21C8.1 19.8 5 16 5 11.5V6L12 3Z" fill="#E8A849" fill-opacity="0.28" stroke="#F5B041" stroke-width="1.8"/>
+    <path d="M9.2 12.2L11.2 14.2L15.2 9.8" stroke="#FDE68A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`,
+  mine: `<svg viewBox="0 0 24 24" width="66%" height="66%" fill="none" aria-hidden="true">
+    <circle cx="12" cy="12" r="5.5" fill="#EF4444" stroke="#FCA5A5" stroke-width="1.3"/>
+    <path d="M12 2.5V5.5M12 18.5V21.5M2.5 12H5.5M18.5 12H21.5M5.3 5.3L7.5 7.5M16.5 16.5L18.7 18.7M18.7 5.3L16.5 7.5M7.5 16.5L5.3 18.7" stroke="#FCA5A5" stroke-width="1.7" stroke-linecap="round"/>
+    <circle cx="10.2" cy="10.2" r="1.4" fill="#FEE2E2"/>
+  </svg>`,
+  wrongFlag: `<svg viewBox="0 0 24 24" width="66%" height="66%" fill="none" aria-hidden="true">
+    <path d="M6 6L18 18M18 6L6 18" stroke="#FB7185" stroke-width="2.4" stroke-linecap="round"/>
+  </svg>`,
+  memberAvatar(memberId) {
+    const color = MEMBERS[memberId]?.color || '#67B7E1';
+    const symbols = {
+      tomori: `<path d="M12 4L14.5 9.5L20 12L14.5 14.5L12 20L9.5 14.5L4 12L9.5 9.5Z" fill="${color}" fill-opacity="0.35" stroke="${color}" stroke-width="1.6"/>`,
+      anon: `<path d="M12 4.5C14.5 4.5 18 7 18 11.2C18 15.8 12 19.5 12 19.5C12 19.5 6 15.8 6 11.2C6 7 9.5 4.5 12 4.5Z" fill="${color}" fill-opacity="0.32" stroke="${color}" stroke-width="1.6"/>`,
+      soyorin: `<circle cx="12" cy="12" r="7" fill="${color}" fill-opacity="0.25" stroke="${color}" stroke-width="1.6"/><path d="M9 12.5C9.8 14 14.2 14 15 12.5" stroke="${color}" stroke-width="1.6" stroke-linecap="round"/>`,
+      taki: `<path d="M6 17L18 7M7.5 6.5L16.5 17.5" stroke="${color}" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="2.5" fill="${color}"/>`,
+      rana: `<path d="M6.5 9L8.5 5L11.5 8H12.5L15.5 5L17.5 9V15C17.5 17.5 15 19 12 19C9 19 6.5 17.5 6.5 15V9Z" fill="${color}" fill-opacity="0.28" stroke="${color}" stroke-width="1.6"/>`,
+    };
+    return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" aria-hidden="true">${symbols[memberId] || symbols.tomori}</svg>`;
+  },
+};
+
+const state = {
+  difficulty: 'easy',
+  bandMode: true,
+  memberId: 'tomori',
+  flagMode: false,
+  allowQuestion: false,
+  customConfig: { rows: 12, cols: 12, mines: 20 },
+  game: null,
+  elapsedSeconds: 0,
+  timerHandle: null,
+  bestTimes: loadBestTimes(),
+  chordPreviewCoords: [],
+};
+
+const els = {
+  mineGrid: document.getElementById('mine-grid'),
+  minesLeft: document.getElementById('mines-left'),
+  timerDigits: document.getElementById('timer-digits'),
+  bestTime: document.getElementById('best-time'),
+  resetBtn: document.getElementById('reset-btn'),
+  resetEmoji: document.getElementById('reset-emoji'),
+  resetText: document.getElementById('reset-text'),
+  modeToggle: document.getElementById('mode-toggle'),
+  modeToggleLabel: document.getElementById('mode-toggle-label'),
+  soundToggle: document.getElementById('sound-toggle'),
+  flagModeBtn: document.getElementById('flag-mode-btn'),
+  flagModeState: document.getElementById('flag-mode-state'),
+  questionModeBtn: document.getElementById('question-mode-btn'),
+  questionModeState: document.getElementById('question-mode-state'),
+  customPanel: document.getElementById('custom-panel'),
+  customCols: document.getElementById('custom-cols'),
+  customRows: document.getElementById('custom-rows'),
+  customMines: document.getElementById('custom-mines'),
+  applyCustom: document.getElementById('apply-custom'),
+  memberRoster: document.getElementById('member-roster'),
+  dialogueAvatar: document.getElementById('dialogue-avatar'),
+  activeMemberName: document.getElementById('active-member-name'),
+  activeMemberRole: document.getElementById('active-member-role'),
+  activeSkillTag: document.getElementById('active-skill-tag'),
+  dialogueText: document.getElementById('dialogue-text'),
+  skillBtn: document.getElementById('skill-btn'),
+  skillBtnText: document.getElementById('skill-btn-text'),
+  skillCharges: document.getElementById('skill-charges'),
+};
+
+function loadBestTimes() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_BEST_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveBestTime(diff, seconds) {
+  if (diff === 'custom') return;
+  const prev = state.bestTimes[diff];
+  if (prev === undefined || seconds < prev) {
+    state.bestTimes[diff] = seconds;
+    try {
+      localStorage.setItem(STORAGE_BEST_KEY, JSON.stringify(state.bestTimes));
+    } catch {
+      // Ignore storage quota issues
+    }
+  }
+}
+
+function formatDigits(num) {
+  const clamped = Math.max(-99, Math.min(999, num));
+  if (clamped < 0) return `-${String(Math.abs(clamped)).padStart(2, '0')}`;
+  return String(clamped).padStart(3, '0');
+}
+
+function stopTimer() {
+  if (state.timerHandle) {
+    clearInterval(state.timerHandle);
+    state.timerHandle = null;
+  }
+}
+
+function startTimer() {
+  if (state.timerHandle) return;
+  state.timerHandle = setInterval(() => {
+    state.elapsedSeconds = Math.min(999, state.elapsedSeconds + 1);
+    els.timerDigits.textContent = formatDigits(state.elapsedSeconds);
+  }, 1000);
+}
+
+function setQuote(event) {
+  els.dialogueText.textContent = pickQuote(state.memberId, event);
+}
+
+function getConfigForDifficulty() {
+  if (state.difficulty === 'custom') {
+    return {
+      rows: Number(els.customRows.value) || 12,
+      cols: Number(els.customCols.value) || 12,
+      mines: Number(els.customMines.value) || 20,
+      skillCharges: null,
+    };
+  }
+  const d = DIFFICULTIES[state.difficulty];
+  return { rows: d.rows, cols: d.cols, mines: d.mines, skillCharges: d.skillCharges };
+}
+
+function startNewGame() {
+  stopTimer();
+  state.elapsedSeconds = 0;
+  els.timerDigits.textContent = '000';
+  els.mineGrid.classList.remove('lost-shake');
+
+  const cfg = getConfigForDifficulty();
+  state.game = createGame({
+    ...cfg,
+    bandMode: state.bandMode,
+    memberId: state.memberId,
+  });
+
+  applyGridSizing();
+  buildGridDom();
+  renderAll();
+  setQuote('start');
+}
+
+function applyGridSizing() {
+  const { cols } = state.game;
+  let cellSize = 36;
+  let fontSize = 16;
+
+  if (cols >= 28) {
+    cellSize = 27;
+    fontSize = 13;
+  } else if (cols >= 16) {
+    cellSize = 31;
+    fontSize = 15;
+  }
+
+  document.documentElement.style.setProperty('--cell-size', `${cellSize}px`);
+  document.documentElement.style.setProperty('--cell-font', `${fontSize}px`);
+  els.mineGrid.style.gridTemplateColumns = `repeat(${cols}, var(--cell-size))`;
+}
+
+function buildGridDom() {
+  els.mineGrid.innerHTML = '';
+  const frag = document.createDocumentFragment();
+
+  for (const cell of state.game.cells) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'cell';
+    btn.dataset.row = String(cell.row);
+    btn.dataset.col = String(cell.col);
+    btn.setAttribute('role', 'gridcell');
+    btn.setAttribute('aria-label', `第${cell.row + 1}行 第${cell.col + 1}列 未翻开`);
+    frag.appendChild(btn);
+  }
+
+  els.mineGrid.appendChild(frag);
+}
+
+function renderMemberUi() {
+  const member = MEMBERS[state.memberId];
+  document.documentElement.style.setProperty('--member-color', member.color);
+
+  els.dialogueAvatar.innerHTML = ICONS.memberAvatar(member.id);
+  els.activeMemberName.textContent = member.name;
+  els.activeMemberRole.textContent = member.role;
+  els.activeSkillTag.textContent = state.bandMode ? `${member.skillName} · ${member.skillDesc}` : '经典模式：仅语音应援';
+
+  for (const chip of els.memberRoster.querySelectorAll('.member-chip')) {
+    chip.classList.toggle('active', chip.dataset.member === state.memberId);
+  }
+
+  if (!state.bandMode) {
+    els.skillBtn.disabled = true;
+    els.skillBtnText.textContent = '经典模式';
+    els.skillCharges.textContent = '--';
+  } else if (member.passive) {
+    els.skillBtn.disabled = true;
+    els.skillBtnText.textContent = state.game.skillUsesLeft > 0 ? '被动守护中' : '护盾已触发';
+    els.skillCharges.textContent = `×${state.game.skillUsesLeft}`;
+  } else {
+    const canUse = state.game.status === 'playing' && state.game.skillUsesLeft > 0;
+    els.skillBtn.disabled = !canUse;
+    els.skillBtnText.textContent = '发动技能';
+    els.skillCharges.textContent = `×${state.game.skillUsesLeft}`;
+  }
+}
+
+function renderHud() {
+  const remaining = state.game.mines - state.game.flagsPlaced;
+  els.minesLeft.textContent = formatDigits(remaining);
+
+  if (state.game.status === 'won') {
+    els.resetEmoji.textContent = '🌟';
+    els.resetText.textContent = 'Live 大成功!';
+  } else if (state.game.status === 'lost') {
+    els.resetEmoji.textContent = '💔';
+    els.resetText.textContent = '再排练一次';
+  } else if (state.game.status === 'playing') {
+    els.resetEmoji.textContent = '🎸';
+    els.resetText.textContent = '演奏中';
+  } else {
+    els.resetEmoji.textContent = '🧭';
+    els.resetText.textContent = '迷子出发';
+  }
+
+  const best = state.bestTimes[state.difficulty];
+  els.bestTime.textContent = state.difficulty === 'custom' ? '--' : best !== undefined ? `${best}s` : '--';
+}
+
+function renderGrid() {
+  const buttons = els.mineGrid.children;
+  for (let i = 0; i < state.game.cells.length; i++) {
+    const cell = state.game.cells[i];
+    const btn = buttons[i];
+    if (!btn) continue;
+
+    btn.className = 'cell';
+    btn.innerHTML = '';
+
+    if (cell.revealed) {
+      btn.classList.add('revealed');
+      if (cell.exploded) {
+        btn.classList.add('exploded');
+        btn.innerHTML = ICONS.mine;
+      } else if (cell.isMine) {
+        btn.innerHTML = ICONS.mine;
+      } else if (cell.adjacentMines > 0) {
+        btn.classList.add('has-number', `num-${cell.adjacentMines}`);
+        btn.textContent = String(cell.adjacentMines);
+      }
+      if (cell.skillHighlighted) {
+        btn.classList.add('skill-pop');
+      }
+    } else if (cell.wrongFlag) {
+      btn.classList.add('wrong-flag');
+      btn.innerHTML = ICONS.wrongFlag;
+    } else if (cell.flagged) {
+      btn.classList.add('flagged');
+      if (cell.shieldSaved) btn.classList.add('shield-saved');
+      btn.innerHTML = cell.shieldSaved ? ICONS.shieldFlag : ICONS.flag;
+    } else if (cell.questioned) {
+      btn.textContent = '?';
+      btn.style.color = '#93c5fd';
+    } else {
+      btn.style.color = '';
+    }
+  }
+}
+
+function renderAll() {
+  renderHud();
+  renderMemberUi();
+  renderGrid();
+}
+
+function handleGameActionResult(res) {
+  if (!res || res.action === 'noop') return;
+
+  if (state.game.status === 'playing') {
+    startTimer();
+  }
+
+  if (res.action === 'revealed') {
+    sound.reveal(res.revealedCells.length);
+    if (res.revealedCells.length >= 10) {
+      setQuote('revealBig');
+    }
+  } else if (res.action === 'shielded') {
+    sound.shield();
+    setQuote('shield');
+  } else if (res.action === 'lost') {
+    stopTimer();
+    sound.boom();
+    els.mineGrid.classList.add('lost-shake');
+    setQuote('lost');
+  } else if (res.action === 'won') {
+    stopTimer();
+    sound.win();
+    saveBestTime(state.difficulty, state.elapsedSeconds);
+    setQuote('won');
+  }
+
+  renderAll();
+}
+
+function clearChordPreview() {
+  for (const el of els.mineGrid.querySelectorAll('.chord-preview')) {
+    el.classList.remove('chord-preview');
+  }
+}
+
+function showChordPreview(row, col) {
+  clearChordPreview();
+  const cell = getCell(state.game, row, col);
+  if (!cell || !cell.revealed || cell.adjacentMines <= 0) return;
+
+  for (const n of getNeighbors(state.game, row, col)) {
+    if (!n.revealed && !n.flagged) {
+      const idx = n.row * state.game.cols + n.col;
+      els.mineGrid.children[idx]?.classList.add('chord-preview');
+    }
+  }
+}
+
+function initMemberRoster() {
+  els.memberRoster.innerHTML = '';
+  for (const member of Object.values(MEMBERS)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'member-chip';
+    btn.dataset.member = member.id;
+    btn.innerHTML = `
+      <span class="swatch" style="background:${member.color}"></span>
+      <span class="m-info">
+        <span class="m-name">${member.name} <small style="opacity:0.65">${member.role}</small></span>
+        <span class="m-skill">${member.skillName}</span>
+      </span>
+    `;
+    btn.addEventListener('click', () => {
+      state.memberId = member.id;
+      if (state.game.status === 'idle' || state.game.status === 'playing') {
+        state.game.memberId = member.id;
+      }
+      renderMemberUi();
+      setQuote('start');
+    });
+    els.memberRoster.appendChild(btn);
+  }
+}
+
+function bindEvents() {
+  // Grid interactions
+  els.mineGrid.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+  });
+
+  els.mineGrid.addEventListener('mousedown', (e) => {
+    const cellEl = e.target.closest('.cell');
+    if (!cellEl) return;
+    const row = Number(cellEl.dataset.row);
+    const col = Number(cellEl.dataset.col);
+
+    if (e.button === 0 || e.button === 1) {
+      const cell = getCell(state.game, row, col);
+      if (cell && cell.revealed && cell.adjacentMines > 0) {
+        showChordPreview(row, col);
+      }
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    clearChordPreview();
+  });
+
+  els.mineGrid.addEventListener('click', (e) => {
+    const cellEl = e.target.closest('.cell');
+    if (!cellEl) return;
+    const row = Number(cellEl.dataset.row);
+    const col = Number(cellEl.dataset.col);
+    const cell = getCell(state.game, row, col);
+    if (!cell) return;
+
+    if (cell.revealed) {
+      const res = chordCell(state.game, row, col);
+      handleGameActionResult(res);
+      return;
+    }
+
+    if (state.flagMode) {
+      const res = toggleFlag(state.game, row, col, state.allowQuestion);
+      if (res.action !== 'noop') {
+        sound.flag(res.action === 'flagged');
+        if (res.action === 'flagged' && Math.random() < 0.35) setQuote('flag');
+        renderAll();
+      }
+      return;
+    }
+
+    const res = revealCell(state.game, row, col);
+    handleGameActionResult(res);
+  });
+
+  els.mineGrid.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    const cellEl = e.target.closest('.cell');
+    if (!cellEl) return;
+    const row = Number(cellEl.dataset.row);
+    const col = Number(cellEl.dataset.col);
+    const res = chordCell(state.game, row, col);
+    handleGameActionResult(res);
+  });
+
+  els.mineGrid.addEventListener('mousedown', (e) => {
+    if (e.button !== 2) return;
+    const cellEl = e.target.closest('.cell');
+    if (!cellEl) return;
+    const row = Number(cellEl.dataset.row);
+    const col = Number(cellEl.dataset.col);
+    const res = toggleFlag(state.game, row, col, state.allowQuestion);
+    if (res.action !== 'noop') {
+      sound.flag(res.action === 'flagged');
+      if (res.action === 'flagged' && Math.random() < 0.35) setQuote('flag');
+      renderAll();
+    }
+  });
+
+  // Difficulty tabs
+  document.querySelectorAll('.diff-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.diff-tab').forEach((t) => t.classList.remove('active'));
+      tab.classList.add('active');
+      state.difficulty = tab.dataset.diff;
+      els.customPanel.classList.toggle('hidden', state.difficulty !== 'custom');
+      if (state.difficulty !== 'custom') {
+        startNewGame();
+      }
+    });
+  });
+
+  els.applyCustom.addEventListener('click', () => {
+    startNewGame();
+  });
+
+  els.resetBtn.addEventListener('click', () => {
+    startNewGame();
+  });
+
+  els.modeToggle.addEventListener('click', () => {
+    state.bandMode = !state.bandMode;
+    els.modeToggle.classList.toggle('active', state.bandMode);
+    els.modeToggleLabel.textContent = state.bandMode ? '乐队应援模式' : '纯正经典模式';
+    startNewGame();
+  });
+
+  els.soundToggle.addEventListener('click', () => {
+    sound.muted = !sound.muted;
+    els.soundToggle.textContent = sound.muted ? '🔇 音效关' : '🔊 音效开';
+  });
+
+  els.flagModeBtn.addEventListener('click', () => {
+    state.flagMode = !state.flagMode;
+    els.flagModeBtn.classList.toggle('active', state.flagMode);
+    els.flagModeState.textContent = state.flagMode ? '开' : '关';
+  });
+
+  els.questionModeBtn.addEventListener('click', () => {
+    state.allowQuestion = !state.allowQuestion;
+    els.questionModeBtn.classList.toggle('active', state.allowQuestion);
+    els.questionModeState.textContent = state.allowQuestion ? '开' : '关';
+  });
+
+  els.skillBtn.addEventListener('click', () => {
+    const res = useMemberSkill(state.game);
+    if (res.action === 'skill') {
+      sound.skill();
+      setQuote('skill');
+      if (res.gameStatus === 'won') {
+        stopTimer();
+        sound.win();
+        saveBestTime(state.difficulty, state.elapsedSeconds);
+        setQuote('won');
+      }
+      renderAll();
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    const key = e.key.toLowerCase();
+    if (key === 'r') {
+      startNewGame();
+    } else if (key === 'f') {
+      els.flagModeBtn.click();
+    } else if (key === 'e') {
+      if (!els.skillBtn.disabled) els.skillBtn.click();
+    }
+  });
+}
+
+initMemberRoster();
+bindEvents();
+startNewGame();
+
+})();
+</script>
+</body>
+</html>
