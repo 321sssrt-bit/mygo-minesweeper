@@ -4,17 +4,10 @@ import (
 	"math/rand/v2"
 )
 
-type DifficultyID string
-
-const (
-	DiffEasy   DifficultyID = "easy"
-	DiffNormal DifficultyID = "normal"
-	DiffHard   DifficultyID = "hard"
-)
-
 type Difficulty struct {
-	ID           DifficultyID
+	ID           string
 	Label        string
+	Song         string
 	Subtitle     string
 	Rows         int
 	Cols         int
@@ -23,18 +16,46 @@ type Difficulty struct {
 }
 
 var Difficulties = []Difficulty{
-	{ID: DiffEasy, Label: "羽丘中庭", Subtitle: "9×9 · 10雷", Rows: 9, Cols: 9, Mines: 10, SkillCharges: 1},
-	{ID: DiffNormal, Label: "RiNG Live", Subtitle: "16×16 · 40雷", Rows: 16, Cols: 16, Mines: 40, SkillCharges: 2},
-	{ID: DiffHard, Label: "春日影舞台", Subtitle: "30×16 · 99雷", Rows: 16, Cols: 30, Mines: 99, SkillCharges: 3},
-}
-
-func FindDifficulty(id DifficultyID) Difficulty {
-	for _, d := range Difficulties {
-		if d.ID == id {
-			return d
-		}
-	}
-	return Difficulties[0]
+	{
+		ID:           "easy",
+		Label:        "羽丘天文部",
+		Song:         "迷星叫",
+		Subtitle:     "9×9 · 10雷",
+		Rows:         9,
+		Cols:         9,
+		Mines:        10,
+		SkillCharges: 1,
+	},
+	{
+		ID:           "normal",
+		Label:        "RiNG 排练室",
+		Song:         "碧天伴走",
+		Subtitle:     "16×16 · 40雷",
+		Rows:         16,
+		Cols:         16,
+		Mines:        40,
+		SkillCharges: 2,
+	},
+	{
+		ID:           "hard",
+		Label:        "春日影 Live",
+		Song:         "春日影 (Crychic Ver.)",
+		Subtitle:     "30×16 · 99雷",
+		Rows:         16,
+		Cols:         30,
+		Mines:        99,
+		SkillCharges: 3,
+	},
+	{
+		ID:           "forever",
+		Label:        "一辈子契约",
+		Song:         "诗超绊",
+		Subtitle:     "20×20 · 80雷",
+		Rows:         20,
+		Cols:         20,
+		Mines:        80,
+		SkillCharges: 3,
+	},
 }
 
 type GameStatus int
@@ -47,17 +68,16 @@ const (
 )
 
 type Cell struct {
-	Row          int
-	Col          int
-	IsMine       bool
-	Adjacent     int
-	Revealed     bool
-	Flagged      bool
-	Questioned   bool
-	Exploded     bool
-	WrongFlag    bool
-	ShieldSaved  bool
-	SkillPop     bool
+	Row         int
+	Col         int
+	IsMine      bool
+	Adjacent    int
+	Revealed    bool
+	Flagged     bool
+	Questioned  bool
+	Exploded    bool
+	WrongFlag   bool
+	ShieldSaved bool
 }
 
 type ActionKind string
@@ -79,9 +99,11 @@ type ActionResult struct {
 	Kind          ActionKind
 	RevealedCount int
 	QuoteEvent    string
+	NewMemes      []string
 }
 
 type Game struct {
+	Difficulty    Difficulty
 	Rows          int
 	Cols          int
 	Mines         int
@@ -89,10 +111,13 @@ type Game struct {
 	MemberID      MemberID
 	Status        GameStatus
 	FirstClick    bool
+	Moves         int
 	FlagsPlaced   int
 	RevealedSafe  int
 	SkillUsesLeft int
 	MaxSkillUses  int
+	UsedSkill     bool
+	Gravity       int
 	Cells         []Cell
 	rng           *rand.Rand
 }
@@ -123,6 +148,7 @@ func NewGame(diff Difficulty, bandMode bool, memberID MemberID, seed ...uint64) 
 	}
 
 	return &Game{
+		Difficulty:    diff,
 		Rows:          rows,
 		Cols:          cols,
 		Mines:         mines,
@@ -131,6 +157,7 @@ func NewGame(diff Difficulty, bandMode bool, memberID MemberID, seed ...uint64) 
 		Status:        StatusIdle,
 		SkillUsesLeft: charges,
 		MaxSkillUses:  charges,
+		Gravity:       12,
 		Cells:         cells,
 		rng:           r,
 	}
@@ -160,6 +187,14 @@ func (g *Game) Neighbors(row, col int) []*Cell {
 
 func (g *Game) RemainingMines() int {
 	return g.Mines - g.FlagsPlaced
+}
+
+func (g *Game) Progress() float64 {
+	safeTotal := g.Rows*g.Cols - g.Mines
+	if safeTotal <= 0 {
+		return 1
+	}
+	return float64(g.RevealedSafe) / float64(safeTotal)
 }
 
 func (g *Game) PlaceMines(safeRow, safeCol int) {
@@ -211,6 +246,10 @@ func (g *Game) RecomputeAdjacency() {
 	}
 }
 
+func (g *Game) adjustGravity(delta int) {
+	g.Gravity = max(0, min(100, g.Gravity+delta))
+}
+
 func (g *Game) Reveal(row, col int) ActionResult {
 	if g.Status == StatusWon || g.Status == StatusLost {
 		return ActionResult{Kind: ActionNoop}
@@ -226,18 +265,36 @@ func (g *Game) Reveal(row, col int) ActionResult {
 		g.Status = StatusPlaying
 	}
 
+	g.Moves++
 	start.Questioned = false
 
 	if start.IsMine {
 		if g.BandMode && g.MemberID == MemberSoyorin && g.SkillUsesLeft > 0 {
 			g.SkillUsesLeft--
+			g.UsedSkill = true
 			start.Flagged = true
 			start.ShieldSaved = true
 			g.FlagsPlaced++
-			return ActionResult{Kind: ActionShielded, QuoteEvent: "shield"}
+			g.adjustGravity(35)
+			var memes []string
+			if g.Moves <= 2 {
+				memes = append(memes, MemeNeverHappy)
+			}
+			return ActionResult{Kind: ActionShielded, QuoteEvent: "shield", NewMemes: memes}
 		}
+
 		g.finalizeLoss(start)
-		return ActionResult{Kind: ActionLost, QuoteEvent: "lost"}
+		g.Gravity = 100
+		quoteEvent := "lost"
+		var memes []string
+		if g.Difficulty.ID == "hard" {
+			quoteEvent = "haruhikageLost"
+			memes = append(memes, MemeHaruhikage)
+		}
+		if g.Moves <= 2 {
+			memes = append(memes, MemeNeverHappy)
+		}
+		return ActionResult{Kind: ActionLost, QuoteEvent: quoteEvent, NewMemes: memes}
 	}
 
 	queue := []*Cell{start}
@@ -267,9 +324,23 @@ func (g *Game) Reveal(row, col int) ActionResult {
 		}
 	}
 
-	if g.checkWin() {
-		return ActionResult{Kind: ActionWon, RevealedCount: revealed, QuoteEvent: "won"}
+	if start.Adjacent >= 4 {
+		g.adjustGravity(12)
+	} else if revealed >= 10 {
+		g.adjustGravity(-6)
+	} else {
+		g.adjustGravity(2)
 	}
+
+	if g.checkWin() {
+		return ActionResult{
+			Kind:          ActionWon,
+			RevealedCount: revealed,
+			QuoteEvent:    "won",
+			NewMemes:      g.winMemes(),
+		}
+	}
+
 	quote := ""
 	if revealed >= 10 {
 		quote = "revealBig"
@@ -376,7 +447,8 @@ func (g *Game) UseSkill() ActionResult {
 		}
 		pick := pool[g.rng.IntN(len(pool))]
 		g.SkillUsesLeft--
-		pick.SkillPop = true
+		g.UsedSkill = true
+		g.adjustGravity(-10)
 		res := g.Reveal(pick.Row, pick.Col)
 		if res.Kind == ActionWon {
 			return res
@@ -389,6 +461,7 @@ func (g *Game) UseSkill() ActionResult {
 			return ActionResult{Kind: ActionNoop}
 		}
 		g.SkillUsesLeft--
+		g.UsedSkill = true
 		total := 0
 		for range 2 {
 			rem := g.safeUnrevealedCells(false)
@@ -396,11 +469,10 @@ func (g *Game) UseSkill() ActionResult {
 				break
 			}
 			pick := rem[g.rng.IntN(len(rem))]
-			pick.SkillPop = true
 			res := g.Reveal(pick.Row, pick.Col)
 			total += res.RevealedCount
 			if res.Kind == ActionWon {
-				return ActionResult{Kind: ActionWon, RevealedCount: total, QuoteEvent: "won"}
+				return ActionResult{Kind: ActionWon, RevealedCount: total, QuoteEvent: "won", NewMemes: g.winMemes()}
 			}
 		}
 		return ActionResult{Kind: ActionSkill, RevealedCount: total, QuoteEvent: "skill"}
@@ -415,10 +487,11 @@ func (g *Game) UseSkill() ActionResult {
 		}
 		pick := pool[g.rng.IntN(len(pool))]
 		g.SkillUsesLeft--
+		g.UsedSkill = true
 		pick.Flagged = true
 		pick.Questioned = false
-		pick.SkillPop = true
 		g.FlagsPlaced++
+		g.adjustGravity(5)
 		return ActionResult{Kind: ActionSkill, QuoteEvent: "skill"}
 
 	case MemberRana:
@@ -438,15 +511,32 @@ func (g *Game) UseSkill() ActionResult {
 		}
 		pick := pool[g.rng.IntN(len(pool))]
 		g.SkillUsesLeft--
-		pick.SkillPop = true
+		g.UsedSkill = true
+		g.adjustGravity(-12)
 		res := g.Reveal(pick.Row, pick.Col)
+		var memes []string
+		if res.RevealedCount >= 12 {
+			memes = append(memes, MemeMatcha)
+		}
 		if res.Kind == ActionWon {
+			res.NewMemes = append(res.NewMemes, memes...)
 			return res
 		}
-		return ActionResult{Kind: ActionSkill, RevealedCount: res.RevealedCount, QuoteEvent: "skill"}
+		return ActionResult{Kind: ActionSkill, RevealedCount: res.RevealedCount, QuoteEvent: "skill", NewMemes: memes}
 	}
 
 	return ActionResult{Kind: ActionNoop}
+}
+
+func (g *Game) winMemes() []string {
+	memes := []string{MemeForever}
+	if g.BandMode && g.UsedSkill && g.MemberID == MemberTomori {
+		memes = append(memes, MemeHuman)
+	}
+	if !g.BandMode || !g.UsedSkill {
+		memes = append(memes, MemeAnonBest)
+	}
+	return memes
 }
 
 func (g *Game) safeUnrevealedCells(frontierOnly bool) []*Cell {
@@ -517,6 +607,7 @@ func (g *Game) checkWin() bool {
 		return false
 	}
 	g.Status = StatusWon
+	g.Gravity = 0
 	for i := range g.Cells {
 		c := &g.Cells[i]
 		if c.IsMine && !c.Flagged {

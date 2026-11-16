@@ -1,30 +1,26 @@
-# MyGO!!!!! 迷子扫雷 (egoist/mygo Native UI)
+# MyGO!!!!! 迷子扫雷 (`egoist/mygo` Native UI 重制版)
 
 > 「迷子でもいい、迷子でも進め。」
 
-使用 **[github.com/egoist/mygo](https://github.com/egoist/mygo)** 原生 GPU 渲染 UI（`github.com/egoist/mygo/ui`，纯 Go、无 `cgo`、无 HTML/WebView）构筑的 MyGO!!!!! 主题桌面端扫雷。
+基于 **[github.com/egoist/mygo](https://github.com/egoist/mygo)** 原生 GPU UI 组件体系从头重构的 MyGO!!!!! 主题扫雷桌面应用（Windows Direct3D 11 / macOS Metal / Linux OpenGL，无 HTML/WebView，无 `cgo`）。
 
-## 运行与构建
+## 复用的 MyGo 原生组件
+
+- **`ui.Segmented` & `ui.ToggleGroup` / `ui.Toggle` & `ui.Switch`**：曲目难度切换、乐队/经典模式切换、标旗模式、`?` 标记、名场面图鉴开关、夜间/日间主题切换。
+- **`ui.Avatar` & `ui.Badge` & `ui.Tooltip`**：5 位 MyGO!!!!! 成员头像徽章、剩余雷数/用时/技能次数胶囊、悬停技能说明。
+- **`ui.Progress` & `ui.Meter`**：排练完成度进度条 + 乐队重力值（Gravity）警戒仪表。
+- **`ui.Themed` & `ui.Scroll` & `ui.Grid`**：跟随当前领队成员代表色变化的互动面板、实时「MyGO!!!!! 排练室群聊」、以及支持双向滚动的扫雷棋盘。
+- **`c.Toast` / `c.ToastAction` & `ui.AlertDialog`**：技能与成就弹出提示、炸团一键「假装重开」Toast、以及「春日影 Live」踩雷专属弹窗质问。
+
+## 运行、测试与跨平台打包
 
 ```powershell
-# 直接运行桌面端应用
-go run .
-
-# 运行引擎与 Native UI 视图测试（无窗口内存渲染测试）
+# 运行全部引擎与 Native UI 内存交互测试
 go test -v ./...
 
-# 编译成独立可执行文件
-go build -o mygo-minesweeper.exe .
+# 启动 Windows 桌面端
+go run .
+
+# 打包 Windows / macOS Universal (.app)
+go run github.com/egoist/mygo/cmd/mygo@v0.9.2 build -platform darwin/universal -o build
 ```
-
-## 特色玩法
-
-- **纯正 Native UI**：Windows 上由 Direct3D 11 直接渲染，秒开低内存。
-- **三种难度**：
-  - `羽丘中庭`（9×9 · 10 雷）
-  - `RiNG Live`（16×16 · 40 雷）
-  - `春日影舞台`（30×16 · 99 雷）
-- **双模式切换**：
-  - **乐队应援模式**：5 位 MyGO!!!!! 成员各自拥有专属台词与技能（高松灯「捡来的石头」、千早爱音「SNS 高光」、长崎爽世「温柔的微笑」被动护盾、椎名立希「精准节拍」、要乐奈「随性巡演」）。
-  - **纯正经典模式**：关闭技能，记录各难度最快通关用时。
-- **完整扫雷操作**：首击必安全（尽可能保留 3×3 安全区）、右键标旗（或开启 `F` 标旗模式）、点击已翻开数字触发 Chord 周围快开、快捷键 `R` 重开 / `F` 标旗模式 / `E` 发动技能。
