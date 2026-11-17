@@ -13,9 +13,8 @@ const (
 )
 
 type Member struct {
-	ID        MemberID
-	Name      string
-	AvatarKey string
+	ID   MemberID
+	Name string
 	// Glyph is the one character on the member's avatar; Romaji follows
 	// the name in small type.
 	Glyph   string
@@ -33,7 +32,6 @@ var Members = []Member{
 	{
 		ID:        MemberTomori,
 		Name:      "高松灯",
-		AvatarKey: "Tomori Takamatsu",
 		Glyph:     "灯",
 		Romaji:    "Tomori",
 		Role:      "Vo.",
@@ -45,7 +43,6 @@ var Members = []Member{
 	{
 		ID:        MemberAnon,
 		Name:      "千早爱音",
-		AvatarKey: "Anon Chihaya",
 		Glyph:     "爱",
 		Romaji:    "Anon",
 		Role:      "Gt.",
@@ -57,7 +54,6 @@ var Members = []Member{
 	{
 		ID:        MemberSoyorin,
 		Name:      "长崎爽世",
-		AvatarKey: "Soyo Nagasaki",
 		Glyph:     "爽",
 		Romaji:    "Soyo",
 		Role:      "Ba.",
@@ -70,7 +66,6 @@ var Members = []Member{
 	{
 		ID:        MemberTaki,
 		Name:      "椎名立希",
-		AvatarKey: "Taki Shiina",
 		Glyph:     "立",
 		Romaji:    "Taki",
 		Role:      "Dr.",
@@ -82,7 +77,6 @@ var Members = []Member{
 	{
 		ID:        MemberRana,
 		Name:      "要乐奈",
-		AvatarKey: "Rana Kaname",
 		Glyph:     "乐",
 		Romaji:    "Rāna",
 		Role:      "Gt.",

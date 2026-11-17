@@ -23,8 +23,6 @@ type palette struct {
 	Ink, InkMuted, Rule, Graphite ui.Color
 	// Boom tints the cell whose mine was hit; BoomInk draws its knot.
 	Boom, BoomInk ui.Color
-	// Gold highlights a number whose neighbours can be claimed.
-	Gold ui.Color
 	// Lamp is the warm glow in the night notebook's top-left corner.
 	Lamp                             ui.Color
 	BandAid, BandAidPad, BandAidEdge ui.Color
@@ -35,7 +33,6 @@ var dayPaper = &palette{
 	Slip: ui.Hex("#ECE4D3"), SlipShade: ui.Hex("#5A4628").Alpha(0.28),
 	Ink: ui.Hex("#2E2A25"), InkMuted: ui.Hex("#7A7064"), Rule: ui.Hex("#2E2A25").Alpha(0.14), Graphite: ui.Hex("#4A4742"),
 	Boom: ui.Hex("#C23D63").Alpha(0.16), BoomInk: ui.Hex("#B0303A"),
-	Gold:    ui.Hex("#E3B33A"),
 	BandAid: ui.Hex("#E8C49A"), BandAidPad: ui.Hex("#F5DFC2"), BandAidEdge: ui.Hex("#BF946A"),
 }
 
@@ -45,7 +42,6 @@ var nightPaper = &palette{
 	Slip: ui.Hex("#3D352C"), SlipShade: ui.Hex("#000000").Alpha(0.5),
 	Ink: ui.Hex("#EDE3D3"), InkMuted: ui.Hex("#A8998A"), Rule: ui.Hex("#EDE3D3").Alpha(0.12), Graphite: ui.Hex("#CFC6B8"),
 	Boom: ui.Hex("#FF788C").Alpha(0.18), BoomInk: ui.Hex("#FF8C8C"),
-	Gold:    ui.Hex("#E8C267"),
 	Lamp:    ui.Hex("#FFBE6E").Alpha(0.16),
 	BandAid: ui.Hex("#D9B488"), BandAidPad: ui.Hex("#EBD3B2"), BandAidEdge: ui.Hex("#A27A52"),
 }
