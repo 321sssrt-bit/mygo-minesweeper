@@ -1,7 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <!--
-    App icon: a page of graph paper with five hand-written exclamation
-    marks in the band order and a sticking plaster on the lower-left corner.
+    App icon: a page of graph paper with a minesweeper board drawn on it.
+    Five hand-written exclamation marks fill the revealed top rows, one per
+    column in the band order; below them three revealed cells read 1 1 2
+    in the game's number inks, the rest are unrevealed paper slips, and a
+    sticking plaster (the flag) sits on the lower-left slip.
     Original vector art. Every colour comes from palette.go: the day paper,
     the band colour for the ruled grid, and each member's day ink (the
     official image colour darkened for the page).
@@ -11,6 +14,7 @@
   <defs>
     <clipPath id="page"><rect x="80" y="80" width="864" height="864" rx="192"/></clipPath>
   </defs>
+  <!-- soft lift under the page, layered (the rasterizer has no filters) -->
   <g fill="#5A4628">
     <rect x="80" y="82" width="864" height="864" rx="192" fill-opacity="0.05"/>
     <rect x="78" y="82" width="868" height="868" rx="194" fill-opacity="0.045"/>
@@ -20,40 +24,62 @@
     <rect x="66" y="84" width="892" height="892" rx="206" fill-opacity="0.015"/>
   </g>
   <rect x="80" y="80" width="864" height="864" rx="192" fill="#FFFEFA"/>
-  <g clip-path="url(#page)" fill="none" stroke="#3388BB" stroke-opacity="0.16" stroke-width="5">
-    <path d="M176 80V944M272 80V944M368 80V944M464 80V944M560 80V944M656 80V944M752 80V944M848 80V944M80 176H944M80 272H944M80 368H944M80 464H944M80 560H944M80 656H944M80 752H944M80 848H944"/>
+  <!-- graph paper ruled in the band colour, aligned with the board cells -->
+  <g clip-path="url(#page)" fill="none" stroke="#3388BB" stroke-opacity="0.16" stroke-width="4">
+    <path d="M140 80V944M80 140H944M214.4 80V944M80 214.4H944M288.8 80V944M80 288.8H944M363.2 80V944M80 363.2H944M437.6 80V944M80 437.6H944M512 80V944M80 512H944M586.4 80V944M80 586.4H944M660.8 80V944M80 660.8H944M735.2 80V944M80 735.2H944M809.6 80V944M80 809.6H944M884 80V944M80 884H944"/>
   </g>
-  <!-- five exclamation marks, band order, each in the member's day ink -->
-  <g class="bang" fill="#2879A2" transform="translate(262 236) rotate(6)"><!-- 1 Tomori -->
-    <path d="M-47 0C-47 -54 47 -54 47 0C49 117.8 33 223.2 22 310C22 338.6 -22 338.6 -22 310C-27 217 -41 111.6 -47 0Z"/>
-    <ellipse cx="3" cy="397" rx="41" ry="37" transform="rotate(-12 3 397)"/>
+  <!-- unrevealed cells: paper slips stuck on the page -->
+  <g>
+    <rect x="594.4" y="601.4" width="132.8" height="132.8" rx="18" fill="#5A4628" fill-opacity="0.28"/>
+    <rect x="594.4" y="594.4" width="132.8" height="132.8" rx="18" fill="#ECE4D3"/>
+    <rect x="743.2" y="601.4" width="132.8" height="132.8" rx="18" fill="#5A4628" fill-opacity="0.28"/>
+    <rect x="743.2" y="594.4" width="132.8" height="132.8" rx="18" fill="#ECE4D3"/>
+    <rect x="148" y="750.2" width="132.8" height="132.8" rx="18" fill="#5A4628" fill-opacity="0.28"/>
+    <rect x="148" y="743.2" width="132.8" height="132.8" rx="18" fill="#ECE4D3"/>
+    <rect x="296.8" y="750.2" width="132.8" height="132.8" rx="18" fill="#5A4628" fill-opacity="0.28"/>
+    <rect x="296.8" y="743.2" width="132.8" height="132.8" rx="18" fill="#ECE4D3"/>
+    <rect x="445.6" y="750.2" width="132.8" height="132.8" rx="18" fill="#5A4628" fill-opacity="0.28"/>
+    <rect x="445.6" y="743.2" width="132.8" height="132.8" rx="18" fill="#ECE4D3"/>
+    <rect x="594.4" y="750.2" width="132.8" height="132.8" rx="18" fill="#5A4628" fill-opacity="0.28"/>
+    <rect x="594.4" y="743.2" width="132.8" height="132.8" rx="18" fill="#ECE4D3"/>
+    <rect x="743.2" y="750.2" width="132.8" height="132.8" rx="18" fill="#5A4628" fill-opacity="0.28"/>
+    <rect x="743.2" y="743.2" width="132.8" height="132.8" rx="18" fill="#ECE4D3"/>
   </g>
-  <g class="bang" fill="#E90021" transform="translate(398 220) rotate(7)"><!-- 2 Anon -->
-    <path d="M-49 0C-49 -56.3 49 -56.3 49 0C42 124.6 25 236.2 23 328C23 357.9 -23 357.9 -23 328C-37 229.6 -52 118.1 -49 0Z"/>
-    <ellipse cx="-2" cy="416" rx="42" ry="38" transform="rotate(18 -2 416)"/>
+  <!-- revealed numbers, hand-written in the game's number inks: 1 Tomori, 2 Rana -->
+  <path transform="translate(160.4 606.8) scale(1.08)" d="M38 30L54 18V82" fill="none" stroke="#2879A2" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <path transform="translate(309.2 606.8) scale(1.08)" d="M38 30L54 18V82" fill="none" stroke="#2879A2" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <path transform="translate(458 606.8) scale(1.08)" d="M30 36C30 12 72 12 70 36C69 54 42 64 30 82H72" fill="none" stroke="#218521" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- five exclamation marks over the board columns, band order, each in the member's day ink -->
+  <g fill="#2879A2" transform="translate(234.4 171.4) rotate(6)"><!-- 1 Tomori -->
+    <path d="M-39.5 0C-39.5 -45.4 39.5 -45.4 39.5 0C41.5 99 29.5 187.5 18.5 260.4C18.5 284.4 -18.5 284.4 -18.5 260.4C-23.5 182.3 -33.5 93.7 -39.5 0Z"/>
+    <ellipse cx="3" cy="333.5" rx="34.4" ry="31.1" transform="rotate(-12 3 333.5)"/>
   </g>
-  <g class="bang" fill="#218521" transform="translate(534 242) rotate(5)"><!-- 3 Rana -->
-    <path d="M-46 0C-46 -52.9 46 -52.9 46 0C47 115.5 32 218.9 22 304C22 332.6 -22 332.6 -22 304C-28 212.8 -41 109.4 -46 0Z"/>
-    <ellipse cx="2" cy="391" rx="41" ry="37" transform="rotate(-6 2 391)"/>
+  <g fill="#E90021" transform="translate(383.2 158) rotate(7)"><!-- 2 Anon -->
+    <path d="M-41.2 0C-41.2 -47.3 41.2 -47.3 41.2 0C34.2 104.7 21.3 198.4 19.3 275.5C19.3 300.6 -19.3 300.6 -19.3 275.5C-33.3 192.9 -44.2 99.2 -41.2 0Z"/>
+    <ellipse cx="-2" cy="349.4" rx="35.3" ry="31.9" transform="rotate(18 -2 349.4)"/>
   </g>
-  <g class="bang" fill="#976C00" transform="translate(670 224) rotate(7)"><!-- 4 Soyo -->
-    <path d="M-48 0C-48 -55.2 48 -55.2 48 0C42 123.1 26 233.3 23 324C23 353.9 -23 353.9 -23 324C-36 226.8 -50 116.6 -48 0Z"/>
-    <ellipse cx="-3" cy="411" rx="42" ry="37" transform="rotate(14 -3 411)"/>
+  <g fill="#218521" transform="translate(532 176.5) rotate(5)"><!-- 3 Rana -->
+    <path d="M-38.6 0C-38.6 -44.4 38.6 -44.4 38.6 0C39.6 97 28.5 183.9 18.5 255.4C18.5 279.4 -18.5 279.4 -18.5 255.4C-24.5 178.8 -33.6 91.9 -38.6 0Z"/>
+    <ellipse cx="2" cy="328.4" rx="34.4" ry="31.1" transform="rotate(-6 2 328.4)"/>
   </g>
-  <g class="bang" fill="#6E6EA4" transform="translate(806 238) rotate(6)"><!-- 5 Taki -->
-    <path d="M-47 0C-47 -54 47 -54 47 0C50 117.8 34 223.2 22 310C22 338.6 -22 338.6 -22 310C-26 217 -40 111.6 -47 0Z"/>
-    <ellipse cx="2" cy="398" rx="41" ry="38" transform="rotate(-10 2 398)"/>
+  <g fill="#976C00" transform="translate(680.8 161.4) rotate(7)"><!-- 4 Soyo -->
+    <path d="M-40.3 0C-40.3 -46.4 40.3 -46.4 40.3 0C34.3 103.4 22.3 196 19.3 272.2C19.3 297.3 -19.3 297.3 -19.3 272.2C-32.3 190.5 -42.3 98 -40.3 0Z"/>
+    <ellipse cx="-3" cy="345.2" rx="35.3" ry="31.1" transform="rotate(14 -3 345.2)"/>
   </g>
-  <!-- sticking plaster on the lower-left corner -->
-  <g transform="translate(214 810) rotate(45)">
-    <rect x="-147" y="-49" width="300" height="116" rx="58" fill="#5A4628" fill-opacity="0.16"/>
-    <rect x="-150" y="-58" width="300" height="116" rx="58" fill="#E8C49A" stroke="#BF946A" stroke-width="9"/>
-    <rect x="-46" y="-42" width="92" height="84" rx="10" fill="#F5DFC2"/>
+  <g fill="#6E6EA4" transform="translate(829.6 173.1) rotate(6)"><!-- 5 Taki -->
+    <path d="M-39.5 0C-39.5 -45.4 39.5 -45.4 39.5 0C42.5 99 30.5 187.5 18.5 260.4C18.5 284.4 -18.5 284.4 -18.5 260.4C-22.5 182.3 -32.5 93.7 -39.5 0Z"/>
+    <ellipse cx="2" cy="334.3" rx="34.4" ry="31.9" transform="rotate(-10 2 334.3)"/>
+  </g>
+  <!-- the flag: a sticking plaster stuck at an angle on the lower-left slip -->
+  <g transform="translate(224.4 801.6) rotate(-38)">
+    <rect x="-81" y="-22" width="168" height="62" rx="31" fill="#5A4628" fill-opacity="0.16"/>
+    <rect x="-84" y="-31" width="168" height="62" rx="31" fill="#E8C49A" stroke="#BF946A" stroke-width="7"/>
+    <rect x="-26" y="-22.3" width="52.1" height="44.6" rx="5.6" fill="#F5DFC2"/>
     <g fill="#BF946A">
-      <circle cx="-112" cy="-18" r="8"/>
-      <circle cx="-84" cy="18" r="8"/>
-      <circle cx="84" cy="-18" r="8"/>
-      <circle cx="112" cy="18" r="8"/>
+      <circle cx="-63" cy="-9.9" r="4.3"/>
+      <circle cx="-47" cy="9.9" r="4.3"/>
+      <circle cx="47" cy="-9.9" r="4.3"/>
+      <circle cx="63" cy="9.9" r="4.3"/>
     </g>
   </g>
   <rect x="82" y="82" width="860" height="860" rx="190" fill="none" stroke="#2E2A25" stroke-opacity="0.14" stroke-width="4"/>
