@@ -14,6 +14,9 @@ type boardView struct {
 	Width, Height  float32
 	HoverRow       int
 	HoverCol       int
+	HoverX, HoverY float32
+	HasHover       bool
+	WasHovered     bool
 	PressX, PressY float32
 	DragX, DragY   float32
 	Dragging       bool
@@ -28,11 +31,25 @@ func newBoardView() *boardView {
 	return &boardView{Cell: 26, X: 487 * 26, Y: 487 * 26, HoverRow: -1, HoverCol: -1, EffectCell: -1}
 }
 
+func (v *boardView) updateHover(g *Game) {
+	if !v.HasHover || v.minimap(v.HoverX, v.HoverY) || v.HoverX < 0 || v.HoverY < 0 || v.HoverX >= v.Width || v.HoverY >= v.Height {
+		v.HoverRow, v.HoverCol = -1, -1
+		return
+	}
+	row, col, ok := v.cellAt(g, v.HoverX, v.HoverY)
+	if !ok {
+		v.HoverRow, v.HoverCol = -1, -1
+		return
+	}
+	v.HoverRow, v.HoverCol = row, col
+}
+
 func (v *boardView) clamp(g *Game) {
 	v.Cell = max(10, min(42, v.Cell))
 	v.Width, v.Height = max(100, v.Width), max(100, v.Height)
 	v.X = max(0, min(float32(g.Cols)*v.Cell-v.Width, v.X))
 	v.Y = max(0, min(float32(g.Rows)*v.Cell-v.Height, v.Y))
+	v.updateHover(g)
 }
 
 func (v *boardView) center(g *Game, row, col int) {
@@ -74,14 +91,18 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 	v := a.board
 	v.clamp(a.game)
 	ui.Column(c.Key("duel-stage")).Grow(1).FillWidth().Children(func() {
-		ui.Box(c.Key("duel-board")).Grow(1).FillWidth().Label("百万格决斗战场").
-			Cursor(ui.CursorPointer).Focusable().HandleInput(func(ev ui.InputEvent) bool {
-			if ev.Kind == ui.InputPointerMove {
-				if v.minimap(ev.X, ev.Y) {
-					v.HoverRow, v.HoverCol = -1, -1
-				} else {
-					v.HoverRow, v.HoverCol, _ = v.cellAt(a.game, ev.X, ev.Y)
-				}
+		boardBox := ui.Box(c.Key("duel-board")).Grow(1).FillWidth().Label("百万格决斗战场").
+			Cursor(ui.CursorPointer).Focusable()
+		hovered := boardBox.Hovered()
+		if v.WasHovered && !hovered && !v.Pressed {
+			v.HasHover = false
+			v.HoverRow, v.HoverCol = -1, -1
+		}
+		v.WasHovered = hovered
+		boardBox.HandleInput(func(ev ui.InputEvent) bool {
+			if ev.Kind == ui.InputPointerMove || ev.Kind == ui.InputScroll || ev.Kind == ui.InputZoom {
+				v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
+				v.updateHover(a.game)
 			}
 			switch ev.Kind {
 			case ui.InputScroll:
@@ -91,6 +112,7 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 				v.zoom(a.game, ev.X, ev.Y, ev.Scale)
 				return true
 			case ui.InputPointerDown:
+				v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
 				if ev.Button > 2 {
 					return false
 				}
@@ -122,8 +144,10 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 				if !v.Pressed {
 					return false
 				}
+				v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
 				button, dragged := v.PressButton, v.Dragging
 				v.Pressed, v.Dragging = false, false
+				v.updateHover(a.game)
 				if ev.Canceled || dragged {
 					return true
 				}

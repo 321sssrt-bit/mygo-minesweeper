@@ -510,6 +510,93 @@ func TestDuelHoverHintsPriorityPublicOnlyAndStun(t *testing.T) {
 	}
 }
 
+func TestDuelHoverSyncsAfterZoomAndDrag(t *testing.T) {
+	app := newMinesweeperApp(42)
+	app.diffIdx = 4
+	app.game = NewGame(Difficulty{ID: "duel", Rows: 60, Cols: 60, Mines: 2}, true, MemberAnon, 42)
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	app.game.Cell(20, 20).IsMine = true
+	app.game.Cell(30, 30).IsMine = true
+	app.game.RecomputeAdjacency()
+	for i := range app.game.Cells {
+		c := &app.game.Cells[i]
+		if c.IsMine {
+			continue
+		}
+		c.Revealed = true
+		c.Owner = DuelPlayer
+		app.game.RevealedSafe++
+	}
+
+	tt := ui.NewTester(app.view, 1280, 900)
+	app.board.center(app.game, 25, 25)
+	tt.Frame()
+	r, ok := tt.Find("百万格决斗战场")
+	if !ok {
+		t.Fatal("duel board missing")
+	}
+
+	// Hover claimable (21,21) near top-left of viewport, then zoom via Ctrl+= without moving pointer.
+	px := r.X + (21.5)*app.board.Cell - app.board.X
+	py := r.Y + (21.5)*app.board.Cell - app.board.Y
+	tt.Move(px, py)
+	if app.board.LastHoverHint.Kind != HintClaimable || app.board.LastHoverHint.Center != 21*60+21 {
+		t.Fatalf("expected initial hover on claimable (21,21), got %+v", app.board.LastHoverHint)
+	}
+	tt.Key(ui.Ctrl, ui.KeyEqual)
+	zoomRow, zoomCol, ok := app.board.cellAt(app.game, px-r.X, py-r.Y)
+	if !ok {
+		t.Fatal("pointer out of bounds after zoom")
+	}
+	if app.board.HoverRow != zoomRow || app.board.HoverCol != zoomCol {
+		t.Fatalf("hover row/col stale after zoom: hover=(%d,%d) actual=(%d,%d)", app.board.HoverRow, app.board.HoverCol, zoomRow, zoomCol)
+	}
+	wantZoomHint := app.game.InspectNumberHover(zoomRow, zoomCol, app.flagMode)
+	if app.board.LastHoverHint.Kind != wantZoomHint.Kind || app.board.LastHoverHint.Center != wantZoomHint.Center {
+		t.Fatalf("hover hint stale after zoom: got=%+v want=%+v", app.board.LastHoverHint, wantZoomHint)
+	}
+
+	// Drag viewport so pointer ends up over (31,31) upon release without an extra Move.
+	app.board.center(app.game, 25, 25)
+	tt.Frame()
+	x21 := r.X + (21.5)*app.board.Cell - app.board.X
+	y21 := r.Y + (21.5)*app.board.Cell - app.board.Y
+	x31 := r.X + (31.5)*app.board.Cell - app.board.X
+	y31 := r.Y + (31.5)*app.board.Cell - app.board.Y
+	// Panning maps canvas(31,31) -> (x21,y21) when dragging from x31->x21... wait:
+	// Dragging right/down moves v.X/v.Y opposite to delta: to bring (31,31) under release point (x21,y21),
+	// start at (x31, y31) and drag to (x21, y21) so delta = (x21-x31, y21-y31), v.X += x31-x21 -> (31,31) lands at (x21,y21)!
+	tt.Press(x31, y31)
+	tt.Move(x21, y21)
+	tt.Release(x21, y21)
+	dragRow, dragCol, ok := app.board.cellAt(app.game, x21-r.X, y21-r.Y)
+	if !ok || dragRow != 31 || dragCol != 31 {
+		t.Fatalf("expected (31,31) under drag release point, got (%d,%d) ok=%v", dragRow, dragCol, ok)
+	}
+	if app.board.HoverRow != 31 || app.board.HoverCol != 31 {
+		t.Fatalf("hover stale after drag release: hover=(%d,%d)", app.board.HoverRow, app.board.HoverCol)
+	}
+	if app.board.LastHoverHint.Kind != HintClaimable || app.board.LastHoverHint.Center != 31*60+31 {
+		t.Fatalf("expected HintClaimable centered at (31,31) after drag, got %+v", app.board.LastHoverHint)
+	}
+	tt.ClickAt(x21, y21)
+	if !app.game.Cell(30, 30).Flagged || app.game.duel.PlayerScore != 75 {
+		t.Fatalf("expected click at release point to claim (30,30), flagged=%v score=%d", app.game.Cell(30, 30).Flagged, app.game.duel.PlayerScore)
+	}
+
+	// Moving pointer off board onto HUD clears hover hint cleanly.
+	hudR, ok := tt.Find("回到战场")
+	if !ok {
+		t.Fatal("HUD button missing")
+	}
+	tt.Move(hudR.X+hudR.W/2, hudR.Y+hudR.H/2)
+	tt.Frame()
+	if app.board.HoverRow != -1 || app.board.LastHoverHint.Kind != HintNone {
+		t.Fatalf("expected hover cleared when leaving board, hover=(%d,%d) hint=%+v", app.board.HoverRow, app.board.HoverCol, app.board.LastHoverHint)
+	}
+}
+
 func TestDuelFloatingScorePopupsAndRippleLifecycle(t *testing.T) {
 	app := newMinesweeperApp(42)
 	app.diffIdx = 4
