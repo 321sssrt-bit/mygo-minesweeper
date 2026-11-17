@@ -54,3 +54,7 @@ GitHub Issues，用 `gh` 操作，领域标签与里程碑也在那里。See `do
 ### Domain docs
 
 Single-context：根目录 `GLOSSARY.md` + `docs/adr/`。See `docs/agents/domain.md`.
+
+### 派车
+
+用 tower-console 派车或给候选车时，阵容与模型 ID 以本仓库为准。See `docs/agents/tower-console.md`.
