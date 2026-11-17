@@ -30,7 +30,7 @@ MyGO!!!!! 迷子扫雷：纯 Go 桌面扫雷同人作品，界面基于 egoist/m
 ## 字体与截图
 
 - 字体是按源码字符串子集化的霞鹜文楷。改了任何界面字符串就运行 `go generate`（需要 `pip install fonttools`），否则 `TestEmbeddedFontCoversCopy` 会失败。
-- 样张与 README 截图：`MYGO_SNAPSHOT_DIR=<目录> go test -run TestSnapshot .`
+- 样张与 README 截图：`MYGO_SNAPSHOT_DIR=<目录> go test -run TestSnapshot .`，输出 `<场景>-<视口>-<day|night>.png`（场景 live/won/lost/duel，视口 small/default/large）。在另一份检出（如 master）上换目录重跑同一命令，即得同名的「修改前」对比图。
 
 ## 测试
 
