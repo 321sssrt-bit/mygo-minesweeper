@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -285,10 +286,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 	a.pendingRow, a.pendingCol = -1, -1
 
 	m := FindMember(a.memberID)
-	if res.QuoteEvent != "" {
-		a.quote = PickQuote(a.memberID, res.QuoteEvent)
-		a.pushChat(m.Name, m.ColorHex, a.quote)
-	}
+	a.applyQuote(res.QuoteEvent)
 
 	switch res.Kind {
 	case ActionShielded:
@@ -327,15 +325,29 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 		c.Toast(fmt.Sprintf("《%s》Live 大成功！用时 %ds", a.game.Difficulty.Song, a.elapsed))
 	}
 
-	for _, memeID := range res.NewMemes {
-		if !a.unlockedMemes[memeID] {
-			a.unlockedMemes[memeID] = true
-			for _, meme := range AllMemes {
-				if meme.ID == memeID {
-					c.Toast("解锁名场面：「" + meme.Title + "」")
-					a.pushChat("名场面解锁", "#E8A849", "★ "+meme.Title+" — "+meme.Desc)
-					break
-				}
+	a.unlockMemes(c, res.NewMemes)
+}
+
+func (a *minesweeperApp) applyQuote(event string) {
+	if event == "" {
+		return
+	}
+	m := FindMember(a.memberID)
+	a.quote = PickQuote(a.memberID, event)
+	a.pushChat(m.Name, m.ColorHex, a.quote)
+}
+
+func (a *minesweeperApp) unlockMemes(c *ui.Context, memeIDs []string) {
+	for _, memeID := range memeIDs {
+		if a.unlockedMemes[memeID] {
+			continue
+		}
+		a.unlockedMemes[memeID] = true
+		for _, meme := range AllMemes {
+			if meme.ID == memeID {
+				c.Toast("解锁名场面：「" + meme.Title + "」")
+				a.pushChat("名场面解锁", "#E8A849", "★ "+meme.Title+" — "+meme.Desc)
+				break
 			}
 		}
 	}
@@ -375,6 +387,19 @@ func (a *minesweeperApp) activeTheme() *ui.Theme {
 	return t
 }
 
+func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string) {
+	d := a.game.duel
+	a.duelEnded = true
+	a.pushChat("决斗结算", "#E8A849", result)
+	a.applyQuote(d.QuoteEvent)
+	a.unlockMemes(c, d.NewMemes)
+	if slices.Contains(d.NewMemes, MemeHaruhikage) {
+		a.haruhikageIntro = true
+		a.haruhikageIntroStart = now
+	}
+	c.ToastAction(result, "再战一局", func() { a.resetGame(false) })
+}
+
 func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 	if !a.isDuel() {
 		return
@@ -395,7 +420,6 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 		}
 		if tick.Finished {
 			a.elapsed = int(d.Duration)
-			a.duelEnded = true
 			result := "平局！这一百万格的迷茫，恰好一人一半"
 			if d.PlayerScore > d.AIScore {
 				result = fmt.Sprintf("决斗胜利！%d : %d · 赢了就是赢了！", d.PlayerScore, d.AIScore)
@@ -403,15 +427,12 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 			} else if d.PlayerScore < d.AIScore {
 				result = fmt.Sprintf("决斗惜败 %d : %d · 这局剪掉不准发到 SNS 上！", d.PlayerScore, d.AIScore)
 			}
-			a.pushChat("决斗结算", "#E8A849", result)
-			c.ToastAction(result, "再战一局", func() { a.resetGame(false) })
+			a.settleDuel(c, now, result)
 		}
 	}
 	if a.game.Status == StatusWon && !a.duelEnded {
-		a.duelEnded = true
 		result := fmt.Sprintf("清盘决斗结算：你 %d · 灯 (AI) %d", d.PlayerScore, d.AIScore)
-		a.pushChat("决斗结算", "#E8A849", result)
-		c.ToastAction(result, "再战一局", func() { a.resetGame(false) })
+		a.settleDuel(c, now, result)
 	}
 	a.lastTick = now
 	if a.game.Status == StatusPlaying {

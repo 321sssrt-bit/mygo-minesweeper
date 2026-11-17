@@ -587,6 +587,183 @@ func TestHaruhikagePresentationFollowsMarkerNotID(t *testing.T) {
 	}
 }
 
+func TestDuelHaruhikageDefeatPresentation(t *testing.T) {
+	setupTimedDuel := func(marked bool, player, ai int, preUnlocked bool) (*minesweeperApp, *ui.Tester) {
+		app := newMinesweeperApp(42)
+		app.memberID = MemberTomori
+		if preUnlocked {
+			app.unlockedMemes[MemeHaruhikage] = true
+		}
+		app.game = NewGame(Difficulty{
+			ID:           "duel-test",
+			Label:        "决斗测试",
+			Song:         "春日影",
+			Gameplay:     GameplayDuel,
+			Haruhikage:   marked,
+			Rows:         5,
+			Cols:         5,
+			Mines:        1,
+			DuelDuration: 1,
+			AIInterval:   10,
+		}, true, MemberTomori, 7)
+		app.game.FirstClick = true
+		app.game.Status = StatusPlaying
+		app.game.duel.PlayerScore = player
+		app.game.duel.AIScore = ai
+
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.Advance(1100 * time.Millisecond)
+		return app, tt
+	}
+
+	// Case 1: Marked duel timeout score loss plays drama overlay, unlocks meme, emits quote, and click-to-skip opens AlertDialog once.
+	app1, tt1 := setupTimedDuel(true, 10, 100, false)
+	if !app1.duelEnded || !app1.haruhikageIntro || app1.haruhikageAlert || !tt1.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage overlay on marked duel score loss, ended=%v intro=%v alert=%v", app1.duelEnded, app1.haruhikageIntro, app1.haruhikageAlert)
+	}
+	if !app1.unlockedMemes[MemeHaruhikage] {
+		t.Fatalf("expected MemeHaruhikage unlocked on marked duel score loss")
+	}
+	if wantQuote := memberQuotes[MemberTomori]["haruhikageLost"][0]; app1.quote != wantQuote {
+		t.Fatalf("expected haruhikageLost quote %q, got %q", wantQuote, app1.quote)
+	}
+	if err := tt1.Click("春日影演出遮罩"); err != nil {
+		t.Fatalf("failed clicking duel drama overlay: %v", err)
+	}
+	if app1.haruhikageIntro || !app1.haruhikageAlert || !tt1.HasText("为什么要演奏春日影？！") {
+		t.Fatalf("expected click-to-skip to open AlertDialog, intro=%v alert=%v", app1.haruhikageIntro, app1.haruhikageAlert)
+	}
+	if err := tt1.Click("对不起，我错了"); err != nil {
+		t.Fatalf("failed clicking forgive button: %v", err)
+	}
+	tt1.Frame()
+	if app1.haruhikageAlert || app1.haruhikageIntro || tt1.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected dialog dismissed without retriggering, intro=%v alert=%v", app1.haruhikageIntro, app1.haruhikageAlert)
+	}
+	if err := tt1.Click("再战一局"); err != nil {
+		t.Fatalf("failed clicking ToastAction rematch button: %v", err)
+	}
+	if app1.duelEnded || app1.game.Status != StatusIdle {
+		t.Fatalf("expected ToastAction rematch reset, ended=%v status=%v", app1.duelEnded, app1.game.Status)
+	}
+
+	// Case 2: Replayability + timed auto-transition + restart reset cleanup.
+	app2, tt2 := setupTimedDuel(true, 10, 100, true)
+	if !app2.haruhikageIntro || app2.haruhikageAlert {
+		t.Fatalf("expected replayable Haruhikage overlay even when meme already unlocked, intro=%v alert=%v", app2.haruhikageIntro, app2.haruhikageAlert)
+	}
+	tt2.Advance(haruhikageIntroDuration + 50*time.Millisecond)
+	if app2.haruhikageIntro || !app2.haruhikageAlert || !tt2.HasText("为什么要演奏春日影？！") {
+		t.Fatalf("expected timed transition to AlertDialog, intro=%v alert=%v", app2.haruhikageIntro, app2.haruhikageAlert)
+	}
+	if err := tt2.Click("一辈子重开"); err != nil {
+		t.Fatalf("failed clicking restart button: %v", err)
+	}
+	if app2.duelEnded || app2.haruhikageAlert || app2.haruhikageIntro || !app2.haruhikageIntroStart.IsZero() {
+		t.Fatalf("expected full reset cleanup after duel restart, ended=%v intro=%v alert=%v", app2.duelEnded, app2.haruhikageIntro, app2.haruhikageAlert)
+	}
+
+	// Case 3: Cleared-board marked duel score loss also plays the drama presentation.
+	app3 := newMinesweeperApp(42)
+	app3.memberID = MemberTomori
+	app3.game = NewGame(Difficulty{
+		ID:           "duel-clear",
+		Gameplay:     GameplayDuel,
+		Haruhikage:   true,
+		Rows:         5,
+		Cols:         5,
+		Mines:        24,
+		DuelDuration: 60,
+		AIInterval:   10,
+	}, true, MemberTomori, 7)
+	app3.game.duel.AIScore = 500
+	tt3 := ui.NewTester(app3.view, 1280, 900)
+	app3.pendingResult = app3.game.Reveal(0, 0)
+	tt3.Frame()
+	if !app3.duelEnded || !app3.haruhikageIntro || app3.haruhikageAlert || !tt3.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage overlay on cleared-board marked duel loss, ended=%v intro=%v alert=%v", app3.duelEnded, app3.haruhikageIntro, app3.haruhikageAlert)
+	}
+	if !app3.unlockedMemes[MemeHaruhikage] || app3.unlockedMemes[MemeForever] {
+		t.Fatalf("expected MemeHaruhikage without MemeForever on cleared-board loss, unlocked=%v", app3.unlockedMemes)
+	}
+	if wantQuote := memberQuotes[MemberTomori]["haruhikageLost"][0]; app3.quote != wantQuote {
+		t.Fatalf("expected haruhikageLost quote %q after score-loss clear, got %q", wantQuote, app3.quote)
+	}
+	if err := tt3.Click("春日影演出遮罩"); err != nil {
+		t.Fatalf("failed skipping overlay in cleared-board case: %v", err)
+	}
+	if err := tt3.Click("对不起，我错了"); err != nil {
+		t.Fatalf("failed dismissing dialog in cleared-board case: %v", err)
+	}
+	tt3.Key(0, ui.KeyR)
+	if app3.duelEnded || app3.haruhikageIntro || app3.haruhikageAlert || !app3.haruhikageIntroStart.IsZero() || app3.game.Status != StatusIdle {
+		t.Fatalf("expected KeyR reset cleanup after dialog dismiss, ended=%v intro=%v alert=%v status=%v", app3.duelEnded, app3.haruhikageIntro, app3.haruhikageAlert, app3.game.Status)
+	}
+
+	// Case 3b: AI-initiated board clear with player trailing on score also plays the drama presentation.
+	appAI := newMinesweeperApp(42)
+	appAI.memberID = MemberTomori
+	appAI.game = NewGame(Difficulty{
+		ID:           "duel-ai-clear",
+		Gameplay:     GameplayDuel,
+		Haruhikage:   true,
+		Rows:         5,
+		Cols:         5,
+		Mines:        23,
+		DuelDuration: 60,
+		AIInterval:   0.5,
+	}, true, MemberTomori, 7)
+	appAI.game.FirstClick = true
+	appAI.game.Status = StatusPlaying
+	for i := range appAI.game.Cells {
+		appAI.game.Cells[i].IsMine = true
+	}
+	appAI.game.Cells[23].IsMine = false
+	appAI.game.Cells[24].IsMine = false
+	appAI.game.RecomputeAdjacency()
+	appAI.game.Cells[23].Revealed = true
+	appAI.game.RevealedSafe = 1
+	for _, n := range appAI.game.Neighbors(4, 3) {
+		if n.IsMine {
+			n.Flagged = true
+			n.FlagOwner = DuelAI
+		}
+	}
+	appAI.game.duel.frontier[24] = true
+	appAI.game.duel.AIScore = 500
+	appAI.game.duel.NextAI = 0.2
+	ttAI := ui.NewTester(appAI.view, 1280, 900)
+	ttAI.Advance(300 * time.Millisecond)
+	if !appAI.duelEnded || !appAI.haruhikageIntro || appAI.haruhikageAlert || !ttAI.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage overlay on AI-cleared score loss, ended=%v intro=%v alert=%v", appAI.duelEnded, appAI.haruhikageIntro, appAI.haruhikageAlert)
+	}
+
+	// Case 4: Marked draw, marked win, and unmarked score loss never show the overlay or dialog.
+	for _, tc := range []struct {
+		name       string
+		marked     bool
+		player, ai int
+	}{
+		{"marked draw", true, 100, 100},
+		{"marked win", true, 200, 100},
+		{"unmarked loss", false, 10, 100},
+	} {
+		appN, ttN := setupTimedDuel(tc.marked, tc.player, tc.ai, false)
+		if !appN.duelEnded {
+			t.Fatalf("%s: expected duel settled", tc.name)
+		}
+		if appN.haruhikageIntro || appN.haruhikageAlert || appN.unlockedMemes[MemeHaruhikage] ||
+			ttN.HasText("……为什么要演奏春日影？！") || ttN.HasText("为什么要演奏春日影？！") {
+			t.Fatalf("%s must not trigger Haruhikage presentation or meme, intro=%v alert=%v unlocked=%v",
+				tc.name, appN.haruhikageIntro, appN.haruhikageAlert, appN.unlockedMemes[MemeHaruhikage])
+		}
+		ttN.Advance(haruhikageIntroDuration + 50*time.Millisecond)
+		if appN.haruhikageIntro || appN.haruhikageAlert || ttN.HasText("为什么要演奏春日影？！") {
+			t.Fatalf("%s must not trigger delayed Haruhikage dialog", tc.name)
+		}
+	}
+}
+
 func TestAppIconAndBundleConfig(t *testing.T) {
 	img, err := png.Decode(bytes.NewReader(appIconPNG))
 	if err != nil {
