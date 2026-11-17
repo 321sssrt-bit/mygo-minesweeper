@@ -212,3 +212,227 @@ func TestClassicBoardFitsEveryDifficulty(t *testing.T) {
 		}
 	}
 }
+
+func TestHoverHintClassicAndPublicOnly(t *testing.T) {
+	g := NewGame(Difficulty{ID: "easy", Rows: 5, Cols: 5, Mines: 1}, false, MemberAnon, 42)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	g.Cell(0, 0).IsMine = true
+	g.RecomputeAdjacency()
+	g.Cell(1, 1).Revealed = true
+
+	// Unflagged in Classic -> HintNone (no claimable in Classic).
+	if h := g.InspectNumberHover(1, 1, false); h.Kind != HintNone {
+		t.Fatalf("expected HintNone in unflagged classic cell, got %+v", h)
+	}
+	// Flag (0,0) -> satisfied chord -> HintChordable with remaining neighbors.
+	g.ToggleFlag(0, 0, false)
+	h := g.InspectNumberHover(1, 1, false)
+	if h.Kind != HintChordable || h.Center != 1*5+1 || len(h.Targets) != 7 {
+		t.Fatalf("expected HintChordable with 7 targets, got %+v", h)
+	}
+	// Flag mode disables hint.
+	if hFlag := g.InspectNumberHover(1, 1, true); hFlag.Kind != HintNone {
+		t.Fatalf("expected HintNone when flagMode=true, got %+v", hFlag)
+	}
+	// Finished status disables hint.
+	g.Status = StatusLost
+	if hLost := g.InspectNumberHover(1, 1, false); hLost.Kind != HintNone {
+		t.Fatalf("expected HintNone when StatusLost, got %+v", hLost)
+	}
+
+	// Headless UI Classic hover + flagMode click consistency.
+	app := newMinesweeperApp(42)
+	app.game = NewGame(Difficulty{ID: "easy", Rows: 5, Cols: 5, Mines: 1}, false, MemberAnon, 42)
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	app.game.Cell(0, 0).IsMine = true
+	app.game.RecomputeAdjacency()
+	app.game.Cell(1, 1).Revealed = true
+	app.game.ToggleFlag(0, 0, false)
+
+	tt := ui.NewTester(app.view, 1280, 900)
+	r, ok := tt.Find("cell-1-1")
+	if !ok {
+		t.Fatal("cell-1-1 not found")
+	}
+	tt.Move(r.X+r.W/2, r.Y+r.H/2)
+	tt.Advance(2 * time.Millisecond)
+	if app.classicHoverHint.Kind != HintChordable || len(app.classicHoverHint.Targets) != 7 {
+		t.Fatalf("expected Classic UI hover HintChordable, got %+v", app.classicHoverHint)
+	}
+	// Toggle flagMode -> hint clears cleanly and clicking number doesn't chord.
+	tt.Key(0, ui.KeyF)
+	if app.classicHoverHint.Kind != HintNone {
+		t.Fatalf("expected Classic hover hint cleared in flagMode, got %+v", app.classicHoverHint)
+	}
+	beforeSafe := app.game.RevealedSafe
+	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	if app.game.RevealedSafe != beforeSafe {
+		t.Fatalf("expected no chord when clicking in flagMode")
+	}
+}
+
+func TestBFSRevealWaveBoundedAndClassicRippleLifecycle(t *testing.T) {
+	g := NewGame(Difficulty{ID: "custom", Rows: 20, Cols: 20, Mines: 1}, false, MemberTomori, 7)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	g.Cell(19, 19).IsMine = true
+	g.RecomputeAdjacency()
+
+	res := g.Reveal(0, 0)
+	if res.RevealedCount != 399 {
+		t.Fatalf("expected all 399 safe cells revealed, got %d", res.RevealedCount)
+	}
+	if len(res.RevealWave) != MaxRevealWaveEntries {
+		t.Fatalf("expected bounded RevealWave=%d, got %d", MaxRevealWaveEntries, len(res.RevealWave))
+	}
+	if res.RevealWave[0].Index != 0 || res.RevealWave[0].Depth != 0 {
+		t.Fatalf("expected depth 0 at origin, got %+v", res.RevealWave[0])
+	}
+	prevDepth := -1
+	for _, entry := range res.RevealWave {
+		if entry.Depth < prevDepth {
+			t.Fatalf("expected non-decreasing BFS wave depth, got %d after %d", entry.Depth, prevDepth)
+		}
+		prevDepth = entry.Depth
+	}
+	if prevDepth == 0 {
+		t.Fatalf("expected multi-step BFS depth > 0")
+	}
+
+	// Headless UI Classic ripple activation, virtual-clock decay, and R reset cleanup.
+	app := newMinesweeperApp(42)
+	tt := ui.NewTester(app.view, 1280, 900)
+	if err := tt.Click("cell-4-4"); err != nil {
+		t.Fatalf("click failed: %v", err)
+	}
+	if len(app.ripples) == 0 {
+		t.Fatal("expected ripples populated on Classic flood-fill")
+	}
+	tt.Advance(rippleMaxDelay + rippleDuration + 50*time.Millisecond)
+	if len(app.ripples) != 0 {
+		t.Fatalf("expected ripples expired cleanly under virtual clock, remaining=%d", len(app.ripples))
+	}
+
+	// Trigger another ripple (skill) then immediate R reset.
+	tt.Key(0, ui.KeyE)
+	tt.Key(0, ui.KeyR)
+	if len(app.ripples) != 0 {
+		t.Fatalf("expected ripples cleared on R reset, remaining=%d", len(app.ripples))
+	}
+}
+
+func TestClassicDampedShakeHitTestStabilityAndDecay(t *testing.T) {
+	app := newMinesweeperApp(42)
+	app.memberID = MemberSoyorin
+	app.game = NewGame(Difficulty{ID: "easy", Rows: 5, Cols: 5, Mines: 2, SkillCharges: 1}, true, MemberSoyorin, 7)
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	app.game.Cell(0, 0).IsMine = true
+	app.game.Cell(4, 4).IsMine = true
+	app.game.RecomputeAdjacency()
+
+	tt := ui.NewTester(app.view, 1280, 900)
+	rBefore, ok := tt.Find("cell-0-0")
+	if !ok {
+		t.Fatal("cell-0-0 not found")
+	}
+	hudBefore, ok := tt.Find("演奏中 · 重开 (R)")
+	if !ok {
+		t.Fatal("reset HUD button not found")
+	}
+
+	// Trigger Soyorin shield (lighter 4.5 shake).
+	tt.ClickAt(rBefore.X+rBefore.W/2, rBefore.Y+rBefore.H/2)
+	if !app.game.Cell(0, 0).ShieldSaved {
+		t.Fatal("expected Soyorin shield on (0,0)")
+	}
+	tt.Advance(30 * time.Millisecond)
+	sx, sy := app.currentShakeOffset(tt.Now())
+	if sx == 0 && sy == 0 {
+		t.Fatal("expected non-zero shake offset 30ms after shield")
+	}
+	rDuring, _ := tt.Find("cell-0-0")
+	if rDuring != rBefore {
+		t.Fatalf("Classic cell hit-test bounds shifted during shake: before=%+v during=%+v", rBefore, rDuring)
+	}
+	hudDuring, _ := tt.Find("演奏中 · 重开 (R)")
+	if hudDuring != hudBefore {
+		t.Fatalf("HUD button shifted during shake: before=%+v during=%+v", hudBefore, hudDuring)
+	}
+
+	// Decay to zero past 220ms.
+	tt.Advance(250 * time.Millisecond)
+	sx2, sy2 := app.currentShakeOffset(tt.Now())
+	if sx2 != 0 || sy2 != 0 {
+		t.Fatalf("expected shake decayed to 0, got (%v,%v)", sx2, sy2)
+	}
+
+	// Hit second mine (9.0 shake) then reset immediately via R.
+	mine44, _ := tt.Find("cell-4-4")
+	tt.ClickAt(mine44.X+mine44.W/2, mine44.Y+mine44.H/2)
+	tt.Advance(20 * time.Millisecond)
+	if app.shakeAmplitude != 9.0 {
+		t.Fatalf("expected 9.0 shake amplitude on mine loss, got %v", app.shakeAmplitude)
+	}
+	tt.Key(0, ui.KeyR)
+	if app.shakeAmplitude != 0 || !app.shakeStart.IsZero() {
+		t.Fatalf("expected immediate shake cleanup on R reset")
+	}
+}
+
+func TestHaruhikageLossDramaOverlaySkipTimedAndReset(t *testing.T) {
+	setupHaruhikageLoss := func() (*minesweeperApp, *ui.Tester) {
+		app := newMinesweeperApp(42)
+		app.diffIdx = 2 // 春日影 Live
+		app.game = NewGame(Difficulties[2], true, MemberTomori, 7)
+		app.game.FirstClick = true
+		app.game.Status = StatusPlaying
+		app.game.Cell(0, 0).IsMine = true
+		app.game.RecomputeAdjacency()
+
+		tt := ui.NewTester(app.view, 1280, 900)
+		cell0, ok := tt.Find("cell-0-0")
+		if !ok {
+			t.Fatal("cell-0-0 not found")
+		}
+		tt.ClickAt(cell0.X+cell0.W/2, cell0.Y+cell0.H/2)
+		return app, tt
+	}
+
+	// Flow 1: Click-to-skip isolates click from AlertDialog buttons and board tiles, then dismisses cleanly.
+	app, tt := setupHaruhikageLoss()
+	if !app.haruhikageIntro || app.haruhikageAlert || !tt.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage drama overlay before dialog, intro=%v alert=%v", app.haruhikageIntro, app.haruhikageAlert)
+	}
+	if err := tt.Click("春日影演出遮罩"); err != nil {
+		t.Fatalf("failed clicking drama overlay: %v", err)
+	}
+	if app.haruhikageIntro || !app.haruhikageAlert || !tt.HasText("为什么要演奏春日影？！") {
+		t.Fatalf("expected click-to-skip to open AlertDialog, intro=%v alert=%v", app.haruhikageIntro, app.haruhikageAlert)
+	}
+	if app.game.Status != StatusLost {
+		t.Fatalf("skip click leaked into restart: status=%v", app.game.Status)
+	}
+	if err := tt.Click("对不起，我错了"); err != nil {
+		t.Fatalf("failed clicking forgive button: %v", err)
+	}
+	if app.haruhikageAlert || app.haruhikageIntro || app.game.Status != StatusLost {
+		t.Fatalf("expected dialog dismissed with lost board preserved, intro=%v alert=%v status=%v", app.haruhikageIntro, app.haruhikageAlert, app.game.Status)
+	}
+
+	// Flow 2: Virtual-clock expiration auto-transitions to AlertDialog, and restart resets all overlay state.
+	app2, tt2 := setupHaruhikageLoss()
+	tt2.Advance(haruhikageIntroDuration + 50*time.Millisecond)
+	if app2.haruhikageIntro || !app2.haruhikageAlert || !tt2.HasText("为什么要演奏春日影？！") {
+		t.Fatalf("expected timed transition to AlertDialog, intro=%v alert=%v", app2.haruhikageIntro, app2.haruhikageAlert)
+	}
+	if err := tt2.Click("一辈子重开"); err != nil {
+		t.Fatalf("failed clicking restart button: %v", err)
+	}
+	if app2.game.Status != StatusIdle || app2.haruhikageAlert || app2.haruhikageIntro || !app2.haruhikageIntroStart.IsZero() {
+		t.Fatalf("expected full reset cleanup after restart, status=%v intro=%v alert=%v", app2.game.Status, app2.haruhikageIntro, app2.haruhikageAlert)
+	}
+}
+

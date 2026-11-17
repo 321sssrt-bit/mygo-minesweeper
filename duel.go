@@ -155,6 +155,7 @@ func (g *Game) revealDuel(row, col int, owner DuelOwner) ActionResult {
 	if owner == DuelPlayer {
 		d.LastCell = index
 	}
+	beforeScore := d.PlayerScore
 	g.Moves++
 	if start.IsMine {
 		start.Exploded = true
@@ -174,7 +175,7 @@ func (g *Game) revealDuel(row, col int, owner DuelOwner) ActionResult {
 			d.PlayerScore -= 100
 			d.PlayerCombo = 0
 			d.StunnedUntil = d.Elapsed + 2.4
-			return ActionResult{Kind: ActionLost, QuoteEvent: "duelMine", NewMemes: []string{MemeNeverHappy}}
+			return ActionResult{Kind: ActionLost, ScoreDelta: d.PlayerScore - beforeScore, QuoteEvent: "duelMine", NewMemes: []string{MemeNeverHappy}}
 		}
 		d.AIScore -= 100
 		d.NextAI = d.Elapsed + 2.4
@@ -183,7 +184,7 @@ func (g *Game) revealDuel(row, col int, owner DuelOwner) ActionResult {
 	if owner == DuelPlayer {
 		d.PlayerCombo++
 	}
-	revealed := g.revealSafe(start, func(revealedIndex int, cell *Cell) {
+	revealed, wave := g.revealSafe(start, func(revealedIndex int, cell *Cell) {
 		prevOwner := cell.Owner
 		if prevOwner == DuelAI && owner == DuelPlayer {
 			d.PlayerScore++
@@ -200,10 +201,14 @@ func (g *Game) revealDuel(row, col int, owner DuelOwner) ActionResult {
 	} else {
 		d.AIScore += revealed
 	}
-	if g.checkWin() {
-		return ActionResult{Kind: ActionWon, RevealedCount: revealed, QuoteEvent: "won", NewMemes: g.winMemes()}
+	delta := 0
+	if owner == DuelPlayer {
+		delta = d.PlayerScore - beforeScore
 	}
-	return ActionResult{Kind: ActionRevealed, RevealedCount: revealed}
+	if g.checkWin() {
+		return ActionResult{Kind: ActionWon, RevealedCount: revealed, ScoreDelta: delta, QuoteEvent: "won", NewMemes: g.winMemes(), RevealWave: wave}
+	}
+	return ActionResult{Kind: ActionRevealed, RevealedCount: revealed, ScoreDelta: delta, RevealWave: wave}
 }
 
 func (g *Game) flagDuel(row, col int, owner DuelOwner) ActionResult {
@@ -274,6 +279,8 @@ func (g *Game) ClaimDuelMines(row, col int) ActionResult {
 	}
 	if len(nonMines) > 0 {
 		totalRevealed := 0
+		totalDelta := 0
+		var wave []RevealWaveEntry
 		var lastRes ActionResult
 		for _, n := range nonMines {
 			if n.Revealed || n.Flagged {
@@ -281,17 +288,22 @@ func (g *Game) ClaimDuelMines(row, col int) ActionResult {
 			}
 			res := g.revealDuel(n.Row, n.Col, DuelPlayer)
 			totalRevealed += res.RevealedCount
+			totalDelta += res.ScoreDelta
+			wave = appendRevealWave(wave, res.RevealWave)
 			lastRes = res
 			if res.Kind == ActionWon || res.Kind == ActionLost || res.Kind == ActionShielded {
 				lastRes.RevealedCount = totalRevealed
+				lastRes.ScoreDelta = totalDelta
+				lastRes.RevealWave = wave
 				return lastRes
 			}
 		}
 		if totalRevealed > 0 {
-			return ActionResult{Kind: ActionRevealed, RevealedCount: totalRevealed}
+			return ActionResult{Kind: ActionRevealed, RevealedCount: totalRevealed, ScoreDelta: totalDelta, RevealWave: wave}
 		}
 		return lastRes
 	}
+	beforeScore := d.PlayerScore
 	claimed := 0
 	for _, n := range targets {
 		if n.IsMine && !n.Revealed && !n.Flagged && n.Owner != DuelAI {
@@ -309,7 +321,7 @@ func (g *Game) ClaimDuelMines(row, col int) ActionResult {
 	}
 	d.LastCell = row*g.Cols + col
 	d.PlayerScore += claimed * 75
-	return ActionResult{Kind: ActionFlagged, RevealedCount: claimed}
+	return ActionResult{Kind: ActionFlagged, RevealedCount: claimed, ScoreDelta: d.PlayerScore - beforeScore}
 }
 
 func (g *Game) useDuelSkill() ActionResult {
@@ -317,6 +329,7 @@ func (g *Game) useDuelSkill() ActionResult {
 	if !g.BandMode || g.Status != StatusPlaying || g.SkillUsesLeft <= 0 || (d.playerStunned() && g.MemberID != MemberTomori) {
 		return ActionResult{Kind: ActionNoop}
 	}
+	beforeScore := d.PlayerScore
 	g.SkillUsesLeft--
 	g.UsedSkill = true
 	d.ScanUntil = d.Elapsed + 7
@@ -328,7 +341,7 @@ func (g *Game) useDuelSkill() ActionResult {
 	} else if g.MemberID == MemberTaki {
 		d.NextAI += 1.8
 	}
-	return ActionResult{Kind: ActionSkill, QuoteEvent: "skill"}
+	return ActionResult{Kind: ActionSkill, ScoreDelta: d.PlayerScore - beforeScore, QuoteEvent: "skill"}
 }
 
 func (g *Game) ScanAt(row, col int) (count int, active bool) {

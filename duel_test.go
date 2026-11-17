@@ -428,3 +428,273 @@ func TestDuelClaimMinesAndWrongFlagPenalty(t *testing.T) {
 	}
 }
 
+func TestDuelHoverHintsPriorityPublicOnlyAndStun(t *testing.T) {
+	// Strictly public-state check: non-mine cell looks claimable from public numbers alone.
+	g := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	g.Cell(4, 4).IsMine = true
+	g.RecomputeAdjacency()
+	for i := range g.Cells {
+		c := &g.Cells[i]
+		if (c.Row == 0 && c.Col == 0) || c.IsMine {
+			continue
+		}
+		c.Revealed = true
+		c.Owner = DuelPlayer
+		g.RevealedSafe++
+	}
+	g.Cell(1, 1).Adjacent = 1 // 1 unknown neighbor (0,0), even though (0,0).IsMine == false
+	h := g.InspectNumberHover(1, 1, false)
+	if h.Kind != HintClaimable || len(h.Targets) != 1 || h.Targets[0] != 0 {
+		t.Fatalf("expected HintClaimable from public state alone, got %+v", h)
+	}
+
+	// Exploded neighbor counts toward Chordable hint, and stun suppresses hover hints.
+	g2 := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	g2.FirstClick = true
+	g2.Status = StatusPlaying
+	g2.Cell(0, 0).IsMine = true
+	g2.RecomputeAdjacency()
+	g2.Cell(0, 0).Exploded = true
+	g2.Cell(0, 0).Revealed = true
+	g2.Cell(1, 1).Revealed = true
+	ch := g2.InspectNumberHover(1, 1, false)
+	if ch.Kind != HintChordable || len(ch.Targets) != 7 {
+		t.Fatalf("expected HintChordable with 7 targets around exploded mine, got %+v", ch)
+	}
+	g2.duel.StunnedUntil = g2.duel.Elapsed + 2.4
+	if st := g2.InspectNumberHover(1, 1, false); st.Kind != HintNone {
+		t.Fatalf("expected HintNone while stunned, got %+v", st)
+	}
+
+	// Headless UI Duel canvas hover + flagMode toggle + claim click consistency.
+	app := newMinesweeperApp(42)
+	app.diffIdx = 4
+	app.game = NewGame(Difficulty{ID: "duel", Rows: 6, Cols: 6, Mines: 1}, true, MemberAnon, 42)
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	app.game.Cell(0, 0).IsMine = true
+	app.game.RecomputeAdjacency()
+	for i := range app.game.Cells {
+		c := &app.game.Cells[i]
+		if c.Row == 0 && c.Col == 0 {
+			continue
+		}
+		c.Revealed = true
+		c.Owner = DuelPlayer
+		app.game.RevealedSafe++
+	}
+	tt := ui.NewTester(app.view, 1280, 900)
+	app.board.center(app.game, 1, 1)
+	tt.Frame()
+	r, ok := tt.Find("百万格决斗战场")
+	if !ok {
+		t.Fatal("duel board missing")
+	}
+	px := r.X + (1.5)*app.board.Cell - app.board.X
+	py := r.Y + (1.5)*app.board.Cell - app.board.Y
+	tt.Move(px, py)
+	if app.board.LastHoverHint.Kind != HintClaimable {
+		t.Fatalf("expected duel canvas LastHoverHint=HintClaimable, got %+v", app.board.LastHoverHint)
+	}
+	tt.Key(0, ui.KeyF)
+	tt.Frame()
+	if app.board.LastHoverHint.Kind != HintNone {
+		t.Fatalf("expected duel LastHoverHint=HintNone in flagMode, got %+v", app.board.LastHoverHint)
+	}
+	tt.Key(0, ui.KeyF)
+	tt.ClickAt(px, py)
+	if app.game.duel.PlayerScore != 75 || !app.game.Cell(0, 0).Flagged {
+		t.Fatalf("expected left click on HintClaimable cell to claim mine (+75), score=%d flagged=%v", app.game.duel.PlayerScore, app.game.Cell(0, 0).Flagged)
+	}
+}
+
+func TestDuelFloatingScorePopupsAndRippleLifecycle(t *testing.T) {
+	app := newMinesweeperApp(42)
+	app.diffIdx = 4
+	app.game = NewGame(Difficulty{ID: "duel", Rows: 12, Cols: 12, Mines: 1}, true, MemberAnon, 42)
+	app.game.Cell(11, 11).IsMine = true
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	app.game.RecomputeAdjacency()
+
+	tt := ui.NewTester(app.view, 1280, 900)
+	app.board.center(app.game, 5, 5)
+	tt.Frame()
+	r, _ := tt.Find("百万格决斗战场")
+
+	// Normal flag placement has ScoreDelta==0 -> must NOT spawn a "+0" popup.
+	tt.Key(0, ui.KeyF)
+	fx := r.X + 0.5*app.board.Cell - app.board.X
+	fy := r.Y + 0.5*app.board.Cell - app.board.Y
+	tt.ClickAt(fx, fy)
+	if len(app.duelPopups) != 0 {
+		t.Fatalf("expected no popup for 0-score flag, got %+v", app.duelPopups)
+	}
+	tt.Key(0, ui.KeyF)
+
+	// Unflag (0,1) so large reveal opens nearly full board (combo/large opening popup + BFS ripples).
+	app.game.UnflagDuel(0, 1)
+	app.game.duel.PlayerCombo = 3
+	cx := r.X + 5.5*app.board.Cell - app.board.X
+	cy := r.Y + 5.5*app.board.Cell - app.board.Y
+	tt.ClickAt(cx, cy)
+	if len(app.ripples) == 0 {
+		t.Fatal("expected ripples on large duel opening")
+	}
+	if len(app.duelPopups) != 1 || app.duelPopups[0].Text == "" {
+		t.Fatalf("expected 1 popup on large duel opening, got %+v", app.duelPopups)
+	}
+
+	// Claimable mine popup (+75 收雷!) + bounded cap test.
+	gClaim := NewGame(Difficulty{ID: "duel", Rows: 6, Cols: 6, Mines: 1}, true, MemberAnon, 42)
+	gClaim.FirstClick = true
+	gClaim.Status = StatusPlaying
+	gClaim.Cell(0, 0).IsMine = true
+	gClaim.RecomputeAdjacency()
+	for i := range gClaim.Cells {
+		c := &gClaim.Cells[i]
+		if c.Row == 0 && c.Col == 0 {
+			continue
+		}
+		c.Revealed = true
+		c.Owner = DuelPlayer
+		gClaim.RevealedSafe++
+	}
+	resClaim := gClaim.ClaimDuelMines(1, 1)
+	app.game = gClaim
+	for i := 0; i < maxDuelPopups+4; i++ {
+		app.spawnDuelPopup(1, 1, resClaim, tt.Now())
+	}
+	if len(app.duelPopups) != maxDuelPopups {
+		t.Fatalf("expected duelPopups capped at %d, got %d", maxDuelPopups, len(app.duelPopups))
+	}
+	if app.duelPopups[len(app.duelPopups)-1].Text != "+75 收雷!" {
+		t.Fatalf("expected real score delta popup '+75 收雷!', got %q", app.duelPopups[len(app.duelPopups)-1].Text)
+	}
+
+	// Expire both ripples and popups via virtual clock.
+	tt.Advance(duelPopupDuration + rippleMaxDelay + rippleDuration + 50*time.Millisecond)
+	if len(app.duelPopups) != 0 || len(app.ripples) != 0 {
+		t.Fatalf("expected popups & ripples expired under virtual clock, popups=%d ripples=%d", len(app.duelPopups), len(app.ripples))
+	}
+
+	// Trigger popup then immediate R reset cleanup.
+	app.spawnDuelPopup(1, 1, resClaim, tt.Now())
+	tt.Key(0, ui.KeyR)
+	if len(app.duelPopups) != 0 || len(app.ripples) != 0 {
+		t.Fatalf("expected popups & ripples cleared on R reset, popups=%d ripples=%d", len(app.duelPopups), len(app.ripples))
+	}
+}
+
+func TestDuelShakeBoundsAndStunWarningHUD(t *testing.T) {
+	app := newMinesweeperApp(42)
+	app.diffIdx = 4
+	app.memberID = MemberTomori
+	app.game = NewGame(Difficulty{ID: "duel", Rows: 8, Cols: 8, Mines: 2, SkillCharges: 1}, true, MemberTomori, 42)
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	app.game.Cell(3, 3).IsMine = true
+	app.game.Cell(4, 4).IsMine = true
+	app.game.RecomputeAdjacency()
+
+	tt := ui.NewTester(app.view, 1280, 900)
+	app.board.center(app.game, 3, 3)
+	tt.Frame()
+	boardBefore, ok := tt.Find("百万格决斗战场")
+	if !ok {
+		t.Fatal("duel board not found")
+	}
+	hudBefore, ok := tt.Find("回到战场")
+	if !ok {
+		t.Fatal("duel HUD button not found")
+	}
+
+	// Click mine at (3,3) -> 9.0 shake + 2.4s stun + Tomori E cleanse hint!
+	mx := boardBefore.X + (3.5)*app.board.Cell - app.board.X
+	my := boardBefore.Y + (3.5)*app.board.Cell - app.board.Y
+	tt.ClickAt(mx, my)
+	if !app.game.duel.playerStunned() || app.shakeAmplitude != 9.0 {
+		t.Fatalf("expected duel stun + 9.0 shake, stunned=%v amp=%v", app.game.duel.playerStunned(), app.shakeAmplitude)
+	}
+	if !tt.HasText("踩雷硬直中") || !tt.HasText("按 E 发动「创可贴指引」立即解除硬直") {
+		t.Fatal("expected stun countdown banner with Tomori E cleanse hint")
+	}
+
+	// Verify shake offset active after 30ms without shifting duel board or HUD bounds.
+	tt.Advance(30 * time.Millisecond)
+	sx, sy := app.currentShakeOffset(tt.Now())
+	if sx == 0 && sy == 0 {
+		t.Fatal("expected active duel shake at 30ms")
+	}
+	boardDuring, _ := tt.Find("百万格决斗战场")
+	hudDuring, _ := tt.Find("回到战场")
+	if boardDuring != boardBefore || hudDuring != hudBefore {
+		t.Fatalf("duel stage or HUD bounds moved during shake: board=%+v/%+v hud=%+v/%+v", boardBefore, boardDuring, hudBefore, hudDuring)
+	}
+
+	// Press E with Tomori -> cleanses stun immediately and hides banner!
+	tt.Key(0, ui.KeyE)
+	if app.game.duel.playerStunned() || tt.HasText("踩雷硬直中") {
+		t.Fatal("expected Tomori E cleanse to clear stun banner immediately")
+	}
+
+	// Stun again when Tomori has 0 skill charges -> must show exhausted message, NOT "按 E 发动".
+	tt.ClickAt(boardBefore.X+(4.5)*app.board.Cell-app.board.X, boardBefore.Y+(4.5)*app.board.Cell-app.board.Y)
+	if !app.game.duel.playerStunned() {
+		t.Fatal("expected second stun")
+	}
+	if tt.HasText("按 E 发动「创可贴指引」立即解除硬直") || !tt.HasText("技能充能已耗尽 · 等待硬直自然结束") {
+		t.Fatal("expected exhausted-charge copy instead of E cleanse hint")
+	}
+
+	// Switch copy check for non-Tomori member (Anon).
+	app.memberID = MemberAnon
+	app.game.MemberID = MemberAnon
+	app.game.SkillUsesLeft = 1
+	tt.Frame()
+	if tt.HasText("按 E 发动") || !tt.HasText("暂无法操作棋盘 · 等待硬直结束") {
+		t.Fatal("expected non-Tomori stun copy without E cleanse hint")
+	}
+
+	// Keep AI from clearing the tiny 8x8 fixture before the 2.4s natural stun check.
+	app.game.duel.NextAI = 999
+	// Natural expiration after 2.4s clears shake & stun banner while still playing.
+	tt.Advance(2500 * time.Millisecond)
+	if app.game.duel.playerStunned() || tt.HasText("踩雷硬直中") {
+		t.Fatalf("expected stun banner hidden after 2.4s: elapsed=%v stunnedUntil=%v stunned=%v hasText=%v status=%v",
+			app.game.duel.Elapsed, app.game.duel.StunnedUntil, app.game.duel.playerStunned(), tt.HasText("踩雷硬直中"), app.game.Status)
+	}
+	sxEnd, syEnd := app.currentShakeOffset(tt.Now())
+	if sxEnd != 0 || syEnd != 0 {
+		t.Fatalf("expected shake zeroed, got (%v,%v)", sxEnd, syEnd)
+	}
+
+	// Reset while stunned clears banner and shake immediately.
+	app.game.duel.StunnedUntil = app.game.duel.Elapsed + 2.4
+	app.triggerShake(tt.Now(), 9.0, 320*time.Millisecond)
+	tt.Frame()
+	if !tt.HasText("踩雷硬直中") {
+		t.Fatal("expected stun banner before R reset")
+	}
+	tt.Key(0, ui.KeyR)
+	if app.game.duel.playerStunned() || tt.HasText("踩雷硬直中") || app.shakeAmplitude != 0 {
+		t.Fatal("expected R reset to clear stun banner and shake immediately")
+	}
+
+	// Duel finish while stunned immediately hides stun banner.
+	app.game.Status = StatusPlaying
+	app.game.duel.StunnedUntil = app.game.duel.Elapsed + 2.4
+	tt.Frame()
+	if !tt.HasText("踩雷硬直中") {
+		t.Fatal("expected stun banner before duel finish")
+	}
+	app.game.TickDuel(300)
+	tt.Frame()
+	if app.game.Status != StatusWon || tt.HasText("踩雷硬直中") {
+		t.Fatalf("expected stun banner hidden on duel finish: status=%v hasText=%v", app.game.Status, tt.HasText("踩雷硬直中"))
+	}
+}
+
+

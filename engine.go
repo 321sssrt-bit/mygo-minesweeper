@@ -110,11 +110,34 @@ const (
 	ActionSkill    ActionKind = "skill"
 )
 
+const MaxRevealWaveEntries = 256
+
+type RevealWaveEntry struct {
+	Index int
+	Depth int
+}
+
+type HoverHintKind uint8
+
+const (
+	HintNone HoverHintKind = iota
+	HintClaimable
+	HintChordable
+)
+
+type HoverHint struct {
+	Kind    HoverHintKind
+	Center  int
+	Targets []int
+}
+
 type ActionResult struct {
 	Kind          ActionKind
 	RevealedCount int
+	ScoreDelta    int
 	QuoteEvent    string
 	NewMemes      []string
+	RevealWave    []RevealWaveEntry
 }
 
 type Game struct {
@@ -275,14 +298,64 @@ func (g *Game) RecomputeAdjacency() {
 	}
 }
 
-func (g *Game) revealSafe(start *Cell, onReveal func(int, *Cell)) int {
+func appendRevealWave(dst []RevealWaveEntry, src []RevealWaveEntry) []RevealWaveEntry {
+	if len(dst) >= MaxRevealWaveEntries || len(src) == 0 {
+		return dst
+	}
+	remain := MaxRevealWaveEntries - len(dst)
+	if len(src) > remain {
+		src = src[:remain]
+	}
+	return append(dst, src...)
+}
+
+func (g *Game) InspectNumberHover(row, col int, flagMode bool) HoverHint {
+	if flagMode || g.Status != StatusPlaying {
+		return HoverHint{Kind: HintNone}
+	}
+	if g.duel != nil && g.duel.playerStunned() {
+		return HoverHint{Kind: HintNone}
+	}
+	center := g.Cell(row, col)
+	if center == nil || !center.Revealed || center.Exploded || center.Adjacent <= 0 {
+		return HoverHint{Kind: HintNone}
+	}
+	var targets []int
+	knownMines := 0
+	for _, n := range g.Neighbors(row, col) {
+		if !n.Revealed && !n.Flagged {
+			targets = append(targets, n.Row*g.Cols+n.Col)
+		}
+		if n.Flagged || (g.duel != nil && n.Exploded) {
+			knownMines++
+		}
+	}
+	if len(targets) == 0 {
+		return HoverHint{Kind: HintNone}
+	}
+	centerIdx := row*g.Cols + col
+	if g.duel != nil && len(targets) == center.Adjacent-knownMines {
+		return HoverHint{Kind: HintClaimable, Center: centerIdx, Targets: targets}
+	}
+	if knownMines == center.Adjacent {
+		return HoverHint{Kind: HintChordable, Center: centerIdx, Targets: targets}
+	}
+	return HoverHint{Kind: HintNone}
+}
+
+func (g *Game) revealSafe(start *Cell, onReveal func(int, *Cell)) (int, []RevealWaveEntry) {
+	type bfsNode struct {
+		index int
+		depth int
+	}
 	startIndex := start.Row*g.Cols + start.Col
-	queue := []int{startIndex}
+	queue := []bfsNode{{index: startIndex, depth: 0}}
 	visited := map[int]bool{startIndex: true}
 	revealed := 0
+	wave := make([]RevealWaveEntry, 0, 32)
 	for head := 0; head < len(queue); head++ {
-		index := queue[head]
-		cur := &g.Cells[index]
+		node := queue[head]
+		cur := &g.Cells[node.index]
 		if cur.Revealed || cur.Flagged || cur.IsMine {
 			continue
 		}
@@ -291,8 +364,11 @@ func (g *Game) revealSafe(start *Cell, onReveal func(int, *Cell)) int {
 		cur.WrongFlag = false
 		g.RevealedSafe++
 		revealed++
+		if len(wave) < MaxRevealWaveEntries {
+			wave = append(wave, RevealWaveEntry{Index: node.index, Depth: node.depth})
+		}
 		if onReveal != nil {
-			onReveal(index, cur)
+			onReveal(node.index, cur)
 		}
 		if cur.Adjacent != 0 {
 			continue
@@ -309,12 +385,12 @@ func (g *Game) revealSafe(start *Cell, onReveal func(int, *Cell)) int {
 				next := n.Row*g.Cols + n.Col
 				if !visited[next] && !n.Revealed && !n.Flagged && !n.IsMine {
 					visited[next] = true
-					queue = append(queue, next)
+					queue = append(queue, bfsNode{index: next, depth: node.depth + 1})
 				}
 			}
 		}
 	}
-	return revealed
+	return revealed, wave
 }
 
 func (g *Game) adjustGravity(delta int) {
@@ -371,7 +447,7 @@ func (g *Game) Reveal(row, col int) ActionResult {
 		return ActionResult{Kind: ActionLost, QuoteEvent: quoteEvent, NewMemes: memes}
 	}
 
-	revealed := g.revealSafe(start, nil)
+	revealed, wave := g.revealSafe(start, nil)
 
 	if start.Adjacent >= 4 {
 		g.adjustGravity(12)
@@ -387,6 +463,7 @@ func (g *Game) Reveal(row, col int) ActionResult {
 			RevealedCount: revealed,
 			QuoteEvent:    "won",
 			NewMemes:      g.winMemes(),
+			RevealWave:    wave,
 		}
 	}
 
@@ -394,7 +471,7 @@ func (g *Game) Reveal(row, col int) ActionResult {
 	if revealed >= 10 {
 		quote = "revealBig"
 	}
-	return ActionResult{Kind: ActionRevealed, RevealedCount: revealed, QuoteEvent: quote}
+	return ActionResult{Kind: ActionRevealed, RevealedCount: revealed, QuoteEvent: quote, RevealWave: wave}
 }
 
 func (g *Game) Chord(row, col int) ActionResult {
@@ -421,12 +498,18 @@ func (g *Game) Chord(row, col int) ActionResult {
 	}
 
 	totalRevealed := 0
+	totalDelta := 0
+	var wave []RevealWaveEntry
 	for _, n := range neighbors {
 		if !n.Revealed && !n.Flagged {
 			res := g.Reveal(n.Row, n.Col)
 			totalRevealed += res.RevealedCount
+			totalDelta += res.ScoreDelta
+			wave = appendRevealWave(wave, res.RevealWave)
 			if res.Kind == ActionLost || res.Kind == ActionShielded || res.Kind == ActionWon {
 				res.RevealedCount = totalRevealed
+				res.ScoreDelta = totalDelta
+				res.RevealWave = wave
 				return res
 			}
 		}
@@ -439,7 +522,7 @@ func (g *Game) Chord(row, col int) ActionResult {
 	if totalRevealed >= 10 {
 		quote = "revealBig"
 	}
-	return ActionResult{Kind: ActionRevealed, RevealedCount: totalRevealed, QuoteEvent: quote}
+	return ActionResult{Kind: ActionRevealed, RevealedCount: totalRevealed, ScoreDelta: totalDelta, QuoteEvent: quote, RevealWave: wave}
 }
 
 func (g *Game) ToggleFlag(row, col int, allowQuestion bool) ActionResult {
@@ -511,7 +594,7 @@ func (g *Game) UseSkill() ActionResult {
 		if res.Kind == ActionWon {
 			return res
 		}
-		return ActionResult{Kind: ActionSkill, RevealedCount: res.RevealedCount, QuoteEvent: "skill"}
+		return ActionResult{Kind: ActionSkill, RevealedCount: res.RevealedCount, QuoteEvent: "skill", RevealWave: res.RevealWave}
 
 	case MemberAnon:
 		pool := g.safeUnrevealedCells(false)
@@ -521,6 +604,7 @@ func (g *Game) UseSkill() ActionResult {
 		g.SkillUsesLeft--
 		g.UsedSkill = true
 		total := 0
+		var wave []RevealWaveEntry
 		for range 2 {
 			rem := g.safeUnrevealedCells(false)
 			if len(rem) == 0 {
@@ -529,11 +613,12 @@ func (g *Game) UseSkill() ActionResult {
 			pick := rem[g.rng.IntN(len(rem))]
 			res := g.Reveal(pick.Row, pick.Col)
 			total += res.RevealedCount
+			wave = appendRevealWave(wave, res.RevealWave)
 			if res.Kind == ActionWon {
-				return ActionResult{Kind: ActionWon, RevealedCount: total, QuoteEvent: "won", NewMemes: g.winMemes()}
+				return ActionResult{Kind: ActionWon, RevealedCount: total, QuoteEvent: "won", NewMemes: g.winMemes(), RevealWave: wave}
 			}
 		}
-		return ActionResult{Kind: ActionSkill, RevealedCount: total, QuoteEvent: "skill"}
+		return ActionResult{Kind: ActionSkill, RevealedCount: total, QuoteEvent: "skill", RevealWave: wave}
 
 	case MemberTaki:
 		pool := g.hiddenUnflaggedMines(true)
@@ -580,7 +665,7 @@ func (g *Game) UseSkill() ActionResult {
 			res.NewMemes = append(res.NewMemes, memes...)
 			return res
 		}
-		return ActionResult{Kind: ActionSkill, RevealedCount: res.RevealedCount, QuoteEvent: "skill", NewMemes: memes}
+		return ActionResult{Kind: ActionSkill, RevealedCount: res.RevealedCount, QuoteEvent: "skill", NewMemes: memes, RevealWave: res.RevealWave}
 	}
 
 	return ActionResult{Kind: ActionNoop}

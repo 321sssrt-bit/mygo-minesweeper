@@ -3,16 +3,39 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
+const (
+	rippleStepDelay         = 24 * time.Millisecond
+	rippleMaxDelay          = 240 * time.Millisecond
+	rippleDuration          = 280 * time.Millisecond
+	duelPopupDuration       = 950 * time.Millisecond
+	maxDuelPopups           = 16
+	haruhikageIntroDuration = 1600 * time.Millisecond
+)
+
 type chatMessage struct {
 	Speaker  string
 	ColorHex string
 	Text     string
+}
+
+type tileRipple struct {
+	Start time.Time
+	Delay time.Duration
+}
+
+type duelPopup struct {
+	Row      int
+	Col      int
+	Text     string
+	ColorHex string
+	Start    time.Time
 }
 
 type minesweeperApp struct {
@@ -24,21 +47,33 @@ type minesweeperApp struct {
 	allowQuestion   bool
 	showMemes       bool
 	haruhikageAlert bool
+	haruhikageIntro bool
 
-	game          *Game
-	quote         string
-	startedAt     time.Time
-	elapsed       int
-	bestTimes     map[string]int
-	unlockedMemes map[string]bool
-	chatLog       []chatMessage
-	seed          uint64
-	board         *boardView
-	lastTick      time.Time
-	pendingResult ActionResult
-	duelNoticeAt  time.Time
-	duelEnded     bool
-	classicSize   float32
+	game                 *Game
+	quote                string
+	startedAt            time.Time
+	elapsed              int
+	bestTimes            map[string]int
+	unlockedMemes        map[string]bool
+	chatLog              []chatMessage
+	seed                 uint64
+	board                *boardView
+	lastTick             time.Time
+	pendingResult        ActionResult
+	pendingRow           int
+	pendingCol           int
+	duelNoticeAt         time.Time
+	duelEnded            bool
+	classicSize          float32
+	ripples              map[int]tileRipple
+	duelPopups           []duelPopup
+	shakeStart           time.Time
+	shakeAmplitude       float32
+	shakeDuration        time.Duration
+	haruhikageIntroStart time.Time
+	classicHoverRow      int
+	classicHoverCol      int
+	classicHoverHint     HoverHint
 }
 
 func newMinesweeperApp(seed ...uint64) *minesweeperApp {
@@ -47,14 +82,18 @@ func newMinesweeperApp(seed ...uint64) *minesweeperApp {
 		s = seed[0]
 	}
 	app := &minesweeperApp{
-		diffIdx:       0,
-		modeIdx:       0,
-		darkMode:      true,
-		memberID:      MemberTomori,
-		bestTimes:     make(map[string]int),
-		unlockedMemes: make(map[string]bool),
-		seed:          s,
-		board:         newBoardView(),
+		diffIdx:         0,
+		modeIdx:         0,
+		darkMode:        true,
+		memberID:        MemberTomori,
+		bestTimes:       make(map[string]int),
+		unlockedMemes:   make(map[string]bool),
+		seed:            s,
+		board:           newBoardView(),
+		pendingRow:      -1,
+		pendingCol:      -1,
+		classicHoverRow: -1,
+		classicHoverCol: -1,
 	}
 	app.resetGame(true)
 	return app
@@ -99,10 +138,23 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.elapsed = 0
 	a.startedAt = time.Time{}
 	a.lastTick = time.Time{}
+	a.pendingResult = ActionResult{}
+	a.pendingRow = -1
+	a.pendingCol = -1
 	a.duelEnded = false
 	a.duelNoticeAt = time.Time{}
 	a.board = newBoardView()
+	a.ripples = nil
+	a.duelPopups = nil
+	a.shakeStart = time.Time{}
+	a.shakeAmplitude = 0
+	a.shakeDuration = 0
 	a.haruhikageAlert = false
+	a.haruhikageIntro = false
+	a.haruhikageIntroStart = time.Time{}
+	a.classicHoverRow = -1
+	a.classicHoverCol = -1
+	a.classicHoverHint = HoverHint{}
 	a.quote = PickQuote(a.memberID, "start")
 	m := FindMember(a.memberID)
 	if initial {
@@ -116,6 +168,91 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.pushChat(m.Name, m.ColorHex, a.quote)
 }
 
+func (a *minesweeperApp) enqueueRipple(now time.Time, wave []RevealWaveEntry) {
+	if len(wave) == 0 {
+		return
+	}
+	a.pruneRipples(now)
+	if a.ripples == nil {
+		a.ripples = make(map[int]tileRipple, len(wave))
+	}
+	for _, entry := range wave {
+		if len(a.ripples) >= MaxRevealWaveEntries {
+			break
+		}
+		delay := min(rippleMaxDelay, time.Duration(entry.Depth)*rippleStepDelay)
+		a.ripples[entry.Index] = tileRipple{Start: now, Delay: delay}
+	}
+}
+
+func (a *minesweeperApp) pruneRipples(now time.Time) {
+	for idx, rip := range a.ripples {
+		elapsed := now.Sub(rip.Start)
+		if elapsed < 0 || elapsed >= rip.Delay+rippleDuration {
+			delete(a.ripples, idx)
+		}
+	}
+}
+
+func (a *minesweeperApp) spawnDuelPopup(row, col int, res ActionResult, now time.Time) {
+	if a.game.duel == nil || res.ScoreDelta == 0 {
+		return
+	}
+	shouldShow := res.Kind == ActionFlagged || res.Kind == ActionLost || res.Kind == ActionSkill || res.RevealedCount >= 5 || res.ScoreDelta >= 10
+	if !shouldShow {
+		return
+	}
+	var text, colorHex string
+	switch {
+	case res.Kind == ActionFlagged:
+		text = fmt.Sprintf("+%d 收雷!", res.ScoreDelta)
+		colorHex = "#E8A849"
+	case res.Kind == ActionLost && res.ScoreDelta < 0:
+		text = fmt.Sprintf("%d 踩雷!", res.ScoreDelta)
+		colorHex = "#FB7185"
+	case res.RevealedCount >= 8 || a.game.duel.PlayerCombo >= 3:
+		text = fmt.Sprintf("+%d · 连击×%d", res.ScoreDelta, a.game.duel.PlayerCombo)
+		colorHex = "#38BDF8"
+	default:
+		text = fmt.Sprintf("+%d", res.ScoreDelta)
+		colorHex = "#55B2D6"
+	}
+	kept := a.duelPopups[:0]
+	for _, p := range a.duelPopups {
+		if now.Sub(p.Start) >= 0 && now.Sub(p.Start) < duelPopupDuration {
+			kept = append(kept, p)
+		}
+	}
+	kept = append(kept, duelPopup{Row: row, Col: col, Text: text, ColorHex: colorHex, Start: now})
+	if len(kept) > maxDuelPopups {
+		kept = kept[len(kept)-maxDuelPopups:]
+	}
+	a.duelPopups = kept
+}
+
+func (a *minesweeperApp) triggerShake(now time.Time, amp float32, dur time.Duration) {
+	a.shakeStart = now
+	a.shakeAmplitude = amp
+	a.shakeDuration = dur
+}
+
+func (a *minesweeperApp) currentShakeOffset(now time.Time) (float32, float32) {
+	if a.shakeAmplitude <= 0 || a.shakeStart.IsZero() || a.shakeDuration <= 0 {
+		return 0, 0
+	}
+	elapsed := now.Sub(a.shakeStart)
+	if elapsed < 0 || elapsed >= a.shakeDuration {
+		a.shakeAmplitude = 0
+		return 0, 0
+	}
+	progress := float64(elapsed) / float64(a.shakeDuration)
+	decay := math.Exp(-4.5*progress) * (1 - progress)
+	angle := progress * 2 * math.Pi * 4.5
+	dx := float32(math.Sin(angle) * decay * float64(a.shakeAmplitude))
+	dy := float32(math.Cos(angle*1.3) * decay * float64(a.shakeAmplitude) * 0.65)
+	return dx, dy
+}
+
 func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.Time) {
 	if res.Kind == ActionNoop {
 		return
@@ -123,6 +260,21 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 	if a.game.Status == StatusPlaying && a.game.duel == nil && a.startedAt.IsZero() {
 		a.startedAt = now
 	}
+	a.enqueueRipple(now, res.RevealWave)
+	if a.game.duel != nil {
+		popRow, popCol := a.pendingRow, a.pendingCol
+		if popRow < 0 || popCol < 0 {
+			if a.game.duel.LastCell >= 0 {
+				popRow, popCol = a.game.duel.LastCell/a.game.Cols, a.game.duel.LastCell%a.game.Cols
+			} else if a.board.HoverRow >= 0 && a.board.HoverCol >= 0 {
+				popRow, popCol = a.board.HoverRow, a.board.HoverCol
+			} else {
+				popRow, popCol = a.game.Rows/2, a.game.Cols/2
+			}
+		}
+		a.spawnDuelPopup(popRow, popCol, res, now)
+	}
+	a.pendingRow, a.pendingCol = -1, -1
 
 	m := FindMember(a.memberID)
 	if res.QuoteEvent != "" {
@@ -132,10 +284,12 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 
 	switch res.Kind {
 	case ActionShielded:
+		a.triggerShake(now, 4.5, 220*time.Millisecond)
 		c.Toast("长崎爽世发动了「温柔的微笑」：这次就当没点过吧！")
 	case ActionSkill:
 		c.Toast(fmt.Sprintf("%s 发动「%s」", m.Name, m.SkillName))
 	case ActionLost:
+		a.triggerShake(now, 9.0, 320*time.Millisecond)
 		if a.game.duel != nil {
 			c.Toast("踩雷 −100 · 硬直 2.4 秒！别把春日影点出来")
 			break
@@ -144,7 +298,8 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 			a.elapsed = int(now.Sub(a.startedAt).Seconds())
 		}
 		if a.game.Difficulty.ID == "hard" {
-			a.haruhikageAlert = true
+			a.haruhikageIntro = true
+			a.haruhikageIntroStart = now
 		} else {
 			c.ToastAction("炸团危机！……要假装无事发生重开吗？", "一辈子重开", func() {
 				a.resetGame(false)
@@ -236,6 +391,7 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 		tick := a.game.TickDuel(now.Sub(a.lastTick).Seconds())
 		a.elapsed = int(d.Elapsed)
 		if tick.AITurn != nil && tick.AITurn.Kind != ActionNoop {
+			a.enqueueRipple(now, tick.AITurn.RevealWave)
 			if tick.AITurn.RevealedCount > 0 {
 				a.board.LastEffect = now
 				a.board.EffectCell = tick.AICell
@@ -377,6 +533,35 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	member := FindMember(a.memberID)
 	memberColor := ui.Hex(member.ColorHex)
 	memberTheme := baseTheme.WithAccent(memberColor)
+
+	if a.haruhikageIntro {
+		elapsedIntro := now.Sub(a.haruhikageIntroStart)
+		if elapsedIntro >= haruhikageIntroDuration {
+			a.haruhikageIntro = false
+			a.haruhikageAlert = true
+		} else {
+			remain := haruhikageIntroDuration - elapsedIntro
+			c.After(min(50*time.Millisecond, max(time.Millisecond, remain)))
+			ui.Overlay(c, func() {
+				overlay := ui.Box(c.Key("haruhikage-drama-overlay")).Fill().Modal().
+					Background(ui.Hex("#05070D").Alpha(0.84)).Center().
+					Cursor(ui.CursorPointer).Label("春日影演出遮罩")
+				overlay.Children(func() {
+					ui.Column(c).AlignItems(ui.Center).Gap(10).Padding(24).Radius(14).
+						Background(ui.Hex("#140B16").Alpha(0.95)).Border(1, ui.Hex("#E8A849").Alpha(0.8)).
+						Children(func() {
+							ui.Text(c, "♪ 春日影 (Crychic Ver.) — 演奏中断").FontSize(13).Bold().TextColor(ui.Hex("#E8A849"))
+							ui.Text(c, "「……为什么要演奏春日影？！」").FontSize(22).Bold().TextColor(ui.Hex("#F8FAFC"))
+							ui.Text(c, "（长崎爽世的眼神失去了高光 · 点击任意处继续）").FontSize(12).TextColor(ui.Hex("#CBD5E1"))
+						})
+				})
+				if overlay.Clicked() {
+					a.haruhikageIntro = false
+					a.haruhikageAlert = true
+				}
+			})
+		}
+	}
 
 	// 春日影名场面弹窗
 	switch ui.AlertDialog(c, &a.haruhikageAlert,
@@ -664,7 +849,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					}
 					cellSize = max(22, min(64, min(byWidth, byHeight)))
 					cellFont = max(12, cellSize*0.48)
-					stage := ui.ScrollBoth(c).Grow(1).Draw(func(p *ui.Painter, bounds ui.Rect) {
+					stage := ui.ScrollBoth(c).Grow(1).Clip().Draw(func(p *ui.Painter, bounds ui.Rect) {
 						byWidth := (bounds.W - 28 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
 						byHeight := (bounds.H - 28 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
 						size := max(22, min(64, min(byWidth, byHeight)))
@@ -677,82 +862,173 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						cellSize = a.classicSize
 						cellFont = max(12, cellSize*0.48)
 					}
+					a.pruneRipples(now)
+					if len(a.ripples) > 0 {
+						c.After(16 * time.Millisecond)
+					}
+					shakeX, shakeY := a.currentShakeOffset(now)
+					if shakeX != 0 || shakeY != 0 {
+						c.After(16 * time.Millisecond)
+					}
+					hoverHint := a.game.InspectNumberHover(a.classicHoverRow, a.classicHoverCol, a.flagMode)
+					a.classicHoverHint = hoverHint
+					hintColor := memberColor
+					nextHoverRow, nextHoverCol := -1, -1
+
 					stage.Children(func() {
 						ui.Column(c).FillWidth().AlignItems(ui.Center).Padding(4).Children(func() {
-							ui.Grid(c).Columns(a.game.Cols).Gap(3).Padding(8).Radius(10).
-								Background(t.Background).Border(1, t.Border).Children(func() {
+							grid := ui.Grid(c).Columns(a.game.Cols).Gap(3).Padding(8).Radius(10)
+							if shakeX != 0 || shakeY != 0 {
+								grid.Border(1, ui.Color{}).Draw(func(p *ui.Painter, r ui.Rect) {
+									p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
+										p.Fill(r, t.Background, 10)
+										p.Stroke(r, t.Border, 10, 1)
+									})
+								})
+							} else {
+								grid.Background(t.Background).Border(1, t.Border)
+							}
+							grid.Children(func() {
 								for i := range a.game.Cells {
 									cell := &a.game.Cells[i]
 									row, col := cell.Row, cell.Col
 									tile := ui.Box(c.Key(i)).Size(cellSize, cellSize).Radius(5).Center().
 										Label(fmt.Sprintf("cell-%d-%d", row, col))
+									if tile.Hovered() {
+										nextHoverRow, nextHoverCol = row, col
+									}
+									isHintCenter := hoverHint.Kind != HintNone && i == hoverHint.Center
+									isHintTarget := hoverHint.Kind != HintNone && containsIndex(hoverHint.Targets, i)
+
+									rippleActive := false
+									var rippleAlpha float32
+									if rip, ok := a.ripples[i]; ok {
+										elapsed := now.Sub(rip.Start)
+										if elapsed >= rip.Delay && elapsed < rip.Delay+rippleDuration {
+											rippleActive = true
+											rippleAlpha = 1 - float32(elapsed-rip.Delay)/float32(rippleDuration)
+										}
+									}
+
+									var tileBg, tileBd ui.Color
+									var tileCursor bool
+									var tileText string
+									var tileTextSize float32
+									var tileTextBold bool
+									var tileTextColor *ui.Color
 
 									switch {
 									case cell.Revealed:
 										switch {
 										case cell.Exploded:
-											tile.Background(ui.Hex("#991B1B")).Border(1, ui.Hex("#FCA5A5"))
-											tile.Children(func() {
-												ui.Text(c, "💥").FontSize(cellFont - 1)
-											})
+											tileBg, tileBd = ui.Hex("#991B1B"), ui.Hex("#FCA5A5")
+											tileText, tileTextSize = "💥", cellFont-1
 										case cell.IsMine:
-											tile.Background(t.Background).Border(1, ui.Hex("#EF4444").Alpha(0.55))
-											tile.Children(func() {
-												ui.Text(c, "💣").FontSize(cellFont - 1)
-											})
+											tileBg, tileBd = t.Background, ui.Hex("#EF4444").Alpha(0.55)
+											tileText, tileTextSize = "💣", cellFont-1
 										case cell.Adjacent > 0:
-											bg := t.Background
-											if tile.Hovered() {
-												bg = t.SurfaceHover.Alpha(0.45)
+											tileBg = t.Background
+											tileBd = t.Border.Alpha(0.5)
+											if isHintCenter {
+												tileBg = hintColor.Alpha(0.22)
+												tileBd = hintColor
+											} else if rippleActive {
+												tileBg = t.Accent.Alpha(0.26 * rippleAlpha)
+												tileBd = t.Accent.Alpha(0.45 + 0.55*rippleAlpha)
+											} else if tile.Hovered() {
+												tileBg = t.SurfaceHover.Alpha(0.45)
 											}
-											tile.Background(bg).Border(1, t.Border.Alpha(0.5)).Cursor(ui.CursorPointer)
-											tile.Children(func() {
-												ui.Textf(c, "%d", cell.Adjacent).FontSize(cellFont).Bold().
-													TextColor(numberColor(cell.Adjacent))
-											})
+											tileCursor = true
+											tileText = fmt.Sprintf("%d", cell.Adjacent)
+											tileTextSize = cellFont
+											tileTextBold = true
+											colVal := numberColor(cell.Adjacent)
+											tileTextColor = &colVal
 										default:
-											tile.Background(t.Background).Border(1, t.Border.Alpha(0.32))
+											tileBg = t.Background
+											tileBd = t.Border.Alpha(0.32)
+											if rippleActive {
+												tileBg = t.Accent.Alpha(0.3 * rippleAlpha)
+												tileBd = t.Accent.Alpha(0.35 + 0.65*rippleAlpha)
+											}
 										}
 									case cell.WrongFlag:
-										tile.Background(ui.Hex("#4C1D2D")).Border(1, ui.Hex("#FB7185"))
-										tile.Children(func() {
-											ui.Text(c, "✕").FontSize(cellFont - 1).Bold().TextColor(ui.Hex("#FB7185"))
-										})
+										tileBg, tileBd = ui.Hex("#4C1D2D"), ui.Hex("#FB7185")
+										tileText, tileTextSize, tileTextBold = "✕", cellFont-1, true
+										colVal := ui.Hex("#FB7185")
+										tileTextColor = &colVal
 									case cell.Flagged:
-										bd := t.Accent.Alpha(0.75)
+										tileBg = t.SurfaceHover
+										tileBd = t.Accent.Alpha(0.75)
 										mark := "🩹"
 										if cell.ShieldSaved {
-											bd = ui.Hex("#E8A849")
+											tileBd = ui.Hex("#E8A849")
 											mark = "🛡"
 										}
-										tile.Background(t.SurfaceHover).Border(1, bd).Cursor(ui.CursorPointer)
-										tile.Children(func() {
-											ui.Text(c, mark).FontSize(cellFont - 1)
-										})
+										tileCursor = true
+										tileText, tileTextSize = mark, cellFont-1
 									case cell.Questioned:
-										tile.Background(t.SurfaceHover).Border(1, t.Accent.Alpha(0.55)).Cursor(ui.CursorPointer)
-										tile.Children(func() {
-											ui.Text(c, "?").FontSize(cellFont).Bold().TextColor(t.Accent)
-										})
-									default:
-										bg := t.Surface
-										bd := t.Border
-										if tile.Hovered() {
-											bg = t.SurfaceHover
-											bd = t.Accent.Alpha(0.75)
+										tileBg = t.SurfaceHover
+										tileBd = t.Accent.Alpha(0.55)
+										if isHintTarget {
+											tileBg = hintColor.Alpha(0.26)
+											tileBd = hintColor
 										}
-										tile.Background(bg).Border(1, bd).Cursor(ui.CursorPointer)
+										tileCursor = true
+										tileText, tileTextSize, tileTextBold = "?", cellFont, true
+										colVal := t.Accent
+										tileTextColor = &colVal
+									default:
+										tileBg = t.Surface
+										tileBd = t.Border
+										if isHintTarget {
+											tileBg = hintColor.Alpha(0.26)
+											tileBd = hintColor
+										} else if tile.Hovered() {
+											tileBg = t.SurfaceHover
+											tileBd = t.Accent.Alpha(0.75)
+										}
+										tileCursor = true
+									}
+
+									if shakeX != 0 || shakeY != 0 {
+										bgCopy, bdCopy := tileBg, tileBd
+										tile.Draw(func(p *ui.Painter, r ui.Rect) {
+											p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
+												p.Fill(r, bgCopy, 5)
+												p.Stroke(r, bdCopy, 5, 1)
+											})
+										})
+									} else {
+										tile.Background(tileBg).Border(1, tileBd)
+									}
+									if tileCursor {
+										tile.Cursor(ui.CursorPointer)
+									}
+									if tileText != "" {
+										tile.Children(func() {
+											lbl := ui.Text(c, tileText).FontSize(tileTextSize).PassThrough()
+											if tileTextBold {
+												lbl.Bold()
+											}
+											if tileTextColor != nil {
+												lbl.TextColor(*tileTextColor)
+											}
+											if shakeX != 0 || shakeY != 0 {
+												lbl.Translate(shakeX, shakeY)
+											}
+										})
 									}
 
 									if tile.RightClicked() {
 										res := a.game.ToggleFlag(row, col, a.allowQuestion)
 										a.handleAction(c, res, now)
 									} else if tile.Clicked() {
-										if cell.Revealed {
-											res := a.game.Chord(row, col)
-											a.handleAction(c, res, now)
-										} else if a.flagMode {
+										if a.flagMode {
 											res := a.game.ToggleFlag(row, col, a.allowQuestion)
+											a.handleAction(c, res, now)
+										} else if cell.Revealed {
+											res := a.game.Chord(row, col)
 											a.handleAction(c, res, now)
 										} else {
 											res := a.game.Reveal(row, col)
@@ -763,6 +1039,12 @@ func (a *minesweeperApp) view(c *ui.Context) {
 							})
 						})
 					})
+					if nextHoverRow != a.classicHoverRow || nextHoverCol != a.classicHoverCol {
+						a.classicHoverRow = nextHoverRow
+						a.classicHoverCol = nextHoverCol
+						a.classicHoverHint = a.game.InspectNumberHover(nextHoverRow, nextHoverCol, a.flagMode)
+						c.After(time.Millisecond)
+					}
 				})
 			})
 		})
