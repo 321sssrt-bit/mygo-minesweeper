@@ -34,9 +34,13 @@ type Duel struct {
 	LastCell     int
 	LastAI       int
 	Settled      bool
-	Minimap      []MinimapBlock
-	frontier     map[int]bool
-	rng          *rand.Rand
+	// NewMemes and QuoteEvent carry the settlement scene the UI layer
+	// surfaces once the duel ends (e.g. a haruhikage score loss).
+	NewMemes   []string
+	QuoteEvent string
+	Minimap    []MinimapBlock
+	frontier   map[int]bool
+	rng        *rand.Rand
 }
 
 type DuelTick struct {
@@ -216,7 +220,12 @@ func (g *Game) revealDuel(row, col int, owner DuelOwner) ActionResult {
 		delta = d.PlayerScore - beforeScore
 	}
 	if g.checkWin() {
-		return ActionResult{Kind: ActionWon, RevealedCount: revealed, ScoreDelta: delta, QuoteEvent: "won", NewMemes: g.winMemes(), RevealWave: wave}
+		res := ActionResult{Kind: ActionWon, RevealedCount: revealed, ScoreDelta: delta, RevealWave: wave}
+		if owner == DuelPlayer && d.PlayerScore > d.AIScore {
+			res.QuoteEvent = "won"
+			res.NewMemes = g.winMemes()
+		}
+		return res
 	}
 	return ActionResult{Kind: ActionRevealed, RevealedCount: revealed, ScoreDelta: delta, RevealWave: wave}
 }
@@ -395,6 +404,10 @@ func (g *Game) finishDuel() {
 				g.duel.AIScore -= 30
 			}
 		}
+	}
+	if g.Difficulty.Haruhikage && g.duel.PlayerScore < g.duel.AIScore {
+		g.duel.NewMemes = append(g.duel.NewMemes, MemeHaruhikage)
+		g.duel.QuoteEvent = "haruhikageLost"
 	}
 }
 
