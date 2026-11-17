@@ -58,6 +58,10 @@ func (v *boardView) center(g *Game, row, col int) {
 	v.clamp(g)
 }
 
+func (v *boardView) centerBoard(g *Game) {
+	v.center(g, g.Rows/2, g.Cols/2)
+}
+
 func (v *boardView) zoom(g *Game, atX, atY, factor float32) {
 	old := v.Cell
 	next := max(10, min(42, old*factor))

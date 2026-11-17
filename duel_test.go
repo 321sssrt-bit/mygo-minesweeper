@@ -784,4 +784,63 @@ func TestDuelShakeBoundsAndStunWarningHUD(t *testing.T) {
 	}
 }
 
+func TestDuelRecenterUsesBoardCenter(t *testing.T) {
+	cases := []struct {
+		name string
+		rows int
+		cols int
+	}{
+		{name: "standard-1000x1000", rows: 1000, cols: 1000},
+		{name: "medium-500x500", rows: 500, cols: 500},
+		{name: "small-100x100", rows: 100, cols: 100},
+		{name: "rect-60x80", rows: 60, cols: 80},
+	}
 
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newMinesweeperApp(42)
+			app.diffIdx = 4
+			app.game = NewGame(Difficulty{ID: "duel", Rows: tc.rows, Cols: tc.cols, Mines: 10}, true, MemberAnon, 42)
+			tt := ui.NewTester(app.view, 1280, 900)
+			tt.Frame()
+
+			r, ok := tt.Find("百万格决斗战场")
+			if !ok {
+				t.Fatal("duel board missing")
+			}
+
+			wantRow, wantCol := tc.rows/2, tc.cols/2
+
+			// Pan to top-left corner, then click "回到战场".
+			app.board.center(app.game, 0, 0)
+			tt.Frame()
+			if err := tt.Click("回到战场"); err != nil {
+				t.Fatalf("failed clicking 回到战场: %v", err)
+			}
+			row, col, ok := app.board.cellAt(app.game, r.W/2, r.H/2)
+			if !ok || row != wantRow || col != wantCol {
+				t.Fatalf("button recenter got (%d,%d) ok=%v, want (%d,%d)", row, col, ok, wantRow, wantCol)
+			}
+
+			// Pan to bottom-right corner, then press Ctrl+0.
+			app.board.center(app.game, tc.rows-1, tc.cols-1)
+			tt.Frame()
+			tt.Key(ui.Ctrl, ui.Key0)
+			row, col, ok = app.board.cellAt(app.game, r.W/2, r.H/2)
+			if !ok || row != wantRow || col != wantCol {
+				t.Fatalf("Ctrl+0 recenter got (%d,%d) ok=%v, want (%d,%d)", row, col, ok, wantRow, wantCol)
+			}
+		})
+	}
+
+	// Small board fully inside viewport clamps cleanly to (0,0) without panic or negative offsets.
+	app := newMinesweeperApp(42)
+	app.diffIdx = 4
+	app.game = NewGame(Difficulty{ID: "duel", Rows: 12, Cols: 12, Mines: 1}, true, MemberAnon, 42)
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.Frame()
+	tt.Key(ui.Ctrl, ui.Key0)
+	if app.board.X != 0 || app.board.Y != 0 {
+		t.Fatalf("expected small board recenter clamped to (0,0), got (%v,%v)", app.board.X, app.board.Y)
+	}
+}
