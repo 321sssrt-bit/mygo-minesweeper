@@ -36,7 +36,6 @@ type minesweeperApp struct {
 	board         *boardView
 	lastTick      time.Time
 	pendingResult ActionResult
-	duelTrail     []int
 	duelNoticeAt  time.Time
 	duelEnded     bool
 	classicSize   float32
@@ -100,7 +99,6 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.elapsed = 0
 	a.startedAt = time.Time{}
 	a.lastTick = time.Time{}
-	a.duelTrail = nil
 	a.duelEnded = false
 	a.duelNoticeAt = time.Time{}
 	a.board = newBoardView()
@@ -241,10 +239,6 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 			if tick.AITurn.RevealedCount > 0 {
 				a.board.LastEffect = now
 				a.board.EffectCell = tick.AICell
-			}
-			a.duelTrail = append(a.duelTrail, tick.AICell)
-			if len(a.duelTrail) > 1000 {
-				a.duelTrail = a.duelTrail[len(a.duelTrail)-1000:]
 			}
 			if tick.AITurn.Kind == ActionLost {
 				c.Toast("高松灯 (AI) 踩雷 −100")

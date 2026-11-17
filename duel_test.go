@@ -135,3 +135,140 @@ func TestDuelNativeCanvasInput(t *testing.T) {
 		t.Fatal("AI did not play")
 	}
 }
+
+func TestDuelMinimapTerritoryAggregationAndPersistence(t *testing.T) {
+	g := NewGame(Difficulties[4], true, MemberSoyorin, 42)
+	pTot, aiTot := g.duel.MinimapTotals()
+	if pTot != 0 || aiTot != 0 || g.duel.LastCell != -1 || g.duel.LastAI != -1 {
+		t.Fatalf("expected clean initial minimap, got p=%d ai=%d last=(%d,%d)", pTot, aiTot, g.duel.LastCell, g.duel.LastAI)
+	}
+
+	res := g.Reveal(500, 500)
+	pTot, aiTot = g.duel.MinimapTotals()
+	if pTot != res.RevealedCount || pTot <= 0 || aiTot != 0 {
+		t.Fatalf("expected player minimap total %d, got p=%d ai=%d", res.RevealedCount, pTot, aiTot)
+	}
+	earlyBlock := g.duel.Minimap[g.duel.minimapBlockIndex(g, 500, 500)]
+	if earlyBlock.Player == 0 {
+		t.Fatal("expected early territory block (50,50) to have player territory")
+	}
+
+	// Simulate >1200 AI reveals across distant blocks and verify early territory is never truncated.
+	aiAdded := 0
+	for r := 10; r < 150 && aiAdded < 1205; r++ {
+		for c := 10; c < 40 && aiAdded < 1205; c++ {
+			cell := g.Cell(r, c)
+			if !cell.IsMine && !cell.Revealed && !cell.Flagged {
+				prev := g.duel.AIScore
+				ar := g.revealDuel(r, c, DuelAI)
+				if ar.Kind == ActionRevealed {
+					aiAdded += g.duel.AIScore - prev
+				}
+			}
+		}
+	}
+	if aiAdded <= 1000 {
+		t.Fatalf("expected >1000 AI cells for persistence test, got %d", aiAdded)
+	}
+	_, aiTot = g.duel.MinimapTotals()
+	if aiTot != aiAdded {
+		t.Fatalf("expected persistent AI minimap total %d without truncation, got %d", aiAdded, aiTot)
+	}
+	if g.duel.Minimap[g.duel.minimapBlockIndex(g, 500, 500)].Player == 0 {
+		t.Fatal("early player block was lost after >1000 AI actions")
+	}
+
+	// Flag and unflag updates territory and LastCell.
+	var flagCell *Cell
+	for i := range g.Cells {
+		c := &g.Cells[i]
+		if !c.Revealed && !c.Flagged && !c.IsMine {
+			flagCell = c
+			break
+		}
+	}
+	beforeFlagP, _ := g.duel.MinimapTotals()
+	if fRes := g.ToggleFlag(flagCell.Row, flagCell.Col, false); fRes.Kind != ActionFlagged {
+		t.Fatalf("flag failed: %+v", fRes)
+	}
+	afterFlagP, _ := g.duel.MinimapTotals()
+	if afterFlagP != beforeFlagP+1 || g.duel.LastCell != flagCell.Row*g.Cols+flagCell.Col {
+		t.Fatalf("flag territory/marker mismatch: before=%d after=%d lastCell=%d", beforeFlagP, afterFlagP, g.duel.LastCell)
+	}
+	if uRes := g.UnflagDuel(flagCell.Row, flagCell.Col); uRes.Kind != ActionUnflag {
+		t.Fatalf("unflag failed: %+v", uRes)
+	}
+	afterUnflagP, _ := g.duel.MinimapTotals()
+	if afterUnflagP != beforeFlagP || g.duel.LastCell != flagCell.Row*g.Cols+flagCell.Col {
+		t.Fatalf("unflag did not reverse territory or update LastCell: before=%d after=%d", beforeFlagP, afterUnflagP)
+	}
+
+	// Soyorin shield counts once (never double-counted).
+	var mineCell *Cell
+	for i := range g.Cells {
+		c := &g.Cells[i]
+		if c.IsMine && !c.Revealed && !c.Flagged {
+			mineCell = c
+			break
+		}
+	}
+	beforeShieldP, _ := g.duel.MinimapTotals()
+	if sRes := g.Reveal(mineCell.Row, mineCell.Col); sRes.Kind != ActionShielded {
+		t.Fatalf("expected Soyorin shield, got %+v", sRes)
+	}
+	afterShieldP, _ := g.duel.MinimapTotals()
+	if afterShieldP != beforeShieldP+1 {
+		t.Fatalf("Soyorin shield should count once in minimap: before=%d after=%d", beforeShieldP, afterShieldP)
+	}
+}
+
+func TestDuelMinimapLiveMarkersAndReset(t *testing.T) {
+	app := newMinesweeperApp(42)
+	app.diffIdx = 4
+	app.resetGame(false)
+	tt := ui.NewTester(app.view, 1280, 900)
+
+	if app.game.duel.LastCell != -1 || app.game.duel.LastAI != -1 {
+		t.Fatalf("expected no initial markers, got player=%d ai=%d", app.game.duel.LastCell, app.game.duel.LastAI)
+	}
+
+	// Edge clamping bounds check.
+	mini := ui.Rect{X: 100, Y: 100, W: 148, H: 148}
+	for _, idx := range []int{0, 999, 999 * 1000, 999*1000 + 999} {
+		mx, my := minimapMarkerPos(mini, 1000, 1000, idx, 5)
+		if mx < mini.X+5 || mx > mini.X+mini.W-5 || my < mini.Y+5 || my > mini.Y+mini.H-5 {
+			t.Fatalf("marker out of minimap bounds for idx=%d: (%v,%v)", idx, mx, my)
+		}
+		ring := clampMinimapRect(mini, mx-10, my-10, 20)
+		if ring.X < mini.X+1 || ring.Y < mini.Y+1 || ring.X+ring.W > mini.X+mini.W-1 || ring.Y+ring.H > mini.Y+mini.H-1 {
+			t.Fatalf("pulse ring escaped minimap bounds: %+v", ring)
+		}
+	}
+
+	r, ok := tt.Find("百万格决斗战场")
+	if !ok {
+		t.Fatal("duel board missing")
+	}
+	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	if app.game.duel.LastCell < 0 {
+		t.Fatal("expected player marker after click")
+	}
+
+	// Force overlap of player and AI markers and advance virtual clock.
+	app.game.duel.LastAI = app.game.duel.LastCell
+	tt.Advance(350 * time.Millisecond)
+	tt.Advance(450 * time.Millisecond)
+
+	// Match end + reset cleanup.
+	app.game.TickDuel(300)
+	tt.Frame()
+	if app.game.Status != StatusWon {
+		t.Fatalf("expected StatusWon after 300s, got %v", app.game.Status)
+	}
+	tt.Key(0, ui.KeyR)
+	pTot, aiTot := app.game.duel.MinimapTotals()
+	if pTot != 0 || aiTot != 0 || app.game.duel.LastCell != -1 || app.game.duel.LastAI != -1 {
+		t.Fatalf("expected full minimap reset, got p=%d ai=%d last=(%d,%d)", pTot, aiTot, app.game.duel.LastCell, app.game.duel.LastAI)
+	}
+}
+

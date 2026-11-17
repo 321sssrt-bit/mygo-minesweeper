@@ -217,30 +217,115 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 		y := r.Y + float32(row)*v.Cell - v.Y
 		p.Stroke(ui.Rect{X: x, Y: y, W: v.Cell, H: v.Cell}, ui.Hex("#F07AA4"), 4, 2)
 	}
-	if v.EffectCell >= 0 && time.Since(v.LastEffect) < 350*time.Millisecond {
-		row, col := v.EffectCell/g.Cols, v.EffectCell%g.Cols
-		k := float32(time.Since(v.LastEffect)) / float32(350*time.Millisecond)
-		size := v.Cell * (1 + k*1.5)
-		x := r.X + (float32(col)+0.5)*v.Cell - v.X - size/2
-		y := r.Y + (float32(row)+0.5)*v.Cell - v.Y - size/2
-		p.Stroke(ui.Rect{X: x, Y: y, W: size, H: size}, t.Accent.Alpha(1-k), 6, 2)
-		p.AnimationFrame()
+	if v.EffectCell >= 0 {
+		elapsed := p.Now().Sub(v.LastEffect)
+		if elapsed >= 0 && elapsed < 350*time.Millisecond {
+			row, col := v.EffectCell/g.Cols, v.EffectCell%g.Cols
+			k := float32(elapsed) / float32(350*time.Millisecond)
+			size := v.Cell * (1 + k*1.5)
+			x := r.X + (float32(col)+0.5)*v.Cell - v.X - size/2
+			y := r.Y + (float32(row)+0.5)*v.Cell - v.Y - size/2
+			p.Stroke(ui.Rect{X: x, Y: y, W: size, H: size}, t.Accent.Alpha(1-k), 6, 2)
+			p.AnimationFrame()
+		}
 	}
 	mini := ui.Rect{X: r.X + r.W - 158, Y: r.Y + r.H - 158, W: 148, H: 148}
 	p.Fill(mini, ui.Hex("#0B1423").Alpha(0.94), 6)
-	for _, index := range a.duelTrail {
-		x := mini.X + float32(index%g.Cols)/float32(g.Cols)*mini.W
-		y := mini.Y + float32(index/g.Cols)/float32(g.Rows)*mini.H
-		color := ui.Hex("#55B2D6")
-		if g.Cells[index].Owner == DuelAI {
-			color = ui.Hex("#F07AA4")
+	if len(g.duel.Minimap) == minimapGridSize*minimapGridSize {
+		bw := mini.W / float32(minimapGridSize)
+		bh := mini.H / float32(minimapGridSize)
+		fillW := max(1.5, bw)
+		fillH := max(1.5, bh)
+		for br := range minimapGridSize {
+			for bc := range minimapGridSize {
+				blk := g.duel.Minimap[br*minimapGridSize+bc]
+				if blk.Player == 0 && blk.AI == 0 {
+					continue
+				}
+				var color ui.Color
+				switch {
+				case blk.Player > 0 && blk.AI > 0:
+					density := min(float32(1), float32(blk.Player+blk.AI)/24)
+					color = ui.Hex("#A78BFA").Alpha(0.65 + 0.35*density)
+				case blk.Player > 0:
+					density := min(float32(1), float32(blk.Player)/20)
+					color = ui.Hex("#55B2D6").Alpha(0.65 + 0.35*density)
+				default:
+					density := min(float32(1), float32(blk.AI)/20)
+					color = ui.Hex("#F07AA4").Alpha(0.65 + 0.35*density)
+				}
+				bx := mini.X + float32(bc)*bw
+				by := mini.Y + float32(br)*bh
+				p.Fill(ui.Rect{X: bx, Y: by, W: min(fillW, mini.X+mini.W-bx), H: min(fillH, mini.Y+mini.H-by)}, color, 0)
+			}
 		}
-		p.Fill(ui.Rect{X: x, Y: y, W: 3, H: 3}, color, 0)
+	}
+	pulsing := g.Status == StatusPlaying
+	pulse := float32(0)
+	if pulsing {
+		ms := float32(p.Now().UnixMilli() % 1200)
+		if ms < 0 {
+			ms += 1200
+		}
+		pulse = ms / 1200.0
+	}
+	hasAI := g.duel.LastAI >= 0 && g.duel.LastAI < len(g.Cells)
+	hasPlayer := g.duel.LastCell >= 0 && g.duel.LastCell < len(g.Cells)
+	var ax, ay float32
+	if hasAI {
+		ax, ay = minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastAI, 5)
+		if pulsing {
+			ring := clampMinimapRect(mini, ax-(3+pulse*4.5), ay-(3+pulse*4.5), (3+pulse*4.5)*2)
+			p.Stroke(ring, ui.Hex("#F07AA4").Alpha(1-pulse*0.75), 99, 1.5)
+		}
+		p.Fill(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#F07AA4"), 1)
+		p.Stroke(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#FDF2F8"), 1, 1)
+	}
+	if hasPlayer {
+		px, py := minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastCell, 5)
+		if hasAI && abs32(px-ax) < 4 && abs32(py-ay) < 4 {
+			if px+3 <= mini.X+mini.W-5 {
+				px += 3
+			} else {
+				px -= 3
+			}
+			if py-3 >= mini.Y+5 {
+				py -= 3
+			} else {
+				py += 3
+			}
+		}
+		if pulsing {
+			ring := clampMinimapRect(mini, px-(3+pulse*3.5), py-(3+pulse*3.5), (3+pulse*3.5)*2)
+			p.Stroke(ring, ui.Hex("#38BDF8").Alpha(1-pulse*0.75), 99, 1.5)
+		}
+		p.Fill(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#38BDF8"), 99)
+		p.Stroke(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#F4F8FD"), 99, 1)
+	}
+	if pulsing && (hasAI || hasPlayer) {
+		p.AnimationFrame()
 	}
 	view := ui.Rect{X: mini.X + v.X/(float32(g.Cols)*v.Cell)*mini.W, Y: mini.Y + v.Y/(float32(g.Rows)*v.Cell)*mini.H, W: r.W / (float32(g.Cols) * v.Cell) * mini.W, H: r.H / (float32(g.Rows) * v.Cell) * mini.H}
 	p.Stroke(view, ui.Hex("#F4F8FD"), 2, 1.5)
 	p.Stroke(mini, t.Border, 6, 1)
 	p.Text(r.X+14, r.Y+r.H-32, fmt.Sprintf("(%d, %d) · %.0f%% · 拖动平移 / 滚轮缩放", v.HoverRow, v.HoverCol, v.Cell/42*100), 12, t.TextMuted)
+}
+
+func minimapMarkerPos(mini ui.Rect, rows, cols, cellIdx int, margin float32) (float32, float32) {
+	row, col := cellIdx/cols, cellIdx%cols
+	x := mini.X + (float32(col)+0.5)/float32(max(1, cols))*mini.W
+	y := mini.Y + (float32(row)+0.5)/float32(max(1, rows))*mini.H
+	x = max(mini.X+margin, min(mini.X+mini.W-margin, x))
+	y = max(mini.Y+margin, min(mini.Y+mini.H-margin, y))
+	return x, y
+}
+
+func clampMinimapRect(mini ui.Rect, x, y, size float32) ui.Rect {
+	x1 := max(mini.X+1, x)
+	y1 := max(mini.Y+1, y)
+	x2 := min(mini.X+mini.W-1, x+size)
+	y2 := min(mini.Y+mini.H-1, y+size)
+	return ui.Rect{X: x1, Y: y1, W: max(2, x2-x1), H: max(2, y2-y1)}
 }
 
 func abs32(v float32) float32 {

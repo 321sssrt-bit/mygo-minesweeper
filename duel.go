@@ -13,6 +13,13 @@ const (
 	DuelAI
 )
 
+const minimapGridSize = 100
+
+type MinimapBlock struct {
+	Player uint16
+	AI     uint16
+}
+
 type Duel struct {
 	PlayerScore  int
 	AIScore      int
@@ -26,6 +33,7 @@ type Duel struct {
 	LastCell     int
 	LastAI       int
 	Settled      bool
+	Minimap      []MinimapBlock
 	frontier     map[int]bool
 	rng          *rand.Rand
 }
@@ -42,9 +50,50 @@ func newDuel(g *Game) *Duel {
 		NextAI:   1.1,
 		LastCell: -1,
 		LastAI:   -1,
+		Minimap:  make([]MinimapBlock, minimapGridSize*minimapGridSize),
 		frontier: make(map[int]bool),
 		rng:      rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())),
 	}
+}
+
+func (d *Duel) minimapBlockIndex(g *Game, row, col int) int {
+	br := min(minimapGridSize-1, max(0, row*minimapGridSize/max(1, g.Rows)))
+	bc := min(minimapGridSize-1, max(0, col*minimapGridSize/max(1, g.Cols)))
+	return br*minimapGridSize + bc
+}
+
+func (d *Duel) adjustMinimap(g *Game, row, col int, oldOwner, newOwner DuelOwner) {
+	if d == nil || len(d.Minimap) != minimapGridSize*minimapGridSize || oldOwner == newOwner {
+		return
+	}
+	blk := &d.Minimap[d.minimapBlockIndex(g, row, col)]
+	switch oldOwner {
+	case DuelPlayer:
+		if blk.Player > 0 {
+			blk.Player--
+		}
+	case DuelAI:
+		if blk.AI > 0 {
+			blk.AI--
+		}
+	}
+	switch newOwner {
+	case DuelPlayer:
+		blk.Player++
+	case DuelAI:
+		blk.AI++
+	}
+}
+
+func (d *Duel) MinimapTotals() (playerTotal, aiTotal int) {
+	if d == nil {
+		return 0, 0
+	}
+	for _, blk := range d.Minimap {
+		playerTotal += int(blk.Player)
+		aiTotal += int(blk.AI)
+	}
+	return playerTotal, aiTotal
 }
 
 func (d *Duel) remaining() float64  { return max(0, d.Duration-d.Elapsed) }
@@ -78,7 +127,9 @@ func (g *Game) TickDuel(delta float64) DuelTick {
 	} else {
 		result = g.revealDuel(row, col, DuelAI)
 	}
-	d.LastAI = index
+	if result.Kind != ActionNoop {
+		d.LastAI = index
+	}
 	if result.Kind == ActionWon {
 		d.Settled = true
 	}
@@ -117,6 +168,7 @@ func (g *Game) revealDuel(row, col int, owner DuelOwner) ActionResult {
 				start.FlagOwner = owner
 				start.ShieldSaved = true
 				g.FlagsPlaced++
+				d.adjustMinimap(g, row, col, DuelNobody, owner)
 				return ActionResult{Kind: ActionShielded, QuoteEvent: "shield"}
 			}
 			d.PlayerScore -= 100
@@ -132,12 +184,14 @@ func (g *Game) revealDuel(row, col int, owner DuelOwner) ActionResult {
 		d.PlayerCombo++
 	}
 	revealed := g.revealSafe(start, func(revealedIndex int, cell *Cell) {
-		if cell.Owner == DuelAI && owner == DuelPlayer {
+		prevOwner := cell.Owner
+		if prevOwner == DuelAI && owner == DuelPlayer {
 			d.PlayerScore++
 			d.AIScore--
 		}
 		cell.Owner = owner
 		cell.AITurn = false
+		d.adjustMinimap(g, cell.Row, cell.Col, prevOwner, owner)
 		g.rememberFrontier(revealedIndex)
 	})
 	if owner == DuelPlayer {
@@ -169,6 +223,10 @@ func (g *Game) flagDuel(row, col int, owner DuelOwner) ActionResult {
 	cell.FlagOwner = owner
 	g.FlagsPlaced++
 	d.frontier[row*g.Cols+col] = false
+	d.adjustMinimap(g, row, col, DuelNobody, owner)
+	if owner == DuelPlayer {
+		d.LastCell = row*g.Cols + col
+	}
 	return ActionResult{Kind: ActionFlagged}
 }
 
@@ -181,6 +239,8 @@ func (g *Game) UnflagDuel(row, col int) ActionResult {
 	cell.FlagOwner = DuelNobody
 	g.FlagsPlaced--
 	g.duel.frontier[row*g.Cols+col] = true
+	g.duel.adjustMinimap(g, row, col, DuelPlayer, DuelNobody)
+	g.duel.LastCell = row*g.Cols + col
 	return ActionResult{Kind: ActionUnflag}
 }
 
@@ -215,11 +275,13 @@ func (g *Game) ClaimDuelMines(row, col int) ActionResult {
 			n.AITurn = false
 			g.FlagsPlaced++
 			claimed++
+			d.adjustMinimap(g, n.Row, n.Col, DuelNobody, DuelPlayer)
 		}
 	}
 	if claimed == 0 {
 		return ActionResult{Kind: ActionNoop}
 	}
+	d.LastCell = row*g.Cols + col
 	d.PlayerScore += claimed * 75
 	return ActionResult{Kind: ActionFlagged, RevealedCount: claimed}
 }
