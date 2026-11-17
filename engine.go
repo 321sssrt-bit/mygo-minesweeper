@@ -109,6 +109,24 @@ var TrackKageiromai = Difficulty{
 	SkillCharges: 3,
 }
 
+// TrackSenzaihyoumei is the 500x500 duel that opens the duel half of the
+// seven-track ladder (spec #1): 3 minutes, Tomori AI stepping every 1.0s,
+// ~45,000 mines (18%). Defined here but deliberately absent from Difficulties
+// until its setlist ticket lands.
+var TrackSenzaihyoumei = Difficulty{
+	ID:           "senzaihyoumei",
+	Label:        "潜在表明",
+	Song:         "潜在表明",
+	Subtitle:     "500×500 · 45000雷 · 03:00",
+	Gameplay:     GameplayDuel,
+	Rows:         500,
+	Cols:         500,
+	Mines:        45000,
+	SkillCharges: 5,
+	DuelDuration: 3 * 60,
+	AIInterval:   1.0,
+}
+
 type GameStatus int
 
 const (
