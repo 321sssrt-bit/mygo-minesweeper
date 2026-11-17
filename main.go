@@ -437,7 +437,7 @@ func (a *minesweeperApp) duelHUD(c *ui.Context) {
 		})
 		ui.Row(c).Gap(6).Children(func() {
 			if ui.Button(c.Key("duel-home"), "回到战场").Clicked() {
-				a.board.center(a.game, 500, 500)
+				a.board.centerBoard(a.game)
 			}
 			if ui.Button(c.Key("duel-follow"), "追踪 AI").Clicked() && d.LastAI >= 0 {
 				a.board.center(a.game, d.LastAI/a.game.Cols, d.LastAI%a.game.Cols)
@@ -511,7 +511,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1/1.15)
 		}
 		if c.Shortcut(ui.Ctrl, ui.Key0) {
-			a.board.center(a.game, 500, 500)
+			a.board.centerBoard(a.game)
 		}
 	}
 
