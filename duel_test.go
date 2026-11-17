@@ -913,3 +913,112 @@ func TestDuelRecenterUsesBoardCenter(t *testing.T) {
 		t.Fatalf("expected small board recenter clamped to (0,0), got (%v,%v)", app.board.X, app.board.Y)
 	}
 }
+
+func TestDuelUIUsesGameplayNotTrackID(t *testing.T) {
+	orig := Difficulties
+	defer func() { Difficulties = orig }()
+
+	// Case 1: Non-"duel" track ID with GameplayDuel activates all duel UI branches.
+	Difficulties = append([]Difficulty(nil), orig...)
+	Difficulties[0] = Difficulty{
+		ID:           "encore",
+		Label:        "测试决斗",
+		Song:         "潜在表明",
+		Subtitle:     "12×12 · 5雷",
+		Gameplay:     GameplayDuel,
+		Rows:         12,
+		Cols:         12,
+		Mines:        5,
+		SkillCharges: 3,
+	}
+	app := newMinesweeperApp(42)
+	app.modeIdx = 1
+	app.resetGame(false)
+
+	if app.modeIdx != 0 || !app.game.BandMode || app.game.SkillUsesLeft != 3 {
+		t.Fatalf("expected GameplayDuel track to force band mode, modeIdx=%d band=%v charges=%d", app.modeIdx, app.game.BandMode, app.game.SkillUsesLeft)
+	}
+	foundDuelChat := false
+	for _, msg := range app.chatLog {
+		if msg.Speaker == "MyGO!!!!! 决斗室" {
+			foundDuelChat = true
+			break
+		}
+	}
+	if !foundDuelChat {
+		t.Fatal("expected duel intro chat for GameplayDuel track regardless of ID")
+	}
+
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.Frame()
+	if _, ok := tt.Find("百万格决斗战场"); !ok || !tt.HasText("灯 (AI) 0") {
+		t.Fatal("expected duel HUD and board for GameplayDuel track")
+	}
+	beforeGame := app.game
+	_ = tt.Click("纯正经典")
+	if app.modeIdx != 0 || app.game != beforeGame {
+		t.Fatalf("expected mode switch disabled in GameplayDuel, got modeIdx=%d reset=%v", app.modeIdx, app.game != beforeGame)
+	}
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	app.game.TickDuel(300)
+	tt.Frame()
+	if !tt.HasText("决斗结束 · 再来一局 (R)") {
+		t.Fatal("expected duel won reset label after match finish")
+	}
+
+	// Case 2: Swapping app.game directly to GameplayDuel still disables mode switch and shows duel HUD even when diffIdx points to classic.
+	Difficulties = append([]Difficulty(nil), orig...)
+	app2 := newMinesweeperApp(42)
+	app2.game = NewGame(Difficulty{ID: "encore", Gameplay: GameplayDuel, Rows: 12, Cols: 12, Mines: 5}, true, MemberAnon, 42)
+	tt2 := ui.NewTester(app2.view, 1280, 900)
+	tt2.Frame()
+	if _, ok := tt2.Find("百万格决斗战场"); !ok {
+		t.Fatal("expected duel board when game has GameplayDuel")
+	}
+	beforeGame2 := app2.game
+	_ = tt2.Click("纯正经典")
+	if app2.modeIdx != 0 || app2.game != beforeGame2 {
+		t.Fatalf("expected mode switch disabled for GameplayDuel game, got modeIdx=%d reset=%v", app2.modeIdx, app2.game != beforeGame2)
+	}
+
+	// Case 3: Track ID "duel" with GameplayClassic stays classic in every UI branch.
+	Difficulties = append([]Difficulty(nil), orig...)
+	Difficulties[0] = Difficulty{
+		ID:           "duel",
+		Label:        "同名经典",
+		Song:         "迷星叫",
+		Subtitle:     "9×9 · 10雷",
+		Gameplay:     GameplayClassic,
+		Rows:         9,
+		Cols:         9,
+		Mines:        10,
+		SkillCharges: 1,
+	}
+	app3 := newMinesweeperApp(42)
+	app3.modeIdx = 1
+	app3.resetGame(false)
+
+	if app3.modeIdx != 1 || app3.game.BandMode {
+		t.Fatalf("track ID 'duel' with GameplayClassic must not force band mode: modeIdx=%d band=%v", app3.modeIdx, app3.game.BandMode)
+	}
+	for _, msg := range app3.chatLog {
+		if msg.Speaker == "MyGO!!!!! 决斗室" {
+			t.Fatal("track ID 'duel' with GameplayClassic must not push duel intro chat")
+		}
+	}
+	tt3 := ui.NewTester(app3.view, 1280, 900)
+	tt3.Frame()
+	if _, ok := tt3.Find("cell-0-0"); !ok {
+		t.Fatal("expected classic board for GameplayClassic track even with ID 'duel'")
+	}
+	if _, ok := tt3.Find("百万格决斗战场"); ok || tt3.HasText("灯 (AI) 0") {
+		t.Fatal("track ID 'duel' with GameplayClassic must not render duel HUD/board")
+	}
+	if err := tt3.Click("乐队 Live"); err != nil {
+		t.Fatalf("failed clicking enabled mode switch: %v", err)
+	}
+	if app3.modeIdx != 0 {
+		t.Fatalf("expected mode switch enabled for GameplayClassic track, got modeIdx=%d", app3.modeIdx)
+	}
+}

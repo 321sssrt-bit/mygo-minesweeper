@@ -110,6 +110,10 @@ func (a *minesweeperApp) currentDiff() Difficulty {
 	return Difficulties[a.diffIdx]
 }
 
+func (a *minesweeperApp) isDuel() bool {
+	return a.game != nil && a.game.Difficulty.Gameplay == GameplayDuel && a.game.duel != nil
+}
+
 func (a *minesweeperApp) bandMode() bool {
 	return a.modeIdx == 0
 }
@@ -131,7 +135,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 		a.seed = 0
 	}
 	diff := a.currentDiff()
-	if diff.ID == "duel" {
+	if diff.Gameplay == GameplayDuel {
 		a.modeIdx = 0
 	}
 	if a.seed != 0 {
@@ -166,7 +170,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	} else {
 		a.pushChat("排练重开", hexOf(bandColor), fmt.Sprintf("重新演奏《%s》", diff.Song))
 	}
-	if diff.ID == "duel" {
+	if diff.Gameplay == GameplayDuel {
 		a.pushChat("MyGO!!!!! 决斗室", hexOf(bandColor), "五分钟百万格抢地：开格 +1，踩雷 −100；旗帜终局按对错计分，不靠比分偷看雷。")
 	}
 	a.pushChat(m.Name, m.ColorHex, a.quote)
@@ -199,7 +203,7 @@ func (a *minesweeperApp) pruneRipples(now time.Time) {
 }
 
 func (a *minesweeperApp) spawnDuelPopup(row, col int, res ActionResult, now time.Time) {
-	if a.game.duel == nil || res.ScoreDelta == 0 {
+	if !a.isDuel() || res.ScoreDelta == 0 {
 		return
 	}
 	shouldShow := res.Kind == ActionFlagged || res.Kind == ActionLost || res.Kind == ActionSkill || res.RevealedCount >= 5 || res.ScoreDelta >= 10
@@ -261,11 +265,11 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 	if res.Kind == ActionNoop {
 		return
 	}
-	if a.game.Status == StatusPlaying && a.game.duel == nil && a.startedAt.IsZero() {
+	if a.game.Status == StatusPlaying && !a.isDuel() && a.startedAt.IsZero() {
 		a.startedAt = now
 	}
 	a.enqueueRipple(now, res.RevealWave)
-	if a.game.duel != nil {
+	if a.isDuel() {
 		popRow, popCol := a.pendingRow, a.pendingCol
 		if popRow < 0 || popCol < 0 {
 			if a.game.duel.LastCell >= 0 {
@@ -294,7 +298,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 		c.Toast(fmt.Sprintf("%s 发动「%s」", m.Name, m.SkillName))
 	case ActionLost:
 		a.triggerShake(now, 9.0, 320*time.Millisecond)
-		if a.game.duel != nil {
+		if a.isDuel() {
 			c.Toast("踩雷 −100 · 硬直 2.4 秒！别把春日影点出来")
 			break
 		}
@@ -310,7 +314,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 			})
 		}
 	case ActionWon:
-		if a.game.duel != nil {
+		if a.isDuel() {
 			break
 		}
 		if !a.startedAt.IsZero() {
@@ -372,10 +376,10 @@ func (a *minesweeperApp) activeTheme() *ui.Theme {
 }
 
 func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
-	d := a.game.duel
-	if d == nil {
+	if !a.isDuel() {
 		return
 	}
+	d := a.game.duel
 	if !a.lastTick.IsZero() && a.game.Status == StatusPlaying {
 		tick := a.game.TickDuel(now.Sub(a.lastTick).Seconds())
 		a.elapsed = int(d.Elapsed)
@@ -482,7 +486,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		a.pendingResult = ActionResult{}
 		a.handleAction(c, res, now)
 	}
-	if a.game.duel != nil {
+	if a.isDuel() {
 		a.tickDuel(c, now)
 	} else if a.game.Status == StatusPlaying {
 		if a.startedAt.IsZero() {
@@ -503,7 +507,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		res := a.game.UseSkill()
 		a.handleAction(c, res, now)
 	}
-	if a.game.duel != nil {
+	if a.isDuel() {
 		if c.Shortcut(ui.Ctrl, ui.KeyEqual) {
 			a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1.15)
 		}
@@ -595,7 +599,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			})
 
 			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-				if ui.Segmented(c, &a.modeIdx, "乐队 Live", "纯正经典").Label("游戏模式").Disabled(a.currentDiff().ID == "duel").Changed() {
+				if ui.Segmented(c, &a.modeIdx, "乐队 Live", "纯正经典").Label("游戏模式").Disabled(a.isDuel()).Changed() {
 					a.resetGame(false)
 				}
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -816,7 +820,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 							resetLabel = "演奏中 · 重开 (R)"
 						case StatusWon:
 							resetLabel = "Live 大成功！再来一首"
-							if a.game.duel != nil {
+							if a.isDuel() {
 								resetLabel = "决斗结束 · 再来一局 (R)"
 							}
 						case StatusLost:
@@ -837,7 +841,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						})
 					})
 
-					if a.game.duel != nil {
+					if a.isDuel() {
 						a.duelHUD(c)
 						a.duelBoard(c)
 						return
@@ -857,12 +861,8 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					}
 
 					availableW, availableH := c.Size()
-					byWidth := (availableW - 70 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
-					byHeight := (availableH - 300 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
-					if a.game.duel == nil {
-						byWidth = (availableW - 342 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
-						byHeight = (availableH - 230 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
-					}
+					byWidth := (availableW - 342 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
+					byHeight := (availableH - 230 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
 					cellSize = max(22, min(64, min(byWidth, byHeight)))
 					cellFont = max(12, cellSize*0.48)
 					stage := ui.ScrollBoth(c).Grow(1).Clip().Draw(func(p *ui.Painter, bounds ui.Rect) {
