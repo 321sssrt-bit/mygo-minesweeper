@@ -127,6 +127,7 @@ func TestAppIconSourceIsOriginalVectorArt(t *testing.T) {
 			if notShapes[name] {
 				t.Errorf("%s has <%s>: the icon is drawn shapes only", iconSource, name)
 			}
+			stopColor := false
 			for _, a := range tok.Attr {
 				k, v := a.Name.Local, strings.TrimSpace(a.Value)
 				switch {
@@ -136,6 +137,7 @@ func TestAppIconSourceIsOriginalVectorArt(t *testing.T) {
 					if k == "fill" {
 						sc.fill = true
 					}
+					stopColor = stopColor || k == "stop-color"
 					if v != "none" && !strings.HasPrefix(v, "url(#") && !allowed[strings.ToUpper(v)] {
 						t.Errorf("%s <%s %s=%q>: not a day palette colour", iconSource, name, k, v)
 					}
@@ -146,6 +148,10 @@ func TestAppIconSourceIsOriginalVectorArt(t *testing.T) {
 			}
 			if filled[name] && !sc.fill && !sc.clip {
 				t.Errorf("%s <%s> sets no fill, so it would paint black", iconSource, name)
+			}
+			// stop-color is not inherited, and a gradient stop without one is black.
+			if name == "stop" && !stopColor {
+				t.Errorf("%s <stop> sets no stop-color, so it would paint black", iconSource)
 			}
 			stack = append(stack, sc)
 		case xml.EndElement:
