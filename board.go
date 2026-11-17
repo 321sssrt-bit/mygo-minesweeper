@@ -302,7 +302,8 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 						p.Line(cx-6, cy-6, cx+6, cy+6, 2.5, ui.Hex("#FB7185"))
 						p.Line(cx+6, cy-6, cx-6, cy+6, 2.5, ui.Hex("#FB7185"))
 					case cell.Revealed && cell.Adjacent > 0:
-						p.Text(cx-float32(len(fmt.Sprint(cell.Adjacent)))*v.Cell*0.15, cy-v.Cell*0.28, fmt.Sprint(cell.Adjacent), v.Cell*0.55, numberColor(cell.Adjacent))
+						// Owned cells sit on a dark fill until the duel canvas goes paper (#19); ink for what is underneath.
+						p.Text(cx-float32(len(fmt.Sprint(cell.Adjacent)))*v.Cell*0.15, cy-v.Cell*0.28, fmt.Sprint(cell.Adjacent), v.Cell*0.55, numberInk(cell.Adjacent, a.darkMode || cell.Owner != DuelNobody))
 					}
 				}
 			}

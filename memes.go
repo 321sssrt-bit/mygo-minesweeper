@@ -13,11 +13,15 @@ const (
 )
 
 type Member struct {
-	ID        MemberID
-	Name      string
-	AvatarKey string
-	Role      string
-	Tagline   string
+	ID   MemberID
+	Name string
+	// Glyph is the one character on the member's avatar; Romaji follows
+	// the name in small type.
+	Glyph   string
+	Romaji  string
+	Role    string
+	Tagline string
+	// ColorHex is the member's official 代表色 (Image Color).
 	ColorHex  string
 	SkillName string
 	SkillDesc string
@@ -28,30 +32,33 @@ var Members = []Member{
 	{
 		ID:        MemberTomori,
 		Name:      "高松灯",
-		AvatarKey: "Tomori Takamatsu",
+		Glyph:     "灯",
+		Romaji:    "Tomori",
 		Role:      "Vo.",
 		Tagline:   "创可贴与石头收集家",
-		ColorHex:  "#67B7E1",
+		ColorHex:  "#77BBDD",
 		SkillName: "创可贴指引",
 		SkillDesc: "经典：翻开安全边界；决斗：扫描鼠标周围 9×9 并解除硬直",
 	},
 	{
 		ID:        MemberAnon,
 		Name:      "千早爱音",
-		AvatarKey: "Anon Chihaya",
+		Glyph:     "爱",
+		Romaji:    "Anon",
 		Role:      "Gt.",
 		Tagline:   "虚荣SNS偶像担当",
-		ColorHex:  "#F07AA4",
+		ColorHex:  "#FF8899",
 		SkillName: "伦敦留学实力",
 		SkillDesc: "经典：翻开两个安全格；决斗：扫描并把连击转为奖励分",
 	},
 	{
 		ID:        MemberSoyorin,
 		Name:      "长崎爽世",
-		AvatarKey: "Soyo Nagasaki",
+		Glyph:     "爽",
+		Romaji:    "Soyo",
 		Role:      "Ba.",
 		Tagline:   "重力微笑与拉黑之神",
-		ColorHex:  "#E8A849",
+		ColorHex:  "#FFDD88",
 		SkillName: "温柔的微笑",
 		SkillDesc: "被动：自动挡雷并收旗；决斗不结束比赛，但会扣除一次充能",
 		Passive:   true,
@@ -59,20 +66,22 @@ var Members = []Member{
 	{
 		ID:        MemberTaki,
 		Name:      "椎名立希",
-		AvatarKey: "Taki Shiina",
+		Glyph:     "立",
+		Romaji:    "Taki",
 		Role:      "Dr.",
 		Tagline:   "压力怪 & 护灯狂魔",
-		ColorHex:  "#9B7CE8",
+		ColorHex:  "#7777AA",
 		SkillName: "鼓棒指雷",
 		SkillDesc: "经典：精准标雷；决斗：扫描并延迟 AI 下一次行动",
 	},
 	{
 		ID:        MemberRana,
 		Name:      "要乐奈",
-		AvatarKey: "Rana Kaname",
+		Glyph:     "乐",
+		Romaji:    "Rāna",
 		Role:      "Gt.",
 		Tagline:   "野猫 & 抹茶芭菲爱好者",
-		ColorHex:  "#68C178",
+		ColorHex:  "#77DD77",
 		SkillName: "抹茶芭菲巡演",
 		SkillDesc: "经典：展开空白区；决斗：扫描并延迟 AI 下一次行动",
 	},

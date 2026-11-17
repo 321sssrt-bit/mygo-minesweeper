@@ -162,12 +162,12 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.quote = PickQuote(a.memberID, "start")
 	m := FindMember(a.memberID)
 	if initial {
-		a.pushChat("MyGO!!!!! 排练室", "#55B2D6", fmt.Sprintf("曲目加载：《%s》(%s)", diff.Song, diff.Subtitle))
+		a.pushChat("MyGO!!!!! 排练室", hexOf(bandColor), fmt.Sprintf("曲目加载：《%s》(%s)", diff.Song, diff.Subtitle))
 	} else {
-		a.pushChat("排练重开", "#55B2D6", fmt.Sprintf("重新演奏《%s》", diff.Song))
+		a.pushChat("排练重开", hexOf(bandColor), fmt.Sprintf("重新演奏《%s》", diff.Song))
 	}
 	if diff.ID == "duel" {
-		a.pushChat("MyGO!!!!! 决斗室", "#55B2D6", "五分钟百万格抢地：开格 +1，踩雷 −100；旗帜终局按对错计分，不靠比分偷看雷。")
+		a.pushChat("MyGO!!!!! 决斗室", hexOf(bandColor), "五分钟百万格抢地：开格 +1，踩雷 −100；旗帜终局按对错计分，不靠比分偷看雷。")
 	}
 	a.pushChat(m.Name, m.ColorHex, a.quote)
 }
@@ -348,41 +348,26 @@ func formatClock(seconds int) string {
 	return fmt.Sprintf("%02d:%02d", max(0, seconds)/60, max(0, seconds)%60)
 }
 
-func numberColor(n int) ui.Color {
-	switch n {
-	case 1:
-		return ui.Hex("#67B7E1") // 高松灯
-	case 2:
-		return ui.Hex("#68C178") // 要乐奈
-	case 3:
-		return ui.Hex("#F07AA4") // 千早爱音
-	case 4:
-		return ui.Hex("#A78BFA") // 椎名立希
-	case 5:
-		return ui.Hex("#F5B041") // 长崎爽世
-	case 6:
-		return ui.Hex("#22D3EE")
-	case 7:
-		return ui.Hex("#FB7185")
-	default:
-		return ui.Hex("#CBD5E1")
-	}
-}
+func (a *minesweeperApp) paper() *palette { return paperFor(a.darkMode) }
 
+// activeTheme is the notebook paper as a widget theme: the desk behind,
+// sheets for panels, ink for text, the 乐队色 as accent, 文楷 throughout.
 func (a *minesweeperApp) activeTheme() *ui.Theme {
-	mygoTeal := ui.Hex("#55B2D6")
-	if a.darkMode {
-		t := ui.DarkTheme().WithAccent(mygoTeal)
-		t.Background = ui.Hex("#0B101B")
-		t.Surface = ui.Hex("#131C2E")
-		t.SurfaceHover = ui.Hex("#1C2942")
-		t.SurfacePressed = ui.Hex("#233352")
-		t.Border = ui.Hex("#273754")
-		t.Text = ui.Hex("#EDF4FB")
-		t.TextMuted = ui.Hex("#93A7C2")
-		return t
+	p := a.paper()
+	var t *ui.Theme
+	if p.Dark {
+		t = ui.DarkTheme().WithAccent(p.InkOf(bandColor))
+	} else {
+		t = ui.LightTheme().WithAccent(bandColor)
 	}
-	t := ui.LightTheme().WithAccent(ui.Hex("#2980A8"))
+	t.Background = p.Desk
+	t.Surface = p.Sheet
+	t.SurfaceHover = p.Sheet.Mix(p.Ink, 0.05)
+	t.SurfacePressed = p.Sheet.Mix(p.Ink, 0.1)
+	t.Border = p.Rule
+	t.Text = p.Ink
+	t.TextMuted = p.InkMuted
+	t.Font = fontFamily
 	return t
 }
 
@@ -534,9 +519,14 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	c.SetTheme(baseTheme)
 	t := c.Theme()
 
+	pal := a.paper()
+	art := artFor(pal.Dark)
 	member := FindMember(a.memberID)
+	// memberColor is the leader's 代表色, used as a highlighter; memberInk
+	// is it as ink, for text and the skill button on this paper.
 	memberColor := ui.Hex(member.ColorHex)
-	memberTheme := baseTheme.WithAccent(memberColor)
+	memberInk := pal.InkOf(memberColor)
+	memberTheme := baseTheme.WithAccent(memberInk)
 
 	if a.haruhikageIntro {
 		elapsedIntro := now.Sub(a.haruhikageIntroStart)
@@ -573,24 +563,33 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		"「明明都约好了不点那一格的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
 		"对不起，我错了", "一辈子重开") {
 	case 0:
-		a.pushChat("长崎爽世", "#E8A849", "「道歉的话，下次别再盲猜了呢。」")
+		a.pushChat("长崎爽世", FindMember(MemberSoyorin).ColorHex, "「道歉的话，下次别再盲猜了呢。」")
 	case 1:
 		a.resetGame(false)
 	}
 
-	ui.Column(c).Fill().Padding(14).Gap(10).Children(func() {
+	root := ui.Column(c).Fill().Padding(14).Gap(10)
+	if pal.Lamp.A > 0 {
+		// The desk lamp warms the night notebook's top-left corner.
+		root.RadialGradient(ui.RadialGradient{
+			Stops:  []ui.GradientStop{{Color: pal.Lamp, At: 0}, {Color: pal.Lamp.Alpha(0), At: 1}},
+			Center: ui.Point{X: 0.12, Y: 0.02},
+			Radius: 720,
+		})
+	}
+	root.Children(func() {
 		// Top Header Bar
 		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-				ui.Avatar(c, "MyGO!!!!!", nil)
+				bandMark(c, 40)
 				ui.Column(c).Gap(2).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						ui.Text(c, "MyGO!!!!! 迷子扫雷").FontSize(20).Bold()
+						ui.Text(c, "MyGO!!!!! 迷子扫雷").FontSize(21).Bold()
 						ui.Badge(c, fmt.Sprintf("《%s》", a.game.Difficulty.Song)).
-							Background(t.Accent.Alpha(0.18)).TextColor(t.Accent)
+							Background(t.Accent.Alpha(0.14)).TextColor(t.Accent)
 						ui.Badge(c, fmt.Sprintf("名场面 %d/%d", len(a.unlockedMemes), len(AllMemes)))
 					})
-					ui.Text(c, "「迷子でもいい、迷子でも進め。」 · egoist/mygo Native UI").
+					ui.Text(c, "「迷子でもいい、迷子でも進め。」").
 						FontSize(12).TextColor(t.TextMuted)
 				})
 			})
@@ -636,28 +635,31 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				ui.Column(c).Gap(6).Children(func() {
 					for _, m := range Members {
 						mc := ui.Hex(m.ColorHex)
+						mInk := pal.InkOf(mc)
 						selected := m.ID == a.memberID
 						item := ui.Box(c.Key(string(m.ID))).Padding(7, 9).Radius(9).
 							Cursor(ui.CursorPointer).Label(m.Name).Tooltip(m.SkillDesc)
 						if selected {
-							item.Background(mc.Alpha(0.18)).Border(1, mc)
+							// A highlighter stroke in her 代表色.
+							item.Background(mc.Alpha(0.36).Over(t.Surface))
 						} else if item.Hovered() {
-							item.Background(t.SurfaceHover).Border(1, mc.Alpha(0.5))
-						} else {
-							item.Background(t.Background.Alpha(0.55)).Border(1, t.Border)
+							item.Background(mc.Alpha(0.14).Over(t.Surface))
 						}
 						item.Children(func() {
-							ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-								ui.Avatar(c, m.AvatarKey, nil)
+							ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
+								memberAvatar(c, m, 34, pal)
 								ui.Column(c).Grow(1).Gap(1).Children(func() {
 									ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-										ui.Textf(c, "%s · %s", m.Name, m.Role).FontSize(13).Bold()
+										ui.Row(c).AlignItems(ui.Baseline).Gap(5).Children(func() {
+											ui.Text(c, m.Name).FontSize(14).Bold()
+											ui.Textf(c, "%s · %s", m.Romaji, m.Role).FontSize(11).TextColor(t.TextMuted)
+										})
 										if selected && a.bandMode() {
 											tag := fmt.Sprintf("×%d", a.game.SkillUsesLeft)
 											if m.Passive {
 												tag = fmt.Sprintf("盾×%d", a.game.SkillUsesLeft)
 											}
-											ui.Badge(c, tag).Background(mc.Alpha(0.24)).TextColor(mc)
+											ui.Badge(c, tag).Background(t.Surface.Alpha(0.7)).TextColor(mInk)
 										}
 									})
 									ui.Text(c, m.SkillName+" · "+m.Tagline).FontSize(11).TextColor(t.TextMuted).SingleLine()
@@ -682,31 +684,35 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				})
 
 				// Progress & Gravity Meter
-				ui.Column(c).Gap(6).Padding(8).Radius(9).Background(t.Background.Alpha(0.6)).Border(1, t.Border).Children(func() {
+				ui.Column(c).Gap(5).Padding(8, 4).Children(func() {
 					ui.Row(c).Justify(ui.SpaceBetween).Children(func() {
-						ui.Text(c, "排练完成度").FontSize(11).TextColor(t.TextMuted)
-						ui.Textf(c, "%.0f%%", a.game.Progress()*100).FontSize(11).Bold().TextColor(t.Accent)
+						ui.Text(c, "排练完成度").FontSize(12).TextColor(t.TextMuted)
+						ui.Textf(c, "%.0f%%", a.game.Progress()*100).FontSize(12).Bold().TextColor(t.Accent)
 					})
-					ui.Progress(c, a.game.Progress()).Label("Live 完成度")
+					hatchMeter(c, "Live 完成度", a.game.Progress(), pal.InkOf(bandColor), pal)
 
 					ui.Row(c).Justify(ui.SpaceBetween).Children(func() {
-						ui.Text(c, "乐队重力值 (Gravity)").FontSize(11).TextColor(t.TextMuted)
-						ui.Textf(c, "%d%%", a.game.Gravity).FontSize(11).Bold().TextColor(ui.Hex("#E8A849"))
+						ui.Text(c, "乐队重力值 (Gravity)").FontSize(12).TextColor(t.TextMuted)
+						ui.Textf(c, "%d%%", a.game.Gravity).FontSize(12).Bold().TextColor(pal.InkOf(memberImage(MemberSoyorin)))
 					})
-					ui.Meter(c, float64(a.game.Gravity), 0, 100, &ui.MeterLevels{
-						Warning:  55,
-						Critical: 80,
-					}).Label("乐队重力值")
+					hatchMeter(c, "乐队重力值", float64(a.game.Gravity)/100, pal.InkOf(memberImage(MemberSoyorin)), pal)
 				})
 
-				// Band Group Chat
+				// Band Group Chat: sticky notes in each speaker's colour.
 				ui.Text(c, "MyGO!!!!! 排练室群聊").FontSize(12).Bold().TextColor(t.TextMuted)
-				ui.Scroll(c).Grow(1).Padding(6).Radius(9).Background(t.Background.Alpha(0.6)).Border(1, t.Border).Children(func() {
-					ui.Column(c).Gap(6).Children(func() {
+				ui.Scroll(c).Grow(1).Padding(6, 4).Children(func() {
+					ui.Column(c).Gap(9).Children(func() {
 						for idx := len(a.chatLog) - 1; idx >= 0; idx-- {
 							msg := a.chatLog[idx]
-							ui.Column(c.Key(idx)).Gap(1).Padding(5, 7).Radius(7).Background(t.Surface.Alpha(0.75)).Children(func() {
-								ui.Text(c, msg.Speaker).FontSize(11).Bold().TextColor(ui.Hex(msg.ColorHex))
+							speaker := ui.Hex(msg.ColorHex)
+							tilt := float32(0.7)
+							if idx%2 == 0 {
+								tilt = -0.8
+							}
+							ui.Column(c.Key(idx)).Gap(2).Padding(6, 8).Radius(2).
+								Background(speaker.Alpha(0.2).Over(t.Surface)).
+								Shadow(0, 2, 4, 0, pal.SlipShade.Alpha(0.6)).Rotate(tilt).Children(func() {
+								ui.Text(c, msg.Speaker).FontSize(11).Bold().TextColor(pal.InkOf(speaker))
 								ui.Text(c, msg.Text).FontSize(12)
 							})
 						}
@@ -717,14 +723,20 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			// Right Main Stage: Companion Banner + HUD + Board (+ Optional Memes Drawer)
 			ui.Column(c).Grow(1).Gap(10).Children(func() {
 				// Active Member Banner themed to the selected member!
-				ui.Themed(c, memberTheme).Padding(10, 12).Radius(12).Background(t.Surface).
-					Border(1, memberColor.Alpha(0.55)).Children(func() {
+				ui.Themed(c, memberTheme).Padding(10, 12).Radius(4).Background(t.Surface).
+					Shadow(0, 1, 3, 0, pal.SlipShade).Draw(func(p *ui.Painter, r ui.Rect) {
+					// A strip of masking tape in her 代表色 holds the note on.
+					tape := ui.Rect{X: r.X + 26, Y: r.Y - 6, W: 64, H: 14}
+					p.Transform(ui.Rotation(-4), tape.X+tape.W/2, tape.Y+tape.H/2, func() {
+						p.Fill(tape, memberColor.Alpha(0.5), 1)
+					})
+				}).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
 						ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(10).Children(func() {
-							ui.Avatar(c, member.AvatarKey, nil)
+							memberAvatar(c, member, 38, pal)
 							ui.Column(c).Grow(1).Gap(2).Children(func() {
 								ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-									ui.Text(c, member.Name).FontSize(14).Bold().TextColor(memberColor)
+									ui.Text(c, member.Name).FontSize(15).Bold().TextColor(memberInk)
 									ui.Badge(c, member.Role)
 									skillTip := member.SkillName + " · " + member.SkillDesc
 									if !a.bandMode() {
@@ -881,22 +893,27 @@ func (a *minesweeperApp) view(c *ui.Context) {
 
 					stage.Children(func() {
 						ui.Column(c).FillWidth().AlignItems(ui.Center).Padding(4).Children(func() {
-							grid := ui.Grid(c).Columns(a.game.Cols).Gap(3).Padding(8).Radius(10)
-							if shakeX != 0 || shakeY != 0 {
-								grid.Border(1, ui.Color{}).Draw(func(p *ui.Painter, r ui.Rect) {
-									p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
-										p.Fill(r, t.Background, 10)
-										p.Stroke(r, t.Border, 10, 1)
-									})
+							// Graph paper: ruled lines run through the gaps between cells.
+							const gridGap, gridPad = float32(3), float32(8)
+							grid := ui.Grid(c).Columns(a.game.Cols).Gap(gridGap).Padding(gridPad).Radius(4).
+								Shadow(0, 1, 3, 0, pal.SlipShade)
+							pitch := cellSize + gridGap
+							grid.Draw(func(p *ui.Painter, r ui.Rect) {
+								p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
+									p.Fill(r, pal.Board, 4)
+									for x := r.X + gridPad - gridGap/2; x <= r.X+r.W; x += pitch {
+										p.Line(x, r.Y, x, r.Y+r.H, 1, pal.Grid)
+									}
+									for y := r.Y + gridPad - gridGap/2; y <= r.Y+r.H; y += pitch {
+										p.Line(r.X, y, r.X+r.W, y, 1, pal.Grid)
+									}
 								})
-							} else {
-								grid.Background(t.Background).Border(1, t.Border)
-							}
+							})
 							grid.Children(func() {
 								for i := range a.game.Cells {
 									cell := &a.game.Cells[i]
 									row, col := cell.Row, cell.Col
-									tile := ui.Box(c.Key(i)).Size(cellSize, cellSize).Radius(5).Center().
+									tile := ui.Box(c.Key(i)).Size(cellSize, cellSize).Radius(4).Center().
 										Label(fmt.Sprintf("cell-%d-%d", row, col))
 									if tile.Hovered() {
 										nextHoverRow, nextHoverCol = row, col
@@ -914,112 +931,92 @@ func (a *minesweeperApp) view(c *ui.Context) {
 										}
 									}
 
-									var tileBg, tileBd ui.Color
+									// Revealed cells are the bare graph paper (no fill); hidden
+									// ones are paper slips stuck on it, each a touch askew.
+									var tileBg ui.Color
+									var slip bool
 									var tileCursor bool
 									var tileText string
 									var tileTextSize float32
-									var tileTextBold bool
-									var tileTextColor *ui.Color
+									var tileTextColor ui.Color
+									var tileArt *ui.SVG
 
 									switch {
 									case cell.Revealed:
 										switch {
 										case cell.Exploded:
-											tileBg, tileBd = ui.Hex("#991B1B"), ui.Hex("#FCA5A5")
-											tileText, tileTextSize = "💥", cellFont-1
+											tileBg, tileArt = pal.Boom, art.KnotHit
 										case cell.IsMine:
-											tileBg, tileBd = t.Background, ui.Hex("#EF4444").Alpha(0.55)
-											tileText, tileTextSize = "💣", cellFont-1
+											tileArt = art.Knot
 										case cell.Adjacent > 0:
-											tileBg = t.Background
-											tileBd = t.Border.Alpha(0.5)
 											if isHintCenter {
-												tileBg = hintColor.Alpha(0.22)
-												tileBd = hintColor
+												tileBg = hintColor.Alpha(0.38)
 											} else if rippleActive {
-												tileBg = t.Accent.Alpha(0.26 * rippleAlpha)
-												tileBd = t.Accent.Alpha(0.45 + 0.55*rippleAlpha)
+												tileBg = bandColor.Alpha(0.22 * rippleAlpha)
 											} else if tile.Hovered() {
-												tileBg = t.SurfaceHover.Alpha(0.45)
+												tileBg = pal.Ink.Alpha(0.05)
 											}
 											tileCursor = true
 											tileText = fmt.Sprintf("%d", cell.Adjacent)
-											tileTextSize = cellFont
-											tileTextBold = true
-											colVal := numberColor(cell.Adjacent)
-											tileTextColor = &colVal
+											tileTextSize = cellFont * 1.08
+											tileTextColor = numberInk(cell.Adjacent, pal.Dark)
 										default:
-											tileBg = t.Background
-											tileBd = t.Border.Alpha(0.32)
 											if rippleActive {
-												tileBg = t.Accent.Alpha(0.3 * rippleAlpha)
-												tileBd = t.Accent.Alpha(0.35 + 0.65*rippleAlpha)
+												tileBg = bandColor.Alpha(0.26 * rippleAlpha)
 											}
 										}
 									case cell.WrongFlag:
-										tileBg, tileBd = ui.Hex("#4C1D2D"), ui.Hex("#FB7185")
-										tileText, tileTextSize, tileTextBold = "✕", cellFont-1, true
-										colVal := ui.Hex("#FB7185")
-										tileTextColor = &colVal
+										slip, tileArt = true, art.WrongFlag
 									case cell.Flagged:
-										tileBg = t.SurfaceHover
-										tileBd = t.Accent.Alpha(0.75)
-										mark := "🩹"
+										slip, tileArt, tileCursor = true, art.Flag, true
 										if cell.ShieldSaved {
-											tileBd = ui.Hex("#E8A849")
-											mark = "🛡"
+											tileArt = art.Shield
 										}
-										tileCursor = true
-										tileText, tileTextSize = mark, cellFont-1
 									case cell.Questioned:
-										tileBg = t.SurfaceHover
-										tileBd = t.Accent.Alpha(0.55)
-										if isHintTarget {
-											tileBg = hintColor.Alpha(0.26)
-											tileBd = hintColor
-										}
-										tileCursor = true
-										tileText, tileTextSize, tileTextBold = "?", cellFont, true
-										colVal := t.Accent
-										tileTextColor = &colVal
+										slip, tileCursor = true, true
+										tileText, tileTextSize, tileTextColor = "?", cellFont*1.08, pal.Graphite
 									default:
-										tileBg = t.Surface
-										tileBd = t.Border
+										slip, tileCursor = true, true
+									}
+									if slip {
+										tileBg = pal.Slip
 										if isHintTarget {
-											tileBg = hintColor.Alpha(0.26)
-											tileBd = hintColor
+											tileBg = hintColor.Alpha(0.42).Over(pal.Slip)
 										} else if tile.Hovered() {
-											tileBg = t.SurfaceHover
-											tileBd = t.Accent.Alpha(0.75)
+											tileBg = pal.Slip.Mix(pal.Sheet, 0.45)
 										}
-										tileCursor = true
 									}
 
 									if shakeX != 0 || shakeY != 0 {
-										bgCopy, bdCopy := tileBg, tileBd
+										bgCopy := tileBg
 										tile.Draw(func(p *ui.Painter, r ui.Rect) {
 											p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
-												p.Fill(r, bgCopy, 5)
-												p.Stroke(r, bdCopy, 5, 1)
+												p.Fill(r, bgCopy, 4)
 											})
 										})
 									} else {
-										tile.Background(tileBg).Border(1, tileBd)
+										tile.Background(tileBg)
+										if slip {
+											tile.Shadow(0, 1, 1.5, 0, pal.SlipShade)
+										}
+									}
+									if slip {
+										// Same tilt while shaking, so hit-testing does not move.
+										tile.Rotate(float32((i*37)%7-3) * 0.22)
 									}
 									if tileCursor {
 										tile.Cursor(ui.CursorPointer)
 									}
-									if tileText != "" {
+									if tileText != "" || tileArt != nil {
 										tile.Children(func() {
-											lbl := ui.Text(c, tileText).FontSize(tileTextSize).PassThrough()
-											if tileTextBold {
-												lbl.Bold()
-											}
-											if tileTextColor != nil {
-												lbl.TextColor(*tileTextColor)
+											var el ui.Element
+											if tileArt != nil {
+												el = ui.Image(c, tileArt).Size(cellSize*0.82, cellSize*0.82).PassThrough()
+											} else {
+												el = ui.Text(c, tileText).FontSize(tileTextSize).Bold().TextColor(tileTextColor).PassThrough()
 											}
 											if shakeX != 0 || shakeY != 0 {
-												lbl.Translate(shakeX, shakeY)
+												el.Translate(shakeX, shakeY)
 											}
 										})
 									}
@@ -1062,7 +1059,7 @@ func main() {
 			Title:           "MyGO!!!!! 迷子扫雷",
 			Width:           1280,
 			Height:          900,
-			BackgroundColor: "#0b101b",
+			BackgroundColor: "#F3EEE2",
 			StateKey:        "mygo-minesweeper-v2",
 			Content:         ui.View(app.view),
 		})
