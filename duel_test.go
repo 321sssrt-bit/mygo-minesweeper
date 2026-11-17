@@ -1327,14 +1327,54 @@ func TestDuelHaruhikageSceneNeedsMarkerAndScoreLoss(t *testing.T) {
 		}
 	}
 
-	// Cleared-board path: checkWin also settles through finishDuel.
+	// Cleared-board path: checkWin also settles through finishDuel. On a
+	// score loss the action result must not contradict the duel scene with
+	// a "won" line or win memes.
 	g := NewGame(Difficulty{Gameplay: GameplayDuel, Haruhikage: true, Rows: 5, Cols: 5, Mines: 24}, true, MemberAnon, 42)
 	g.duel.AIScore = 500
-	if res := g.Reveal(0, 0); res.Kind != ActionWon {
-		t.Fatalf("expected instant board clear, got %+v", res)
+	res := g.Reveal(0, 0)
+	if res.Kind != ActionWon || res.QuoteEvent != "" || len(res.NewMemes) != 0 {
+		t.Fatalf("score-loss clear should silence the won line and win memes, got %+v", res)
 	}
 	if !slices.Contains(g.duel.NewMemes, MemeHaruhikage) || g.duel.QuoteEvent != "haruhikageLost" {
 		t.Fatalf("cleared board score loss should still unlock the scene, got memes=%v event=%q", g.duel.NewMemes, g.duel.QuoteEvent)
+	}
+	lead := NewGame(Difficulty{Gameplay: GameplayDuel, Haruhikage: true, Rows: 5, Cols: 5, Mines: 24}, true, MemberAnon, 42)
+	lead.duel.PlayerScore = 300
+	res = lead.Reveal(0, 0)
+	if res.Kind != ActionWon || res.QuoteEvent != "won" || len(res.NewMemes) == 0 {
+		t.Fatalf("score-lead clear should keep the won line and win memes, got %+v", res)
+	}
+	if len(lead.duel.NewMemes) != 0 || lead.duel.QuoteEvent != "" {
+		t.Fatalf("score-lead clear must not record the scene, got memes=%v event=%q", lead.duel.NewMemes, lead.duel.QuoteEvent)
+	}
+
+	// The player's own wrong flag costs 30 at settlement and can alone
+	// produce a losing score.
+	wrong := NewGame(Difficulty{Gameplay: GameplayDuel, Haruhikage: true, Rows: 5, Cols: 5, Mines: 1, DuelDuration: 60}, true, MemberAnon, 42)
+	wrong.FirstClick = true
+	wrong.Status = StatusPlaying
+	wrong.flagDuel(0, 0, DuelPlayer)
+	wrong.TickDuel(60)
+	if wrong.duel.PlayerScore != -30 || !slices.Contains(wrong.duel.NewMemes, MemeHaruhikage) || wrong.duel.QuoteEvent != "haruhikageLost" {
+		t.Fatalf("wrong flag settling into a negative loss must trigger the scene, score=%d memes=%v event=%q", wrong.duel.PlayerScore, wrong.duel.NewMemes, wrong.duel.QuoteEvent)
+	}
+
+	// AI revealing the last safe cell settles through the same path.
+	ai := NewGame(Difficulty{Gameplay: GameplayDuel, Haruhikage: true, Rows: 5, Cols: 5, Mines: 24}, true, MemberAnon, 42)
+	ai.FirstClick = true
+	ai.Status = StatusPlaying
+	for i := range ai.Cells {
+		ai.Cells[i].IsMine = true
+	}
+	ai.Cells[24].IsMine = false
+	ai.duel.AIScore = 500
+	res = ai.revealDuel(4, 4, DuelAI)
+	if res.Kind != ActionWon || ai.Status != StatusWon {
+		t.Fatalf("AI clear did not settle: %+v status=%v", res, ai.Status)
+	}
+	if !slices.Contains(ai.duel.NewMemes, MemeHaruhikage) || ai.duel.QuoteEvent != "haruhikageLost" {
+		t.Fatalf("AI-cleared score loss should still unlock the scene, got memes=%v event=%q", ai.duel.NewMemes, ai.duel.QuoteEvent)
 	}
 
 	// Flag scoring runs before the outcome check: an AI mine flag flips a

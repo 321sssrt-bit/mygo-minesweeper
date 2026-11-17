@@ -220,7 +220,12 @@ func (g *Game) revealDuel(row, col int, owner DuelOwner) ActionResult {
 		delta = d.PlayerScore - beforeScore
 	}
 	if g.checkWin() {
-		return ActionResult{Kind: ActionWon, RevealedCount: revealed, ScoreDelta: delta, QuoteEvent: "won", NewMemes: g.winMemes(), RevealWave: wave}
+		res := ActionResult{Kind: ActionWon, RevealedCount: revealed, ScoreDelta: delta, RevealWave: wave}
+		if owner == DuelPlayer && d.PlayerScore > d.AIScore {
+			res.QuoteEvent = "won"
+			res.NewMemes = g.winMemes()
+		}
+		return res
 	}
 	return ActionResult{Kind: ActionRevealed, RevealedCount: revealed, ScoreDelta: delta, RevealWave: wave}
 }
