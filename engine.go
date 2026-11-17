@@ -4,11 +4,19 @@ import (
 	"math/rand/v2"
 )
 
+type Gameplay string
+
+const (
+	GameplayClassic Gameplay = "classic"
+	GameplayDuel    Gameplay = "duel"
+)
+
 type Difficulty struct {
 	ID           string
 	Label        string
 	Song         string
 	Subtitle     string
+	Gameplay     Gameplay
 	Rows         int
 	Cols         int
 	Mines        int
@@ -21,6 +29,7 @@ var Difficulties = []Difficulty{
 		Label:        "羽丘天文部",
 		Song:         "迷星叫",
 		Subtitle:     "9×9 · 10雷",
+		Gameplay:     GameplayClassic,
 		Rows:         9,
 		Cols:         9,
 		Mines:        10,
@@ -31,6 +40,7 @@ var Difficulties = []Difficulty{
 		Label:        "RiNG 排练室",
 		Song:         "碧天伴走",
 		Subtitle:     "16×16 · 40雷",
+		Gameplay:     GameplayClassic,
 		Rows:         16,
 		Cols:         16,
 		Mines:        40,
@@ -41,6 +51,7 @@ var Difficulties = []Difficulty{
 		Label:        "春日影 Live",
 		Song:         "春日影 (Crychic Ver.)",
 		Subtitle:     "30×16 · 99雷",
+		Gameplay:     GameplayClassic,
 		Rows:         16,
 		Cols:         30,
 		Mines:        99,
@@ -51,6 +62,7 @@ var Difficulties = []Difficulty{
 		Label:        "一辈子契约",
 		Song:         "诗超绊",
 		Subtitle:     "20×20 · 80雷",
+		Gameplay:     GameplayClassic,
 		Rows:         20,
 		Cols:         20,
 		Mines:        80,
@@ -61,6 +73,7 @@ var Difficulties = []Difficulty{
 		Label:        "百万格决斗",
 		Song:         "诗超绊 · 决斗 Live",
 		Subtitle:     "1000×1000 · 180000雷 · 05:00",
+		Gameplay:     GameplayDuel,
 		Rows:         1000,
 		Cols:         1000,
 		Mines:        180000,
@@ -163,7 +176,7 @@ type Game struct {
 
 func NewGame(diff Difficulty, bandMode bool, memberID MemberID, seed ...uint64) *Game {
 	limitRows, limitCols := 30, 40
-	if diff.ID == "duel" {
+	if diff.Gameplay == GameplayDuel {
 		limitRows, limitCols = 1000, 1000
 	}
 	rows := max(5, min(limitRows, diff.Rows))
@@ -204,7 +217,7 @@ func NewGame(diff Difficulty, bandMode bool, memberID MemberID, seed ...uint64) 
 		Cells:         cells,
 		rng:           r,
 	}
-	if diff.ID == "duel" {
+	if diff.Gameplay == GameplayDuel {
 		g.duel = newDuel(g)
 	}
 	return g
