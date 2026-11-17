@@ -8,7 +8,6 @@ import (
 	"image/png"
 	"os"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
@@ -148,40 +147,41 @@ func TestAppIconPNGIsTheSourceExport(t *testing.T) {
 	}
 }
 
-// TestAppIconMarksFollowBandOrder reads the shipped icon across the five
-// exclamation marks: left to right they are 灯, 爱音, 乐奈, 爽世 and 立希,
-// each in that member's day ink.
+// TestAppIconMarksFollowBandOrder reads the shipped icon for the five
+// members' day inks, wherever the marks sit: each ink is there, and left to
+// right they are 灯, 爱音, 乐奈, 爽世 and 立希.
 func TestAppIconMarksFollowBandOrder(t *testing.T) {
 	img, err := png.Decode(bytes.NewReader(appIconPNG))
 	if err != nil {
 		t.Fatalf("decode embedded icon: %v", err)
 	}
-	inks := map[color.NRGBA]MemberID{}
-	var want []MemberID
-	for _, id := range iconOrder {
+	inks := map[color.NRGBA]int{}
+	for i, id := range iconOrder {
 		c := dayPaper.InkOf(memberImage(id))
-		inks[color.NRGBA{R: c.R, G: c.G, B: c.B, A: 255}] = id
-		want = append(want, id)
+		inks[color.NRGBA{R: c.R, G: c.G, B: c.B, A: 255}] = i
 	}
-	// A row through the middle of the marks' strokes.
-	const row, minRun = iconSize * 2 / 5, 12
-	var got []MemberID
-	run, last := 0, MemberID("")
-	for x := 0; x < iconSize; x++ {
-		id, ok := inks[color.NRGBAModel.Convert(img.At(x, row)).(color.NRGBA)]
-		if !ok || id != last {
-			run = 0
-		}
-		last = ""
-		if ok {
-			run++
-			last = id
-		}
-		if run == minRun && (len(got) == 0 || got[len(got)-1] != id) {
-			got = append(got, id)
+	sumX := make([]int, len(iconOrder))
+	area := make([]int, len(iconOrder))
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if i, ok := inks[color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)]; ok {
+				sumX[i] += x
+				area[i]++
+			}
 		}
 	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("marks across row %d read %v, want band order %v", row, got, want)
+	// A mark is at least a small stroke of solid ink, not a few stray pixels.
+	const minArea = iconSize * iconSize / 400
+	prev, prevID := -1.0, MemberID("")
+	for i, id := range iconOrder {
+		if area[i] < minArea {
+			t.Fatalf("%s's day ink covers %d px of the icon, want a mark of at least %d px", id, area[i], minArea)
+		}
+		x := float64(sumX[i]) / float64(area[i])
+		if x <= prev {
+			t.Fatalf("%s's mark (centre x %.0f) is not right of %s's (%.0f); want band order %v", id, x, prevID, prev, iconOrder)
+		}
+		prev, prevID = x, id
 	}
 }
