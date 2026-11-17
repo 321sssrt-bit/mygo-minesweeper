@@ -283,17 +283,8 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 	}
 	if hasPlayer {
 		px, py := minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastCell, 5)
-		if hasAI && abs32(px-ax) < 4 && abs32(py-ay) < 4 {
-			if px+3 <= mini.X+mini.W-5 {
-				px += 3
-			} else {
-				px -= 3
-			}
-			if py-3 >= mini.Y+5 {
-				py -= 3
-			} else {
-				py += 3
-			}
+		if hasAI {
+			px, py = separateMinimapMarker(mini, px, py, ax, ay, 5)
 		}
 		if pulsing {
 			ring := clampMinimapRect(mini, px-(3+pulse*3.5), py-(3+pulse*3.5), (3+pulse*3.5)*2)
@@ -318,6 +309,38 @@ func minimapMarkerPos(mini ui.Rect, rows, cols, cellIdx int, margin float32) (fl
 	x = max(mini.X+margin, min(mini.X+mini.W-margin, x))
 	y = max(mini.Y+margin, min(mini.Y+mini.H-margin, y))
 	return x, y
+}
+
+func separateMinimapMarker(mini ui.Rect, px, py, ax, ay, margin float32) (float32, float32) {
+	dx, dy := px-ax, py-ay
+	const minSep = 6.0
+	if abs32(dx) >= minSep || abs32(dy) >= minSep {
+		return px, py
+	}
+	minX, maxX := mini.X+margin, mini.X+mini.W-margin
+	minY, maxY := mini.Y+margin, mini.Y+mini.H-margin
+	if abs32(dx) >= abs32(dy) {
+		dir := float32(1)
+		if dx < 0 {
+			dir = -1
+		}
+		candX := ax + dir*minSep
+		if candX < minX || candX > maxX {
+			candX = ax - dir*minSep
+		}
+		px = max(minX, min(maxX, candX))
+	} else {
+		dir := float32(1)
+		if dy < 0 {
+			dir = -1
+		}
+		candY := ay + dir*minSep
+		if candY < minY || candY > maxY {
+			candY = ay - dir*minSep
+		}
+		py = max(minY, min(maxY, candY))
+	}
+	return px, py
 }
 
 func clampMinimapRect(mini ui.Rect, x, y, size float32) ui.Rect {

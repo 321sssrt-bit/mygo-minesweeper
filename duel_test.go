@@ -232,7 +232,7 @@ func TestDuelMinimapLiveMarkersAndReset(t *testing.T) {
 		t.Fatalf("expected no initial markers, got player=%d ai=%d", app.game.duel.LastCell, app.game.duel.LastAI)
 	}
 
-	// Edge clamping bounds check.
+	// Edge clamping and overlap separation bounds check.
 	mini := ui.Rect{X: 100, Y: 100, W: 148, H: 148}
 	for _, idx := range []int{0, 999, 999 * 1000, 999*1000 + 999} {
 		mx, my := minimapMarkerPos(mini, 1000, 1000, idx, 5)
@@ -243,6 +243,20 @@ func TestDuelMinimapLiveMarkersAndReset(t *testing.T) {
 		if ring.X < mini.X+1 || ring.Y < mini.Y+1 || ring.X+ring.W > mini.X+mini.W-1 || ring.Y+ring.H > mini.Y+mini.H-1 {
 			t.Fatalf("pulse ring escaped minimap bounds: %+v", ring)
 		}
+		px, py := separateMinimapMarker(mini, mx, my, mx, my, 5)
+		if abs32(px-mx) < 6 && abs32(py-my) < 6 {
+			t.Fatalf("overlapping corner markers not separated at idx=%d: (%v,%v) vs (%v,%v)", idx, px, py, mx, my)
+		}
+		if px < mini.X+5 || px > mini.X+mini.W-5 || py < mini.Y+5 || py > mini.Y+mini.H-5 {
+			t.Fatalf("separated marker out of bounds: (%v,%v)", px, py)
+		}
+	}
+	// Nearby case flagged in review: AI at (500,500), player at (520,480) must maintain >=6px separation.
+	ax, ay := minimapMarkerPos(mini, 1000, 1000, 500*1000+500, 5)
+	px, py := minimapMarkerPos(mini, 1000, 1000, 520*1000+480, 5)
+	px, py = separateMinimapMarker(mini, px, py, ax, ay, 5)
+	if abs32(px-ax) < 6 && abs32(py-ay) < 6 {
+		t.Fatalf("adjacent markers collapsed together: player=(%v,%v) ai=(%v,%v)", px, py, ax, ay)
 	}
 
 	r, ok := tt.Find("百万格决斗战场")
