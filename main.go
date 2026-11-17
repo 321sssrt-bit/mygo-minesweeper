@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"log"
 	"math"
@@ -9,6 +10,9 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
+
+//go:embed resources/icon.png
+var appIconPNG []byte
 
 const (
 	rippleStepDelay         = 24 * time.Millisecond
@@ -1054,7 +1058,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 func main() {
 	app := newMinesweeperApp()
 	mygo.App.WhenReady(func() {
-		mygo.NewWindow(mygo.WindowOptions{
+		w := mygo.NewWindow(mygo.WindowOptions{
 			Title:           "MyGO!!!!! 迷子扫雷",
 			Width:           1280,
 			Height:          900,
@@ -1062,6 +1066,7 @@ func main() {
 			StateKey:        "mygo-minesweeper-v2",
 			Content:         ui.View(app.view),
 		})
+		_ = w.SetIcon(appIconPNG)
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

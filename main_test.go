@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"image/png"
+	"os"
 	"testing"
 	"time"
 
@@ -435,4 +439,38 @@ func TestHaruhikageLossDramaOverlaySkipTimedAndReset(t *testing.T) {
 		t.Fatalf("expected full reset cleanup after restart, status=%v intro=%v alert=%v", app2.game.Status, app2.haruhikageIntro, app2.haruhikageAlert)
 	}
 }
+
+func TestAppIconAndBundleConfig(t *testing.T) {
+	img, err := png.Decode(bytes.NewReader(appIconPNG))
+	if err != nil {
+		t.Fatalf("embedded appIconPNG failed to decode: %v", err)
+	}
+	b := img.Bounds()
+	if b.Dx() != 1024 || b.Dy() != 1024 {
+		t.Fatalf("expected 1024x1024 app icon, got %dx%d", b.Dx(), b.Dy())
+	}
+	// Outer corner (0,0) must be transparent (squircle mask), center (512,560) must be opaque.
+	if _, _, _, a0 := img.At(0, 0).RGBA(); a0 != 0 {
+		t.Fatalf("expected transparent outer corner at (0,0), got alpha=%d", a0)
+	}
+	if _, _, _, ac := img.At(512, 560).RGBA(); ac != 0xffff {
+		t.Fatalf("expected opaque center at (512,560), got alpha=%d", ac)
+	}
+
+	rawCfg, err := os.ReadFile("mygo.json")
+	if err != nil {
+		t.Fatalf("failed reading mygo.json: %v", err)
+	}
+	var cfg struct {
+		Icon    string `json:"icon"`
+		License string `json:"license"`
+	}
+	if err := json.Unmarshal(rawCfg, &cfg); err != nil {
+		t.Fatalf("failed parsing mygo.json: %v", err)
+	}
+	if cfg.Icon != "resources/icon.png" || cfg.License != "MIT" {
+		t.Fatalf("unexpected mygo.json icon/license config: %+v", cfg)
+	}
+}
+
 

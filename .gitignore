@@ -1,4 +1,8 @@
 .mygo/
 build/
+dist/
 *.exe
+*.test
+/mygo-minesweeper
+.DS_Store
 .scratch/
