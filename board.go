@@ -374,11 +374,31 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 		p.AnimationFrame()
 	}
 
+	pal, art, inks := paperFor(a.darkMode), artFor(a.darkMode), duelInksFor(a.darkMode)
+	radius := min(4, v.Cell/7)
+	// Numbers, props and slip shadows only once a cell is big enough to
+	// show them; zoomed out, the board is flat slips and washes.
+	detail := v.Cell >= 16
+	numberSize := v.Cell * 0.55
+	var numberW, numberH [len(cellDigits)]float32
+
 	p.Clip(r, 8, func() {
-		p.Fill(r, ui.Hex("#070D17"), 8)
+		// The canvas is graph paper, as under the classic grid.
+		p.Fill(r, pal.Board, 8)
 		p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
 			firstCol, lastCol := int(v.X/v.Cell), min(g.Cols, int((v.X+r.W)/v.Cell)+2)
 			firstRow, lastRow := int(v.Y/v.Cell), min(g.Rows, int((v.Y+r.H)/v.Cell)+2)
+			// Ruled lines run along the cell edges, only as far as the board.
+			top, bottom := max(r.Y, r.Y-v.Y), min(r.Y+r.H, r.Y+float32(g.Rows)*v.Cell-v.Y)
+			left, right := max(r.X, r.X-v.X), min(r.X+r.W, r.X+float32(g.Cols)*v.Cell-v.X)
+			for col := max(0, firstCol); col <= lastCol; col++ {
+				x := r.X + float32(col)*v.Cell - v.X
+				p.Line(x, top, x, bottom, 1, pal.Grid)
+			}
+			for row := max(0, firstRow); row <= lastRow; row++ {
+				y := r.Y + float32(row)*v.Cell - v.Y
+				p.Line(left, y, right, y, 1, pal.Grid)
+			}
 			for row := max(0, firstRow); row < lastRow; row++ {
 				for col := max(0, firstCol); col < lastCol; col++ {
 					cell := g.Cell(row, col)
@@ -386,69 +406,69 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 					x := r.X + float32(col)*v.Cell - v.X
 					y := r.Y + float32(row)*v.Cell - v.Y
 					tile := ui.Rect{X: x + 1, Y: y + 1, W: v.Cell - 2, H: v.Cell - 2}
-					bg, border := t.Surface, t.Border.Alpha(0.45)
-					if cell.Revealed {
-						bg = t.Background
-						border = t.Border.Alpha(0.25)
-						if cell.Owner == DuelPlayer {
-							bg = ui.Hex("#173B49")
-							border = ui.Hex("#55B2D6").Alpha(0.55)
-						} else if cell.Owner == DuelAI {
-							bg = ui.Hex("#3B2740")
-							border = ui.Hex("#F07AA4").Alpha(0.45)
+					isHintCenter := hoverHint.Kind != HintNone && idx == hoverHint.Center
+					isHintTarget := hoverHint.Kind != HintNone && !isHintCenter && containsIndex(hoverHint.Targets, idx)
+
+					// Flags (a shielded mine included) and unopened cells are
+					// paper slips stuck on the page; opened cells are the page.
+					if cell.Flagged || !cell.Revealed {
+						bg, outline := pal.Slip, ui.Color{}
+						var prop *ui.SVG
+						switch {
+						case cell.WrongFlag:
+							prop, outline = art.WrongFlag, duelOwnerColor(cell.FlagOwner)
+						case cell.Flagged && cell.ShieldSaved:
+							prop, outline = art.Shield, duelOwnerColor(cell.FlagOwner)
+						case cell.Flagged:
+							prop, outline = art.Flag, duelOwnerColor(cell.FlagOwner)
+						}
+						if isHintTarget {
+							bg, outline = hintColor.Alpha(0.28).Over(pal.Slip), hintColor
+						} else if hoverHint.Kind == HintNone && row == v.HoverRow && col == v.HoverCol {
+							bg = pal.Slip.Mix(pal.Sheet, 0.45)
+						}
+						paintSlip(p, tile, radius, bg, pal.SlipShade, outline, prop, detail)
+						continue
+					}
+
+					switch {
+					case cell.Exploded:
+						p.Fill(tile, pal.Boom, radius)
+					case cell.Owner != DuelNobody:
+						p.Fill(tile, duelOwnerColor(cell.Owner).Alpha(duelTerritoryWash), radius)
+					}
+					if isHintCenter {
+						p.Fill(tile, hintColor.Alpha(0.22), radius)
+						if v.Cell >= 15 {
+							p.Stroke(tile, hintColor, radius, 1)
 						}
 					}
-					if hoverHint.Kind != HintNone {
-						if idx == hoverHint.Center {
-							bg = hintColor.Alpha(0.22)
-							border = hintColor
-						} else if containsIndex(hoverHint.Targets, idx) {
-							bg = hintColor.Alpha(0.28)
-							border = hintColor
-						}
-					} else if row == v.HoverRow && col == v.HoverCol && !cell.Revealed {
-						border = t.Accent
-					}
-					if cell.Exploded {
-						bg, border = ui.Hex("#701F2B"), ui.Hex("#FB7185")
-					}
-					p.Fill(tile, bg, min(4, v.Cell/7))
 					if rip, ok := a.ripples[idx]; ok {
 						elapsed := now.Sub(rip.Start)
 						if elapsed >= rip.Delay && elapsed < rip.Delay+rippleDuration {
 							k := 1 - float32(elapsed-rip.Delay)/float32(rippleDuration)
-							ripColor := ui.Hex("#55B2D6")
-							if cell.Owner == DuelAI {
-								ripColor = ui.Hex("#F07AA4")
+							ripColor := duelOwnerColor(cell.Owner)
+							p.Fill(tile, ripColor.Alpha(0.36*k), radius)
+							if v.Cell >= 15 {
+								p.Stroke(tile, ripColor.Alpha(0.4+0.6*k), radius, 1)
 							}
-							p.Fill(tile, ripColor.Alpha(0.36*k), min(4, v.Cell/7))
-							border = ripColor.Alpha(0.4 + 0.6*k)
 						}
 					}
-					if v.Cell >= 15 {
-						p.Stroke(tile, border, min(4, v.Cell/7), 1)
-					}
-					if v.Cell < 16 {
+					if !detail {
 						continue
 					}
-					cx, cy := tile.X+tile.W/2, tile.Y+tile.H/2
 					switch {
-					case cell.Flagged:
-						color := ui.Hex("#55B2D6")
-						if cell.FlagOwner == DuelAI {
-							color = ui.Hex("#F07AA4")
+					case cell.Exploded:
+						p.Image(art.KnotHit, propRect(tile), ui.Contain)
+					case cell.IsMine:
+						p.Image(art.Knot, propRect(tile), ui.Contain)
+					case cell.Adjacent > 0 && cell.Adjacent < len(cellDigits):
+						n := cell.Adjacent
+						digit := ui.Span{Text: cellDigits[n], Size: numberSize, Weight: 700, Color: inks[cell.Owner][n]}
+						if numberW[n] == 0 {
+							numberW[n], numberH[n] = p.MeasureText(0, digit)
 						}
-						if cell.WrongFlag {
-							color = ui.Hex("#FB7185")
-						}
-						p.Line(cx-3, cy-7, cx-3, cy+7, 2, color)
-						p.Fill(ui.Rect{X: cx - 2, Y: cy - 7, W: 9, H: 7}, color, 1)
-					case cell.Revealed && cell.IsMine:
-						p.Line(cx-6, cy-6, cx+6, cy+6, 2.5, ui.Hex("#FB7185"))
-						p.Line(cx+6, cy-6, cx-6, cy+6, 2.5, ui.Hex("#FB7185"))
-					case cell.Revealed && cell.Adjacent > 0:
-						// Owned cells sit on a dark fill until the duel canvas goes paper (#19); ink for what is underneath.
-						p.Text(cx-float32(len(fmt.Sprint(cell.Adjacent)))*v.Cell*0.15, cy-v.Cell*0.28, fmt.Sprint(cell.Adjacent), v.Cell*0.55, numberInk(cell.Adjacent, a.darkMode || cell.Owner != DuelNobody))
+						p.RichText(tile.X+(tile.W-numberW[n])/2, tile.Y+(tile.H-numberH[n])/2, 0, digit)
 					}
 				}
 			}
@@ -567,6 +587,81 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 		p.Stroke(mini, t.Border, 6, 1)
 		p.Text(r.X+14, r.Y+r.H-32, fmt.Sprintf("(%d, %d) · %.0f%% · 拖动平移 / 滚轮缩放", v.HoverRow, v.HoverCol, v.Cell/42*100), 12, t.TextMuted)
 	})
+}
+
+// cellDigits are the numbers a revealed cell can show, by count.
+var cellDigits = [...]string{"", "1", "2", "3", "4", "5", "6", "7", "8"}
+
+// duelTerritoryWash is how strongly a side's colour washes over the paper
+// it has opened: enough to read as territory, light enough to stay paper.
+const duelTerritoryWash = 0.16
+
+// duelOwnerColor marks a side on the duel paper: its territory, its flags'
+// outline and its reveal ripples.
+func duelOwnerColor(owner DuelOwner) ui.Color {
+	if owner == DuelAI {
+		return ui.Hex("#F07AA4")
+	}
+	return ui.Hex("#55B2D6")
+}
+
+// duelCellPaper is what a revealed cell's number is written on: the bare
+// board, or the board under a side's territory wash.
+func duelCellPaper(p *palette, owner DuelOwner) ui.Color {
+	if owner == DuelNobody {
+		return p.Board
+	}
+	return duelOwnerColor(owner).Alpha(duelTerritoryWash).Over(p.Board)
+}
+
+// duelInks are the number inks per owner: numberInk, deepened (or lit,
+// at night) where a territory wash would leave it under minInkContrast.
+type duelInks [DuelAI + 1][len(cellDigits)]ui.Color
+
+var dayDuelInks, nightDuelInks = newDuelInks(dayPaper), newDuelInks(nightPaper)
+
+func duelInksFor(dark bool) *duelInks {
+	if dark {
+		return nightDuelInks
+	}
+	return dayDuelInks
+}
+
+func newDuelInks(p *palette) *duelInks {
+	var inks duelInks
+	for owner := DuelNobody; owner <= DuelAI; owner++ {
+		under := *p
+		under.Board = duelCellPaper(p, owner)
+		under.Sheet = under.Board
+		for n := 1; n < len(cellDigits); n++ {
+			inks[owner][n] = under.InkOf(numberInk(n, p.Dark))
+		}
+	}
+	return &inks
+}
+
+// propRect is where a knot or band-aid sits in a cell.
+func propRect(tile ui.Rect) ui.Rect {
+	s := min(tile.W, tile.H) * 0.86
+	return ui.Rect{X: tile.X + (tile.W-s)/2, Y: tile.Y + (tile.H-s)/2, W: s, H: s}
+}
+
+// paintSlip paints a paper slip stuck on the page, with an optional
+// outline and prop on it. Without detail it lies flat and bare. Unlike
+// the classic grid's few hundred widgets, the canvas repaints thousands
+// of slips a frame, so they are not tilted: at canvas sizes the tilt is
+// under a pixel, and turned shadows cost far more to draw.
+func paintSlip(p *ui.Painter, tile ui.Rect, radius float32, bg, shade, outline ui.Color, prop *ui.SVG, detail bool) {
+	if detail {
+		p.Shadow(tile, radius, 0, 1, 1.5, 0, shade)
+	}
+	p.Fill(tile, bg, radius)
+	if outline.A > 0 && tile.W >= 13 {
+		p.Stroke(tile, outline, radius, 1.5)
+	}
+	if detail && prop != nil {
+		p.Image(prop, propRect(tile), ui.Contain)
+	}
 }
 
 func (a *minesweeperApp) pruneAndDrawPopups(p *ui.Painter, r ui.Rect, now time.Time) {

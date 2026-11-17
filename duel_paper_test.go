@@ -1,0 +1,91 @@
+package main
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/egoist/mygo/ui"
+)
+
+// Numbers on the duel canvas are the classic board's deep inks, and stay
+// readable on both sides' territory, on both papers.
+func TestDuelNumbersReadOnEveryTerritory(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		pal, inks := paperFor(dark), duelInksFor(dark)
+		for owner := DuelNobody; owner <= DuelAI; owner++ {
+			under := duelCellPaper(pal, owner)
+			for n := 1; n <= 8; n++ {
+				ink := inks[owner][n]
+				if got := contrast(ink, under); got < minInkContrast {
+					t.Errorf("dark=%v owner=%d number %d ink %s on %s: contrast %.2f < %.1f",
+						dark, owner, n, hexOf(ink), hexOf(under), got, minInkContrast)
+				}
+				if owner == DuelNobody && ink != numberInk(n, dark) {
+					t.Errorf("dark=%v number %d on bare paper is %s, want the classic ink %s",
+						dark, n, hexOf(ink), hexOf(numberInk(n, dark)))
+				}
+			}
+		}
+	}
+}
+
+// The duel canvas is the notebook page in both themes: unopened cells are
+// paper slips, and each side's opened ground is the page under its wash.
+func TestDuelCanvasPaintsPaperDayAndNight(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app := stageDuelScene(dark)
+			g := app.game
+			g.duel.NextAI = 1e9
+			tt := ui.NewTester(app.view, 1280, 900)
+			tt.SetScale(1)
+			tt.Frame()
+			app.board.center(g, duelStageRow, duelStageCol)
+			tt.Frame()
+			board, ok := tt.Find("百万格决斗战场")
+			if !ok {
+				t.Fatal("duel board not found")
+			}
+			pal := paperFor(dark)
+			want := map[string]ui.Color{
+				"slip":   pal.Slip,
+				"player": duelCellPaper(pal, DuelPlayer),
+				"ai":     duelCellPaper(pal, DuelAI),
+			}
+			found := map[string][2]int{}
+			for row := duelStageRow - 6; row <= duelStageRow+6; row++ {
+				for col := duelStageCol - 8; col <= duelStageCol+12; col++ {
+					c := g.Cell(row, col)
+					kind := ""
+					switch {
+					case !c.Revealed && !c.Flagged:
+						kind = "slip"
+					case c.Revealed && !c.IsMine && c.Adjacent == 0 && c.Owner == DuelPlayer:
+						kind = "player"
+					case c.Revealed && !c.IsMine && c.Adjacent == 0 && c.Owner == DuelAI:
+						kind = "ai"
+					}
+					if _, seen := found[kind]; kind != "" && !seen && g.duel.LastAI != row*g.Cols+col {
+						found[kind] = [2]int{row, col}
+					}
+				}
+			}
+			img := tt.Image()
+			v := app.board
+			for kind, color := range want {
+				at, ok := found[kind]
+				if !ok {
+					t.Fatalf("staged duel has no %s cell near the stage", kind)
+				}
+				x := board.X + (float32(at[1])+0.5)*v.Cell - v.X
+				y := board.Y + (float32(at[0])+0.5)*v.Cell - v.Y
+				got := img.RGBAAt(int(x), int(y))
+				if !near(got.R, color.R) || !near(got.G, color.G) || !near(got.B, color.B) {
+					t.Errorf("%s cell (%d,%d) painted #%02X%02X%02X, want %s", kind, at[0], at[1], got.R, got.G, got.B, hexOf(color))
+				}
+			}
+		})
+	}
+}
+
+func near(a, b uint8) bool { return int(a)-int(b) <= 3 && int(b)-int(a) <= 3 }
