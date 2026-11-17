@@ -20,7 +20,7 @@
     <rect x="66" y="84" width="892" height="892" rx="206" fill-opacity="0.015"/>
   </g>
   <rect x="80" y="80" width="864" height="864" rx="192" fill="#FFFEFA"/>
-  <g clip-path="url(#page)" stroke="#3388BB" stroke-opacity="0.16" stroke-width="5">
+  <g clip-path="url(#page)" fill="none" stroke="#3388BB" stroke-opacity="0.16" stroke-width="5">
     <path d="M176 80V944M272 80V944M368 80V944M464 80V944M560 80V944M656 80V944M752 80V944M848 80V944M80 176H944M80 272H944M80 368H944M80 464H944M80 560H944M80 656H944M80 752H944M80 848H944"/>
   </g>
   <!-- five exclamation marks, band order, each in the member's day ink -->

@@ -6,8 +6,8 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -20,9 +20,10 @@ import (
 //
 //	MYGO_ICON_EXPORT=1 go test -run TestAppIconExport .
 const (
-	iconSource = "resources/icon.svg"
-	iconExport = "resources/icon.png"
-	iconSize   = 1024
+	iconSource     = "resources/icon.svg"
+	iconExport     = "resources/icon.png"
+	iconSize       = 1024
+	iconExportHint = "MYGO_ICON_EXPORT=1 go test -run TestAppIconExport ."
 )
 
 func readIconSource(t *testing.T) []byte {
@@ -32,6 +33,20 @@ func readIconSource(t *testing.T) []byte {
 		t.Fatalf("read %s: %v", iconSource, err)
 	}
 	return src
+}
+
+// shippedIcon is the icon the app embeds. A run that exports a new one
+// still embeds the old, so it leaves the shipped icon's checks to the next run.
+func shippedIcon(t *testing.T) image.Image {
+	t.Helper()
+	if os.Getenv("MYGO_ICON_EXPORT") != "" {
+		t.Skip("exporting " + iconExport + "; run the tests again to check it")
+	}
+	img, err := png.Decode(bytes.NewReader(appIconPNG))
+	if err != nil {
+		t.Fatalf("decode embedded icon: %v", err)
+	}
+	return img
 }
 
 func renderIcon(t *testing.T, src []byte) *image.RGBA {
@@ -45,7 +60,7 @@ func renderIcon(t *testing.T, src []byte) *image.RGBA {
 
 func TestAppIconExport(t *testing.T) {
 	if os.Getenv("MYGO_ICON_EXPORT") == "" {
-		t.Skip("set MYGO_ICON_EXPORT=1 to export resources/icon.svg to resources/icon.png")
+		t.Skip("set MYGO_ICON_EXPORT=1 to export " + iconSource + " to " + iconExport)
 	}
 	var buf bytes.Buffer
 	enc := png.Encoder{CompressionLevel: png.BestCompression}
@@ -58,8 +73,9 @@ func TestAppIconExport(t *testing.T) {
 }
 
 // TestAppIconSourceIsOriginalVectorArt keeps the icon's source honest: plain
-// vector shapes the rasterizer draws in full, no lettering or embedded
-// artwork (so no band name or logo glyphs), and colours only from the palette.
+// vector shapes the rasterizer draws in full, no lettering, links or
+// embedded artwork (so no band name or logo glyphs), and every colour it
+// paints from the day palette.
 func TestAppIconSourceIsOriginalVectorArt(t *testing.T) {
 	src := readIconSource(t)
 	s, err := ui.ParseSVG(src)
@@ -68,13 +84,6 @@ func TestAppIconSourceIsOriginalVectorArt(t *testing.T) {
 	}
 	if missing := s.Unsupported(); len(missing) > 0 {
 		t.Errorf("%s uses features the export leaves out: %v", iconSource, missing)
-	}
-
-	lower := strings.ToLower(string(src))
-	for _, banned := range []string{"mygo", "<text", "<tspan", "<textpath", "<image", "<font", "font-family", "href", "@import", "url(http", "url(data"} {
-		if strings.Contains(lower, banned) {
-			t.Errorf("%s contains %q: the icon is drawn shapes only", iconSource, banned)
-		}
 	}
 
 	allowed := map[string]bool{hexOf(bandColor): true}
@@ -88,29 +97,62 @@ func TestAppIconSourceIsOriginalVectorArt(t *testing.T) {
 	for _, id := range iconOrder {
 		allowed[hexOf(dayPaper.InkOf(memberImage(id)))] = true
 	}
-	for _, hex := range regexp.MustCompile(`#[0-9A-Fa-f]{3,8}\b`).FindAllString(string(src), -1) {
-		if !allowed[strings.ToUpper(hex)] {
-			t.Errorf("%s colour %s is not from the day palette", iconSource, hex)
-		}
-	}
 
-	// Colours may only be written as palette hex values, not by name or function.
+	notShapes := map[string]bool{
+		"text": true, "tspan": true, "textPath": true, "image": true, "font": true, "font-face": true,
+		"foreignObject": true, "style": true, "script": true, "a": true,
+	}
+	paints := map[string]bool{"fill": true, "stroke": true, "stop-color": true, "flood-color": true, "lighting-color": true, "color": true}
+	filled := map[string]bool{"path": true, "rect": true, "circle": true, "ellipse": true, "polygon": true, "polyline": true}
+	mentionsBand := func(s string) bool { return strings.Contains(strings.ToLower(s), "mygo") }
+
+	// Each open element: whether a fill is set on it or an ancestor, and
+	// whether it is inside a clip path, whose shapes paint nothing.
+	type scope struct{ fill, clip bool }
+	stack := []scope{{}}
 	dec := xml.NewDecoder(bytes.NewReader(src))
 	for {
 		tok, err := dec.Token()
-		if err != nil {
+		if err == io.EOF {
 			break
 		}
-		el, ok := tok.(xml.StartElement)
-		if !ok {
-			continue
+		if err != nil {
+			t.Fatalf("read %s: %v", iconSource, err)
 		}
-		for _, a := range el.Attr {
-			if a.Name.Local != "fill" && a.Name.Local != "stroke" {
-				continue
+		switch tok := tok.(type) {
+		case xml.StartElement:
+			name := tok.Name.Local
+			sc := stack[len(stack)-1]
+			sc.clip = sc.clip || name == "clipPath"
+			if notShapes[name] {
+				t.Errorf("%s has <%s>: the icon is drawn shapes only", iconSource, name)
 			}
-			if v := a.Value; v != "none" && !strings.HasPrefix(v, "url(#") && !strings.HasPrefix(v, "#") {
-				t.Errorf("%s <%s %s=%q>: write colours as palette hex", iconSource, el.Name.Local, a.Name.Local, v)
+			for _, a := range tok.Attr {
+				k, v := a.Name.Local, strings.TrimSpace(a.Value)
+				switch {
+				case k == "href" || k == "style":
+					t.Errorf("%s <%s %s>: no links, and colours only as attributes", iconSource, name, k)
+				case paints[k]:
+					if k == "fill" {
+						sc.fill = true
+					}
+					if v != "none" && !strings.HasPrefix(v, "url(#") && !allowed[strings.ToUpper(v)] {
+						t.Errorf("%s <%s %s=%q>: not a day palette colour", iconSource, name, k, v)
+					}
+				}
+				if mentionsBand(v) {
+					t.Errorf("%s <%s %s=%q> names the band", iconSource, name, k, v)
+				}
+			}
+			if filled[name] && !sc.fill && !sc.clip {
+				t.Errorf("%s <%s> sets no fill, so it would paint black", iconSource, name)
+			}
+			stack = append(stack, sc)
+		case xml.EndElement:
+			stack = stack[:len(stack)-1]
+		case xml.CharData:
+			if mentionsBand(string(tok)) {
+				t.Errorf("%s has text naming the band: %q", iconSource, strings.TrimSpace(string(tok)))
 			}
 		}
 	}
@@ -119,31 +161,34 @@ func TestAppIconSourceIsOriginalVectorArt(t *testing.T) {
 // TestAppIconPNGIsTheSourceExport checks the shipped PNG is the current
 // export of the SVG, so the vector source never drifts from the icon.
 func TestAppIconPNGIsTheSourceExport(t *testing.T) {
+	got := shippedIcon(t)
 	want := renderIcon(t, readIconSource(t))
-	got, err := png.Decode(bytes.NewReader(appIconPNG))
-	if err != nil {
-		t.Fatalf("decode embedded icon: %v", err)
-	}
 	if got.Bounds() != want.Bounds() {
 		t.Fatalf("%s is %v, the export is %v", iconExport, got.Bounds(), want.Bounds())
 	}
-	// Antialiased edges may round differently across CPU architectures.
-	const tolerance = 3
+	// Antialiased edges may round a step or two differently on another CPU
+	// architecture; anything more is a stale export.
+	const nudge, maxDiff = 2, 8
 	off := 0
 	for y := 0; y < iconSize; y++ {
 		for x := 0; x < iconSize; x++ {
 			a := color.RGBA64Model.Convert(got.At(x, y)).(color.RGBA64)
 			b := want.RGBA64At(x, y)
+			worst := 0
 			for _, d := range [][2]uint16{{a.R, b.R}, {a.G, b.G}, {a.B, b.B}, {a.A, b.A}} {
-				if diff := int(d[0]>>8) - int(d[1]>>8); diff > tolerance || diff < -tolerance {
-					off++
-					break
-				}
+				diff := int(d[0]>>8) - int(d[1]>>8)
+				worst = max(worst, diff, -diff)
+			}
+			if worst > maxDiff {
+				t.Fatalf("%s differs from the export of %s at (%d, %d) by %d/255; run %s", iconExport, iconSource, x, y, worst, iconExportHint)
+			}
+			if worst > nudge {
+				off++
 			}
 		}
 	}
 	if limit := iconSize * iconSize / 1000; off > limit {
-		t.Fatalf("%s differs from the export of %s at %d pixels (limit %d); run MYGO_ICON_EXPORT=1 go test -run TestAppIconExport .", iconExport, iconSource, off, limit)
+		t.Fatalf("%s differs from the export of %s at %d pixels (limit %d); run %s", iconExport, iconSource, off, limit, iconExportHint)
 	}
 }
 
@@ -151,10 +196,7 @@ func TestAppIconPNGIsTheSourceExport(t *testing.T) {
 // members' day inks, wherever the marks sit: each ink is there, and left to
 // right they are 灯, 爱音, 乐奈, 爽世 and 立希.
 func TestAppIconMarksFollowBandOrder(t *testing.T) {
-	img, err := png.Decode(bytes.NewReader(appIconPNG))
-	if err != nil {
-		t.Fatalf("decode embedded icon: %v", err)
-	}
+	img := shippedIcon(t)
 	inks := map[color.NRGBA]int{}
 	for i, id := range iconOrder {
 		c := dayPaper.InkOf(memberImage(id))
