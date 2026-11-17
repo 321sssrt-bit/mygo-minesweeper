@@ -305,7 +305,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 		if !a.startedAt.IsZero() {
 			a.elapsed = int(now.Sub(a.startedAt).Seconds())
 		}
-		if a.game.Difficulty.ID == "hard" {
+		if a.game.Difficulty.Haruhikage {
 			a.haruhikageIntro = true
 			a.haruhikageIntroStart = now
 		} else {

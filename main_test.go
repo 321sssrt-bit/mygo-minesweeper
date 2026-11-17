@@ -475,6 +475,118 @@ func TestHaruhikageLossDramaOverlaySkipTimedAndReset(t *testing.T) {
 	}
 }
 
+func TestHaruhikagePresentationFollowsMarkerNotID(t *testing.T) {
+	setupClassicMineHit := func(diff Difficulty, band bool, member MemberID, skillCharges int) (*minesweeperApp, *ui.Tester) {
+		app := newMinesweeperApp(42)
+		app.memberID = member
+		diff.SkillCharges = skillCharges
+		app.game = NewGame(diff, band, member, 7)
+		app.game.FirstClick = true
+		app.game.Status = StatusPlaying
+		app.game.Cell(0, 0).IsMine = true
+		app.game.RecomputeAdjacency()
+
+		tt := ui.NewTester(app.view, 1280, 900)
+		cell0, ok := tt.Find("cell-0-0")
+		if !ok {
+			t.Fatal("cell-0-0 not found")
+		}
+		tt.ClickAt(cell0.X+cell0.W/2, cell0.Y+cell0.H/2)
+		return app, tt
+	}
+
+	// Case 1: Marked classic track under a non-"hard" ID still plays the drama overlay and dialog, with unchanged timing.
+	app1, tt1 := setupClassicMineHit(Difficulty{
+		ID:         "encore",
+		Label:      "安可曲目",
+		Song:       "影色舞",
+		Gameplay:   GameplayClassic,
+		Haruhikage: true,
+		Rows:       5,
+		Cols:       5,
+		Mines:      1,
+	}, false, MemberTomori, 0)
+	if !app1.haruhikageIntro || app1.haruhikageAlert || !tt1.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage overlay on marked non-hard track, intro=%v alert=%v", app1.haruhikageIntro, app1.haruhikageAlert)
+	}
+	tt1.Advance(haruhikageIntroDuration - 100*time.Millisecond)
+	if !app1.haruhikageIntro || app1.haruhikageAlert {
+		t.Fatalf("expected overlay to stay visible before haruhikageIntroDuration, intro=%v alert=%v", app1.haruhikageIntro, app1.haruhikageAlert)
+	}
+	tt1.Advance(150 * time.Millisecond)
+	if app1.haruhikageIntro || !app1.haruhikageAlert || !tt1.HasText("为什么要演奏春日影？！") {
+		t.Fatalf("expected dialog after haruhikageIntroDuration, intro=%v alert=%v", app1.haruhikageIntro, app1.haruhikageAlert)
+	}
+
+	// Case 2: Unmarked classic track with ID "hard" never triggers the Haruhikage overlay or dialog.
+	app2, tt2 := setupClassicMineHit(Difficulty{
+		ID:       "hard",
+		Label:    "普通高难",
+		Song:     "迷星叫",
+		Gameplay: GameplayClassic,
+		Rows:     5,
+		Cols:     5,
+		Mines:    1,
+	}, false, MemberTomori, 0)
+	if app2.game.Status != StatusLost {
+		t.Fatalf("expected StatusLost on unmarked hard-ID mine hit, got %v", app2.game.Status)
+	}
+	if app2.haruhikageIntro || app2.haruhikageAlert || tt2.HasText("……为什么要演奏春日影？！") || tt2.HasText("为什么要演奏春日影？！") {
+		t.Fatalf("expected no Haruhikage presentation without marker, intro=%v alert=%v", app2.haruhikageIntro, app2.haruhikageAlert)
+	}
+	tt2.Advance(haruhikageIntroDuration + 50*time.Millisecond)
+	if app2.haruhikageIntro || app2.haruhikageAlert || tt2.HasText("为什么要演奏春日影？！") {
+		t.Fatalf("expected no delayed Haruhikage dialog without marker, intro=%v alert=%v", app2.haruhikageIntro, app2.haruhikageAlert)
+	}
+	if !tt2.HasText("炸团危机！……要假装无事发生重开吗？") {
+		t.Fatalf("expected plain defeat toast on unmarked hard-ID track")
+	}
+
+	// Case 3: Shield save on a marked classic track is not a loss and skips the Haruhikage presentation.
+	app3, tt3 := setupClassicMineHit(Difficulty{
+		ID:         "encore",
+		Gameplay:   GameplayClassic,
+		Haruhikage: true,
+		Rows:       5,
+		Cols:       5,
+		Mines:      1,
+	}, true, MemberSoyorin, 1)
+	if app3.game.Status != StatusPlaying || !app3.game.Cell(0, 0).ShieldSaved {
+		t.Fatalf("expected Soyorin shield save to keep playing, status=%v shielded=%v", app3.game.Status, app3.game.Cell(0, 0).ShieldSaved)
+	}
+	if app3.haruhikageIntro || app3.haruhikageAlert || tt3.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected no Haruhikage presentation on shield save, intro=%v alert=%v", app3.haruhikageIntro, app3.haruhikageAlert)
+	}
+
+	// Case 4: Marked duel track stays classic-only for #11 and does not open Haruhikage presentation on mine stun.
+	app4 := newMinesweeperApp(42)
+	app4.memberID = MemberTomori
+	app4.game = NewGame(Difficulty{
+		ID:         "encore-duel",
+		Gameplay:   GameplayDuel,
+		Haruhikage: true,
+		Rows:       5,
+		Cols:       5,
+		Mines:      1,
+	}, true, MemberTomori, 7)
+	app4.game.FirstClick = true
+	app4.game.Status = StatusPlaying
+	app4.game.Cell(0, 0).IsMine = true
+	app4.game.RecomputeAdjacency()
+	tt4 := ui.NewTester(app4.view, 1280, 900)
+	if _, ok := tt4.Find("百万格决斗战场"); !ok {
+		t.Fatal("duel board missing")
+	}
+	app4.pendingResult = app4.game.Reveal(0, 0)
+	tt4.Frame()
+	if app4.haruhikageIntro || app4.haruhikageAlert || tt4.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected no Haruhikage presentation on marked duel mine hit, intro=%v alert=%v", app4.haruhikageIntro, app4.haruhikageAlert)
+	}
+	if !tt4.HasText("踩雷 −100 · 硬直 2.4 秒！别把春日影点出来") {
+		t.Fatalf("expected duel stun toast on marked duel mine hit")
+	}
+}
+
 func TestAppIconAndBundleConfig(t *testing.T) {
 	img, err := png.Decode(bytes.NewReader(appIconPNG))
 	if err != nil {
