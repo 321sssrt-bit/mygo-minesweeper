@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    App icon: a page of graph paper with five hand-written exclamation
+    marks, left to right in the band order, each in the member's day ink,
+    and one sticking plaster stuck across the middle of them: the rift
+    between the five, patched.
+    Original vector art. Every colour comes from palette.go: the day paper
+    and its plaster, the band colour for the ruled grid, and each member's
+    day ink (the official image colour darkened for the page).
+    resources/icon.png is this file exported at 1024 px by
+    TestAppIconExport in icon_test.go, which also says how to run it.
+  -->
+  <defs>
+    <clipPath id="page"><rect x="80" y="80" width="864" height="864" rx="192"/></clipPath>
+  </defs>
+  <!-- soft lift under the page, layered (the rasterizer has no filters) -->
+  <g fill="#5A4628">
+    <rect x="80" y="82" width="864" height="864" rx="192" fill-opacity="0.05"/>
+    <rect x="78" y="82" width="868" height="868" rx="194" fill-opacity="0.045"/>
+    <rect x="76" y="83" width="872" height="872" rx="196" fill-opacity="0.04"/>
+    <rect x="73" y="83" width="878" height="878" rx="199" fill-opacity="0.03"/>
+    <rect x="70" y="84" width="884" height="884" rx="202" fill-opacity="0.022"/>
+    <rect x="66" y="84" width="892" height="892" rx="206" fill-opacity="0.015"/>
+  </g>
+  <rect x="80" y="80" width="864" height="864" rx="192" fill="#FFFEFA"/>
+  <!-- graph paper ruled in the band colour -->
+  <g clip-path="url(#page)" fill="none" stroke="#3388BB" stroke-opacity="0.16" stroke-width="5">
+    <path d="M176 80V944M272 80V944M368 80V944M464 80V944M560 80V944M656 80V944M752 80V944M848 80V944M80 176H944M80 272H944M80 368H944M80 464H944M80 560H944M80 656H944M80 752H944M80 848H944"/>
+  </g>
+  <!-- five exclamation marks, band order, each in the member's day ink -->
+  <g fill="#2879A2" transform="translate(235.2 293.3) rotate(6)"><!-- 1 Tomori -->
+    <path d="M-52.6 0C-52.6 -60.5 52.6 -60.5 52.6 0C54.6 131.9 35.6 250 24.6 347.2C24.6 379.2 -24.6 379.2 -24.6 347.2C-29.6 243 -46.6 125 -52.6 0Z"/>
+    <ellipse cx="3" cy="444.6" rx="45.9" ry="41.4" transform="rotate(-12 3 444.6)"/>
+  </g>
+  <g fill="#E90021" transform="translate(390.4 275.4) rotate(7)"><!-- 2 Anon -->
+    <path d="M-54.9 0C-54.9 -63.1 54.9 -63.1 54.9 0C47.9 139.6 27.8 264.5 25.8 367.4C25.8 400.8 -25.8 400.8 -25.8 367.4C-39.8 257.2 -57.9 132.2 -54.9 0Z"/>
+    <ellipse cx="-2" cy="465.9" rx="47" ry="42.6" transform="rotate(18 -2 465.9)"/>
+  </g>
+  <g fill="#218521" transform="translate(531.1 300) rotate(5)"><!-- 3 Rana -->
+    <path d="M-51.5 0C-51.5 -59.2 51.5 -59.2 51.5 0C52.5 129.4 34.6 245.1 24.6 340.5C24.6 372.5 -24.6 372.5 -24.6 340.5C-30.6 238.3 -46.5 122.6 -51.5 0Z"/>
+    <ellipse cx="2" cy="437.9" rx="45.9" ry="41.4" transform="rotate(-6 2 437.9)"/>
+  </g>
+  <g fill="#976C00" transform="translate(690 279.8) rotate(7)"><!-- 4 Soyo -->
+    <path d="M-53.8 0C-53.8 -61.8 53.8 -61.8 53.8 0C47.8 137.9 28.8 261.3 25.8 362.9C25.8 396.4 -25.8 396.4 -25.8 362.9C-38.8 254 -55.8 130.6 -53.8 0Z"/>
+    <ellipse cx="-3" cy="460.3" rx="47" ry="41.4" transform="rotate(14 -3 460.3)"/>
+  </g>
+  <g fill="#6E6EA4" transform="translate(835.3 295.5) rotate(6)"><!-- 5 Taki -->
+    <path d="M-52.6 0C-52.6 -60.5 52.6 -60.5 52.6 0C55.6 131.9 36.6 250 24.6 347.2C24.6 379.2 -24.6 379.2 -24.6 347.2C-28.6 243 -45.6 125 -52.6 0Z"/>
+    <ellipse cx="2" cy="445.8" rx="45.9" ry="42.6" transform="rotate(-10 2 445.8)"/>
+  </g>
+  <!-- a sticking plaster stuck across the middle of the five: the rift between them, patched -->
+  <g transform="translate(512 456) rotate(-15)">
+    <rect x="-318" y="-72" width="644" height="168" rx="84" fill="#5A4628" fill-opacity="0.18"/>
+    <rect x="-322" y="-84" width="644" height="168" rx="84" fill="#E8C49A" stroke="#BF946A" stroke-width="12.6"/>
+    <rect x="-77.3" y="-57.1" width="154.6" height="114.2" rx="16.8" fill="#F5DFC2"/>
+    <g fill="#BF946A">
+      <circle cx="-161" cy="-28.6" r="8.4"/>
+      <circle cx="-193.2" cy="0" r="8.4"/>
+      <circle cx="-161" cy="28.6" r="8.4"/>
+      <circle cx="-231.8" cy="-28.6" r="8.4"/>
+      <circle cx="-264" cy="0" r="8.4"/>
+      <circle cx="-231.8" cy="28.6" r="8.4"/>
+      <circle cx="161" cy="-28.6" r="8.4"/>
+      <circle cx="193.2" cy="0" r="8.4"/>
+      <circle cx="161" cy="28.6" r="8.4"/>
+      <circle cx="231.8" cy="-28.6" r="8.4"/>
+      <circle cx="264" cy="0" r="8.4"/>
+      <circle cx="231.8" cy="28.6" r="8.4"/>
+    </g>
+  </g>
+  <rect x="82" y="82" width="860" height="860" rx="190" fill="none" stroke="#2E2A25" stroke-opacity="0.14" stroke-width="4"/>
+</svg>
