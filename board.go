@@ -416,11 +416,16 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 						var prop *ui.SVG
 						switch {
 						case cell.WrongFlag:
-							prop, outline = art.WrongFlag, duelOwnerColor(cell.FlagOwner)
+							prop = art.WrongFlag
 						case cell.Flagged && cell.ShieldSaved:
-							prop, outline = art.Shield, duelOwnerColor(cell.FlagOwner)
+							prop = art.Shield
 						case cell.Flagged:
-							prop, outline = art.Flag, duelOwnerColor(cell.FlagOwner)
+							prop = art.Flag
+						}
+						// A duel flag is outlined in its side's colour; classic
+						// flags on the canvas belong to no side.
+						if cell.Flagged && cell.FlagOwner != DuelNobody {
+							outline = duelOwnerColor(cell.FlagOwner)
 						}
 						if isHintTarget {
 							bg, outline = hintColor.Alpha(0.28).Over(pal.Slip), hintColor
