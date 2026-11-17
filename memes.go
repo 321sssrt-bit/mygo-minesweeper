@@ -33,7 +33,7 @@ var Members = []Member{
 		Tagline:   "创可贴与石头收集家",
 		ColorHex:  "#67B7E1",
 		SkillName: "创可贴指引",
-		SkillDesc: "主动：安全翻开 1 个非地雷边界格，降低乐队重力值",
+		SkillDesc: "经典：翻开安全边界；决斗：扫描鼠标周围 9×9 并解除硬直",
 	},
 	{
 		ID:        MemberAnon,
@@ -43,7 +43,7 @@ var Members = []Member{
 		Tagline:   "虚荣SNS偶像担当",
 		ColorHex:  "#F07AA4",
 		SkillName: "伦敦留学实力",
-		SkillDesc: "主动：同时翻开最多 2 个安全格，关注度UP!",
+		SkillDesc: "经典：翻开两个安全格；决斗：扫描并把连击转为奖励分",
 	},
 	{
 		ID:        MemberSoyorin,
@@ -53,7 +53,7 @@ var Members = []Member{
 		Tagline:   "重力微笑与拉黑之神",
 		ColorHex:  "#E8A849",
 		SkillName: "温柔的微笑",
-		SkillDesc: "被动：误触地雷时自动免疫并插旗（重力值飙升）",
+		SkillDesc: "被动：自动挡雷并收旗；决斗不结束比赛，但会扣除一次充能",
 		Passive:   true,
 	},
 	{
@@ -64,7 +64,7 @@ var Members = []Member{
 		Tagline:   "压力怪 & 护灯狂魔",
 		ColorHex:  "#9B7CE8",
 		SkillName: "鼓棒指雷",
-		SkillDesc: "主动：精准标出 1 个未标旗的地雷",
+		SkillDesc: "经典：精准标雷；决斗：扫描并延迟 AI 下一次行动",
 	},
 	{
 		ID:        MemberRana,
@@ -74,7 +74,7 @@ var Members = []Member{
 		Tagline:   "野猫 & 抹茶芭菲爱好者",
 		ColorHex:  "#68C178",
 		SkillName: "抹茶芭菲巡演",
-		SkillDesc: "主动：随性跳到 0 雷空白区触发大片连锁展开",
+		SkillDesc: "经典：展开空白区；决斗：扫描并延迟 AI 下一次行动",
 	},
 }
 

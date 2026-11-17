@@ -1,3 +1,4 @@
 .mygo/
 build/
 *.exe
+.scratch/

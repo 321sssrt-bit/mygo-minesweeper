@@ -56,6 +56,16 @@ var Difficulties = []Difficulty{
 		Mines:        80,
 		SkillCharges: 3,
 	},
+	{
+		ID:           "duel",
+		Label:        "百万格决斗",
+		Song:         "诗超绊 · 决斗 Live",
+		Subtitle:     "1000×1000 · 180000雷 · 05:00",
+		Rows:         1000,
+		Cols:         1000,
+		Mines:        180000,
+		SkillCharges: 6,
+	},
 }
 
 type GameStatus int
@@ -78,6 +88,11 @@ type Cell struct {
 	Exploded    bool
 	WrongFlag   bool
 	ShieldSaved bool
+	Owner       DuelOwner
+	FlagOwner   DuelOwner
+	FlagScored  bool
+	AITurn      bool
+	AIFlagged   bool
 }
 
 type ActionKind string
@@ -119,12 +134,17 @@ type Game struct {
 	UsedSkill     bool
 	Gravity       int
 	Cells         []Cell
+	duel          *Duel
 	rng           *rand.Rand
 }
 
 func NewGame(diff Difficulty, bandMode bool, memberID MemberID, seed ...uint64) *Game {
-	rows := max(5, min(30, diff.Rows))
-	cols := max(5, min(40, diff.Cols))
+	limitRows, limitCols := 30, 40
+	if diff.ID == "duel" {
+		limitRows, limitCols = 1000, 1000
+	}
+	rows := max(5, min(limitRows, diff.Rows))
+	cols := max(5, min(limitCols, diff.Cols))
 	total := rows * cols
 	mines := max(1, min(total-1, diff.Mines))
 
@@ -147,7 +167,7 @@ func NewGame(diff Difficulty, bandMode bool, memberID MemberID, seed ...uint64) 
 		}
 	}
 
-	return &Game{
+	g := &Game{
 		Difficulty:    diff,
 		Rows:          rows,
 		Cols:          cols,
@@ -161,6 +181,11 @@ func NewGame(diff Difficulty, bandMode bool, memberID MemberID, seed ...uint64) 
 		Cells:         cells,
 		rng:           r,
 	}
+	if diff.ID == "duel" {
+		g.duel = newDuel(g)
+		g.Mines = 180000
+	}
+	return g
 }
 
 func (g *Game) Cell(row, col int) *Cell {
@@ -237,13 +262,60 @@ func (g *Game) RecomputeAdjacency() {
 			continue
 		}
 		count := 0
-		for _, n := range g.Neighbors(c.Row, c.Col) {
-			if n.IsMine {
-				count++
+		for dr := -1; dr <= 1; dr++ {
+			for dc := -1; dc <= 1; dc++ {
+				if dr == 0 && dc == 0 {
+					continue
+				}
+				if n := g.Cell(c.Row+dr, c.Col+dc); n != nil && n.IsMine {
+					count++
+				}
 			}
 		}
 		c.Adjacent = count
 	}
+}
+
+func (g *Game) revealSafe(start *Cell, onReveal func(int, *Cell)) int {
+	startIndex := start.Row*g.Cols + start.Col
+	queue := []int{startIndex}
+	visited := map[int]bool{startIndex: true}
+	revealed := 0
+	for head := 0; head < len(queue); head++ {
+		index := queue[head]
+		cur := &g.Cells[index]
+		if cur.Revealed || cur.Flagged || cur.IsMine {
+			continue
+		}
+		cur.Revealed = true
+		cur.Questioned = false
+		cur.WrongFlag = false
+		g.RevealedSafe++
+		revealed++
+		if onReveal != nil {
+			onReveal(index, cur)
+		}
+		if cur.Adjacent != 0 {
+			continue
+		}
+		for dr := -1; dr <= 1; dr++ {
+			for dc := -1; dc <= 1; dc++ {
+				if dr == 0 && dc == 0 {
+					continue
+				}
+				n := g.Cell(cur.Row+dr, cur.Col+dc)
+				if n == nil {
+					continue
+				}
+				next := n.Row*g.Cols + n.Col
+				if !visited[next] && !n.Revealed && !n.Flagged && !n.IsMine {
+					visited[next] = true
+					queue = append(queue, next)
+				}
+			}
+		}
+	}
+	return revealed
 }
 
 func (g *Game) adjustGravity(delta int) {
@@ -251,6 +323,9 @@ func (g *Game) adjustGravity(delta int) {
 }
 
 func (g *Game) Reveal(row, col int) ActionResult {
+	if g.duel != nil {
+		return g.revealDuel(row, col, DuelPlayer)
+	}
 	if g.Status == StatusWon || g.Status == StatusLost {
 		return ActionResult{Kind: ActionNoop}
 	}
@@ -297,32 +372,7 @@ func (g *Game) Reveal(row, col int) ActionResult {
 		return ActionResult{Kind: ActionLost, QuoteEvent: quoteEvent, NewMemes: memes}
 	}
 
-	queue := []*Cell{start}
-	visited := make(map[int]bool, 32)
-	visited[start.Row*g.Cols+start.Col] = true
-	revealed := 0
-
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		if cur.Revealed || cur.Flagged || cur.IsMine {
-			continue
-		}
-		cur.Revealed = true
-		cur.Questioned = false
-		g.RevealedSafe++
-		revealed++
-
-		if cur.Adjacent == 0 {
-			for _, n := range g.Neighbors(cur.Row, cur.Col) {
-				idx := n.Row*g.Cols + n.Col
-				if !visited[idx] && !n.Revealed && !n.Flagged && !n.IsMine {
-					visited[idx] = true
-					queue = append(queue, n)
-				}
-			}
-		}
-	}
+	revealed := g.revealSafe(start, nil)
 
 	if start.Adjacent >= 4 {
 		g.adjustGravity(12)
@@ -391,6 +441,9 @@ func (g *Game) Chord(row, col int) ActionResult {
 }
 
 func (g *Game) ToggleFlag(row, col int, allowQuestion bool) ActionResult {
+	if g.duel != nil {
+		return g.flagDuel(row, col, DuelPlayer)
+	}
 	if g.Status == StatusWon || g.Status == StatusLost {
 		return ActionResult{Kind: ActionNoop}
 	}
@@ -428,6 +481,9 @@ func (g *Game) ToggleFlag(row, col int, allowQuestion bool) ActionResult {
 }
 
 func (g *Game) UseSkill() ActionResult {
+	if g.duel != nil {
+		return g.useDuelSkill()
+	}
 	if !g.BandMode || g.Status != StatusPlaying || g.SkillUsesLeft <= 0 {
 		return ActionResult{Kind: ActionNoop}
 	}
@@ -605,6 +661,10 @@ func (g *Game) checkWin() bool {
 	safeTotal := g.Rows*g.Cols - g.Mines
 	if g.RevealedSafe < safeTotal {
 		return false
+	}
+	if g.duel != nil {
+		g.finishDuel()
+		return true
 	}
 	g.Status = StatusWon
 	g.Gravity = 0

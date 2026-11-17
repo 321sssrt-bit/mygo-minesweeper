@@ -33,6 +33,13 @@ type minesweeperApp struct {
 	unlockedMemes map[string]bool
 	chatLog       []chatMessage
 	seed          uint64
+	board         *boardView
+	lastTick      time.Time
+	pendingResult ActionResult
+	duelTrail     []int
+	duelNoticeAt  time.Time
+	duelEnded     bool
+	classicSize   float32
 }
 
 func newMinesweeperApp(seed ...uint64) *minesweeperApp {
@@ -48,6 +55,7 @@ func newMinesweeperApp(seed ...uint64) *minesweeperApp {
 		bestTimes:     make(map[string]int),
 		unlockedMemes: make(map[string]bool),
 		seed:          s,
+		board:         newBoardView(),
 	}
 	app.resetGame(true)
 	return app
@@ -76,7 +84,14 @@ func (a *minesweeperApp) pushChat(speaker, colorHex, text string) {
 }
 
 func (a *minesweeperApp) resetGame(initial bool) {
+	a.chatLog = nil
+	if !initial {
+		a.seed = 0
+	}
 	diff := a.currentDiff()
+	if diff.ID == "duel" {
+		a.modeIdx = 0
+	}
 	if a.seed != 0 {
 		a.game = NewGame(diff, a.bandMode(), a.memberID, a.seed)
 	} else {
@@ -84,6 +99,11 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	}
 	a.elapsed = 0
 	a.startedAt = time.Time{}
+	a.lastTick = time.Time{}
+	a.duelTrail = nil
+	a.duelEnded = false
+	a.duelNoticeAt = time.Time{}
+	a.board = newBoardView()
 	a.haruhikageAlert = false
 	a.quote = PickQuote(a.memberID, "start")
 	m := FindMember(a.memberID)
@@ -92,6 +112,9 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	} else {
 		a.pushChat("排练重开", "#55B2D6", fmt.Sprintf("重新演奏《%s》", diff.Song))
 	}
+	if diff.ID == "duel" {
+		a.pushChat("MyGO!!!!! 决斗室", "#55B2D6", "五分钟百万格抢地：开格 +1，踩雷 −100；旗帜终局按对错计分，不靠比分偷看雷。")
+	}
 	a.pushChat(m.Name, m.ColorHex, a.quote)
 }
 
@@ -99,7 +122,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 	if res.Kind == ActionNoop {
 		return
 	}
-	if a.game.Status == StatusPlaying && a.startedAt.IsZero() {
+	if a.game.Status == StatusPlaying && a.game.duel == nil && a.startedAt.IsZero() {
 		a.startedAt = now
 	}
 
@@ -115,6 +138,10 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 	case ActionSkill:
 		c.Toast(fmt.Sprintf("%s 发动「%s」", m.Name, m.SkillName))
 	case ActionLost:
+		if a.game.duel != nil {
+			c.Toast("踩雷 −100 · 硬直 2.4 秒！别把春日影点出来")
+			break
+		}
 		if !a.startedAt.IsZero() {
 			a.elapsed = int(now.Sub(a.startedAt).Seconds())
 		}
@@ -126,6 +153,9 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 			})
 		}
 	case ActionWon:
+		if a.game.duel != nil {
+			break
+		}
 		if !a.startedAt.IsZero() {
 			a.elapsed = int(now.Sub(a.startedAt).Seconds())
 		}
@@ -151,16 +181,14 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 }
 
 func formatDigits(n int) string {
-	if n < -99 {
-		n = -99
-	}
-	if n > 999 {
-		n = 999
-	}
 	if n < 0 {
-		return fmt.Sprintf("-%02d", -n)
+		return fmt.Sprintf("−%d", -n)
 	}
-	return fmt.Sprintf("%03d", n)
+	return fmt.Sprintf("%d", n)
+}
+
+func formatClock(seconds int) string {
+	return fmt.Sprintf("%02d:%02d", max(0, seconds)/60, max(0, seconds)%60)
 }
 
 func numberColor(n int) ui.Color {
@@ -201,13 +229,127 @@ func (a *minesweeperApp) activeTheme() *ui.Theme {
 	return t
 }
 
+func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
+	d := a.game.duel
+	if d == nil {
+		return
+	}
+	if !a.lastTick.IsZero() && a.game.Status == StatusPlaying {
+		tick := a.game.TickDuel(now.Sub(a.lastTick).Seconds())
+		a.elapsed = int(d.Elapsed)
+		if tick.AITurn != nil && tick.AITurn.Kind != ActionNoop {
+			if tick.AITurn.RevealedCount > 0 {
+				a.board.LastEffect = now
+				a.board.EffectCell = tick.AICell
+			}
+			a.duelTrail = append(a.duelTrail, tick.AICell)
+			if len(a.duelTrail) > 1000 {
+				a.duelTrail = a.duelTrail[len(a.duelTrail)-1000:]
+			}
+			if tick.AITurn.Kind == ActionLost {
+				c.Toast("高松灯 (AI) 踩雷 −100")
+			}
+		}
+		if tick.Finished {
+			a.elapsed = int(d.Duration)
+			a.duelEnded = true
+			result := "平局！这一百万格的迷茫，恰好一人一半"
+			if d.PlayerScore > d.AIScore {
+				result = fmt.Sprintf("决斗胜利！%d : %d · 赢了就是赢了！", d.PlayerScore, d.AIScore)
+				a.unlockedMemes[MemeForever] = true
+			} else if d.PlayerScore < d.AIScore {
+				result = fmt.Sprintf("决斗惜败 %d : %d · 这局剪掉不准发到 SNS 上！", d.PlayerScore, d.AIScore)
+			}
+			a.pushChat("决斗结算", "#E8A849", result)
+			c.ToastAction(result, "再战一局", func() { a.resetGame(false) })
+		}
+	}
+	if a.game.Status == StatusWon && !a.duelEnded {
+		a.duelEnded = true
+		result := fmt.Sprintf("清盘决斗结算：你 %d · 灯 (AI) %d", d.PlayerScore, d.AIScore)
+		a.pushChat("决斗结算", "#E8A849", result)
+		c.ToastAction(result, "再战一局", func() { a.resetGame(false) })
+	}
+	a.lastTick = now
+	if a.game.Status == StatusPlaying {
+		c.After(50 * time.Millisecond)
+	}
+	if a.game.Status == StatusPlaying && now.Sub(a.duelNoticeAt) > 10*time.Second {
+		event := ""
+		if d.PlayerScore > d.AIScore {
+			event = "duelLead"
+		} else if d.PlayerScore < d.AIScore {
+			event = "duelBehind"
+		}
+		if speaker, text := pickDuelLine(a.memberID, event); speaker != "" {
+			a.pushChat(speaker, FindMember(a.memberID).ColorHex, text)
+		}
+		a.duelNoticeAt = now
+	}
+}
+
+func (a *minesweeperApp) duelHUD(c *ui.Context) {
+	d := a.game.duel
+	ui.Row(c).Grow(0).Padding(8, 10).Gap(12).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Badge(c, fmt.Sprintf("你 %d", d.PlayerScore)).Background(ui.Hex("#173B49")).TextColor(ui.Hex("#55B2D6"))
+			ui.Badge(c, fmt.Sprintf("灯 (AI) %d", d.AIScore)).Background(ui.Hex("#3B2740")).TextColor(ui.Hex("#F07AA4"))
+			ui.Badge(c, "剩余 "+formatClock(int(d.remaining()))).Background(c.Theme().Accent.Alpha(0.18))
+		})
+		ui.Row(c).Gap(6).Children(func() {
+			if ui.Button(c.Key("duel-home"), "回到战场").Clicked() {
+				a.board.center(a.game, 500, 500)
+			}
+			if ui.Button(c.Key("duel-follow"), "追踪 AI").Clicked() && d.LastAI >= 0 {
+				a.board.center(a.game, d.LastAI/a.game.Cols, d.LastAI%a.game.Cols)
+			}
+			if ui.Button(c.Key("duel-zoom-out"), "−").Label("缩小").Clicked() {
+				a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1/1.2)
+			}
+			if ui.Button(c.Key("duel-zoom-in"), "+").Label("放大").Clicked() {
+				a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1.2)
+			}
+		})
+	})
+	ui.Row(c).Padding(4, 8).Gap(8).Children(func() {
+		ui.Badge(c, fmt.Sprintf("连击 ×%d", d.PlayerCombo))
+		if d.playerStunned() {
+			ui.Badge(c, fmt.Sprintf("硬直 %.1fs", d.StunnedUntil-d.Elapsed)).Background(ui.Hex("#701F2B"))
+		} else {
+			ui.Badge(c, "数字全未知时左键收雷 · +75/雷")
+		}
+		if d.Elapsed < d.ScanUntil {
+			ui.Badge(c, fmt.Sprintf("扫描 %.1fs", d.ScanUntil-d.Elapsed)).Background(ui.Hex("#3C301D")).TextColor(ui.Hex("#F5D99C"))
+		}
+		ui.Badge(c, fmt.Sprintf("旗帜 %d", a.game.FlagsPlaced))
+	})
+	if a.game.Status == StatusWon {
+		label := "平局 · 势均力敌"
+		if d.PlayerScore > d.AIScore {
+			label = "险胜也是爱音大胜利"
+		} else if d.PlayerScore < d.AIScore {
+			label = "惜败 · 这局别发 SNS"
+		}
+		ui.Row(c).Padding(4, 8).Children(func() {
+			ui.Badge(c, label).Background(c.Theme().Accent.Alpha(0.22))
+		})
+	}
+}
+
 func (a *minesweeperApp) view(c *ui.Context) {
 	now := c.Now()
-	if a.game.Status == StatusPlaying {
+	if a.pendingResult.Kind != ActionNoop {
+		res := a.pendingResult
+		a.pendingResult = ActionResult{}
+		a.handleAction(c, res, now)
+	}
+	if a.game.duel != nil {
+		a.tickDuel(c, now)
+	} else if a.game.Status == StatusPlaying {
 		if a.startedAt.IsZero() {
 			a.startedAt = now
 		}
-		a.elapsed = min(999, int(now.Sub(a.startedAt).Seconds()))
+		a.elapsed = int(now.Sub(a.startedAt).Seconds())
 		nextTick := a.startedAt.Add(time.Duration(a.elapsed+1) * time.Second).Sub(now)
 		c.After(max(16*time.Millisecond, nextTick))
 	}
@@ -221,6 +363,17 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	if c.Shortcut(0, ui.KeyE) {
 		res := a.game.UseSkill()
 		a.handleAction(c, res, now)
+	}
+	if a.game.duel != nil {
+		if c.Shortcut(ui.Ctrl, ui.KeyEqual) {
+			a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1.15)
+		}
+		if c.Shortcut(ui.Ctrl, ui.KeyMinus) {
+			a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1/1.15)
+		}
+		if c.Shortcut(ui.Ctrl, ui.Key0) {
+			a.board.center(a.game, 500, 500)
+		}
 	}
 
 	baseTheme := a.activeTheme()
@@ -260,7 +413,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			})
 
 			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-				if ui.Segmented(c, &a.modeIdx, "乐队 Live", "纯正经典").Label("游戏模式").Changed() {
+				if ui.Segmented(c, &a.modeIdx, "乐队 Live", "纯正经典").Label("游戏模式").Disabled(a.currentDiff().ID == "duel").Changed() {
 					a.resetGame(false)
 				}
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -278,6 +431,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				Difficulties[1].Label,
 				Difficulties[2].Label,
 				Difficulties[3].Label,
+				Difficulties[4].Label,
 			).Label("排练曲目难度").Changed() {
 				a.resetGame(false)
 			}
@@ -330,9 +484,10 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						if item.Clicked() && !selected {
 							prev := a.memberID
 							a.memberID = m.ID
-							if a.game.Status == StatusIdle || a.game.Status == StatusPlaying {
-								a.game.MemberID = m.ID
+							if a.game.Status != StatusIdle {
+								a.resetGame(false)
 							}
+							a.game.MemberID = m.ID
 							a.quote = PickQuote(m.ID, "start")
 							if prev == MemberTomori && m.ID == MemberTaki {
 								a.quote = "「灯刚才还在看呢，你给我认真点排雷！」"
@@ -466,6 +621,9 @@ func (a *minesweeperApp) view(c *ui.Context) {
 							resetLabel = "演奏中 · 重开 (R)"
 						case StatusWon:
 							resetLabel = "Live 大成功！再来一首"
+							if a.game.duel != nil {
+								resetLabel = "决斗结束 · 再来一局 (R)"
+							}
 						case StatusLost:
 							resetLabel = "炸团了 · 再排练一次"
 						}
@@ -484,21 +642,48 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						})
 					})
 
+					if a.game.duel != nil {
+						a.duelHUD(c)
+						a.duelBoard(c)
+						return
+					}
 					// Minesweeper Grid
-					cellSize := float32(34)
+					cellSize := float32(40)
 					cellFont := float32(15)
 					if a.game.Cols >= 28 {
-						cellSize = 25
-						cellFont = 13
+						cellSize = 32
+						cellFont = 15
 					} else if a.game.Cols >= 18 {
-						cellSize = 26
-						cellFont = 13
+						cellSize = 36
+						cellFont = 16
 					} else if a.game.Cols >= 16 {
-						cellSize = 29
-						cellFont = 14
+						cellSize = 38
+						cellFont = 17
 					}
 
-					ui.ScrollBoth(c).Grow(1).Children(func() {
+					availableW, availableH := c.Size()
+					byWidth := (availableW - 70 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
+					byHeight := (availableH - 300 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
+					if a.game.duel == nil {
+						byWidth = (availableW - 342 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
+						byHeight = (availableH - 230 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
+					}
+					cellSize = max(22, min(64, min(byWidth, byHeight)))
+					cellFont = max(12, cellSize*0.48)
+					stage := ui.ScrollBoth(c).Grow(1).Draw(func(p *ui.Painter, bounds ui.Rect) {
+						byWidth := (bounds.W - 28 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
+						byHeight := (bounds.H - 28 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
+						size := max(22, min(64, min(byWidth, byHeight)))
+						if size != a.classicSize {
+							a.classicSize = size
+							p.After(time.Millisecond)
+						}
+					})
+					if a.classicSize > 0 {
+						cellSize = a.classicSize
+						cellFont = max(12, cellSize*0.48)
+					}
+					stage.Children(func() {
 						ui.Column(c).FillWidth().AlignItems(ui.Center).Padding(4).Children(func() {
 							ui.Grid(c).Columns(a.game.Cols).Gap(3).Padding(8).Radius(10).
 								Background(t.Background).Border(1, t.Border).Children(func() {
@@ -595,8 +780,8 @@ func main() {
 	mygo.App.WhenReady(func() {
 		mygo.NewWindow(mygo.WindowOptions{
 			Title:           "MyGO!!!!! 迷子扫雷",
-			Width:           1120,
-			Height:          820,
+			Width:           1280,
+			Height:          900,
 			BackgroundColor: "#0b101b",
 			StateKey:        "mygo-minesweeper-v2",
 			Content:         ui.View(app.view),

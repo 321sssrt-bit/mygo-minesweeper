@@ -1,0 +1,251 @@
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+)
+
+type boardView struct {
+	X, Y           float32
+	Cell           float32
+	Width, Height  float32
+	HoverRow       int
+	HoverCol       int
+	PressX, PressY float32
+	DragX, DragY   float32
+	Dragging       bool
+	Pressed        bool
+	PressButton    int
+	LastEffect     time.Time
+	EffectCell     int
+}
+
+func newBoardView() *boardView {
+	return &boardView{Cell: 26, X: 487 * 26, Y: 487 * 26, HoverRow: -1, HoverCol: -1, EffectCell: -1}
+}
+
+func (v *boardView) clamp(g *Game) {
+	v.Cell = max(10, min(42, v.Cell))
+	v.Width, v.Height = max(100, v.Width), max(100, v.Height)
+	v.X = max(0, min(float32(g.Cols)*v.Cell-v.Width, v.X))
+	v.Y = max(0, min(float32(g.Rows)*v.Cell-v.Height, v.Y))
+}
+
+func (v *boardView) center(g *Game, row, col int) {
+	v.X = (float32(col)+0.5)*v.Cell - v.Width/2
+	v.Y = (float32(row)+0.5)*v.Cell - v.Height/2
+	v.clamp(g)
+}
+
+func (v *boardView) zoom(g *Game, atX, atY, factor float32) {
+	old := v.Cell
+	next := max(10, min(42, old*factor))
+	worldX := (v.X + atX) / old
+	worldY := (v.Y + atY) / old
+	v.Cell = next
+	v.X = worldX*next - atX
+	v.Y = worldY*next - atY
+	v.clamp(g)
+}
+
+func (v *boardView) cellAt(g *Game, x, y float32) (int, int, bool) {
+	col, row := int((v.X+x)/v.Cell), int((v.Y+y)/v.Cell)
+	return row, col, row >= 0 && row < g.Rows && col >= 0 && col < g.Cols
+}
+
+func (v *boardView) minimap(x, y float32) bool {
+	return x >= v.Width-158 && y >= v.Height-158 && x <= v.Width-10 && y <= v.Height-10
+}
+
+func (a *minesweeperApp) duelBoard(c *ui.Context) {
+	v := a.board
+	v.clamp(a.game)
+	ui.Box(c.Key("duel-board")).Grow(1).FillWidth().Label("百万格决斗战场").
+		Cursor(ui.CursorPointer).Focusable().HandleInput(func(ev ui.InputEvent) bool {
+		if ev.Kind == ui.InputPointerMove {
+			v.HoverRow, v.HoverCol, _ = v.cellAt(a.game, ev.X, ev.Y)
+		}
+		switch ev.Kind {
+		case ui.InputScroll:
+			v.zoom(a.game, ev.X, ev.Y, 1+max(-0.35, min(0.35, -ev.DY/400)))
+			return true
+		case ui.InputZoom:
+			v.zoom(a.game, ev.X, ev.Y, ev.Scale)
+			return true
+		case ui.InputPointerDown:
+			if ev.Button > 2 {
+				return false
+			}
+			if ev.Button == 0 && v.minimap(ev.X, ev.Y) {
+				v.center(a.game, int((ev.Y-(v.Height-158))/148*float32(a.game.Rows)), int((ev.X-(v.Width-158))/148*float32(a.game.Cols)))
+				return true
+			}
+			v.Pressed = true
+			v.PressButton = ev.Button
+			v.PressX, v.PressY = ev.X, ev.Y
+			v.DragX, v.DragY = ev.X, ev.Y
+			v.Dragging = ev.Button == 2
+			return true
+		case ui.InputPointerMove:
+			if !v.Pressed || ev.Button < 0 {
+				return false
+			}
+			if abs32(ev.X-v.PressX)+abs32(ev.Y-v.PressY) > 5 {
+				v.Dragging = true
+			}
+			if v.Dragging {
+				v.X -= ev.X - v.DragX
+				v.Y -= ev.Y - v.DragY
+				v.DragX, v.DragY = ev.X, ev.Y
+				v.clamp(a.game)
+			}
+			return true
+		case ui.InputPointerUp:
+			if !v.Pressed {
+				return false
+			}
+			button, dragged := v.PressButton, v.Dragging
+			v.Pressed, v.Dragging = false, false
+			if ev.Canceled || dragged {
+				return true
+			}
+			row, col, ok := v.cellAt(a.game, ev.X, ev.Y)
+			if !ok {
+				return true
+			}
+			var result ActionResult
+			if button == 1 || (button == 0 && a.flagMode) {
+				result = a.game.ToggleFlag(row, col, false)
+				if result.Kind == ActionNoop {
+					result = a.game.UnflagDuel(row, col)
+				}
+			} else if button == 0 {
+				cell := a.game.Cell(row, col)
+				if cell.Revealed && !cell.IsMine {
+					result = a.game.ClaimDuelMines(row, col)
+					if result.Kind == ActionNoop {
+						result = a.game.Chord(row, col)
+					}
+				} else {
+					result = a.game.Reveal(row, col)
+				}
+			}
+			if result.Kind != ActionNoop {
+				a.pendingResult = result
+				v.LastEffect = c.Now()
+				v.EffectCell = row*a.game.Cols + col
+			}
+			return true
+		}
+		return false
+	}).Draw(func(p *ui.Painter, r ui.Rect) {
+		v.Width, v.Height = r.W, r.H
+		v.clamp(a.game)
+		a.paintDuelBoard(p, r)
+	})
+}
+
+func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
+	v, g := a.board, a.game
+	t := p.Theme()
+	p.Fill(r, ui.Hex("#070D17"), 8)
+	firstCol, lastCol := int(v.X/v.Cell), min(g.Cols, int((v.X+r.W)/v.Cell)+2)
+	firstRow, lastRow := int(v.Y/v.Cell), min(g.Rows, int((v.Y+r.H)/v.Cell)+2)
+	for row := max(0, firstRow); row < lastRow; row++ {
+		for col := max(0, firstCol); col < lastCol; col++ {
+			cell := g.Cell(row, col)
+			x := r.X + float32(col)*v.Cell - v.X
+			y := r.Y + float32(row)*v.Cell - v.Y
+			tile := ui.Rect{X: x + 1, Y: y + 1, W: v.Cell - 2, H: v.Cell - 2}
+			bg, border := t.Surface, t.Border.Alpha(0.45)
+			if cell.Revealed {
+				bg = t.Background
+				border = t.Border.Alpha(0.25)
+				if cell.Owner == DuelPlayer {
+					bg = ui.Hex("#173B49")
+					border = ui.Hex("#55B2D6").Alpha(0.55)
+				} else if cell.Owner == DuelAI {
+					bg = ui.Hex("#3B2740")
+					border = ui.Hex("#F07AA4").Alpha(0.45)
+				}
+			}
+			if row == v.HoverRow && col == v.HoverCol && !cell.Revealed {
+				border = t.Accent
+			}
+			if cell.Exploded {
+				bg, border = ui.Hex("#701F2B"), ui.Hex("#FB7185")
+			}
+			p.Fill(tile, bg, min(4, v.Cell/7))
+			if v.Cell >= 15 {
+				p.Stroke(tile, border, min(4, v.Cell/7), 1)
+			}
+			if v.Cell < 16 {
+				continue
+			}
+			cx, cy := tile.X+tile.W/2, tile.Y+tile.H/2
+			switch {
+			case cell.Flagged:
+				color := ui.Hex("#55B2D6")
+				if cell.FlagOwner == DuelAI {
+					color = ui.Hex("#F07AA4")
+				}
+				if cell.WrongFlag {
+					color = ui.Hex("#FB7185")
+				}
+				p.Line(cx-3, cy-7, cx-3, cy+7, 2, color)
+				p.Fill(ui.Rect{X: cx - 2, Y: cy - 7, W: 9, H: 7}, color, 1)
+			case cell.Revealed && cell.IsMine:
+				p.Line(cx-6, cy-6, cx+6, cy+6, 2.5, ui.Hex("#FB7185"))
+				p.Line(cx+6, cy-6, cx-6, cy+6, 2.5, ui.Hex("#FB7185"))
+			case cell.Revealed && cell.Adjacent > 0:
+				p.Text(cx-float32(len(fmt.Sprint(cell.Adjacent)))*v.Cell*0.15, cy-v.Cell*0.28, fmt.Sprint(cell.Adjacent), v.Cell*0.55, numberColor(cell.Adjacent))
+			}
+		}
+	}
+	if count, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {
+		x := r.X + float32(v.HoverCol-4)*v.Cell - v.X
+		y := r.Y + float32(v.HoverRow-4)*v.Cell - v.Y
+		p.Stroke(ui.Rect{X: x, Y: y, W: 9 * v.Cell, H: 9 * v.Cell}, ui.Hex("#E8A849"), 5, 2)
+		p.Fill(ui.Rect{X: r.X + 12, Y: r.Y + 12, W: 166, H: 34}, ui.Hex("#3C301D"), 6)
+		p.Text(r.X+23, r.Y+20, fmt.Sprintf("9×9 扫描：%d 雷", count), 14, ui.Hex("#F5D99C"))
+	}
+	if g.duel.LastAI >= 0 {
+		row, col := g.duel.LastAI/g.Cols, g.duel.LastAI%g.Cols
+		x := r.X + float32(col)*v.Cell - v.X
+		y := r.Y + float32(row)*v.Cell - v.Y
+		p.Stroke(ui.Rect{X: x, Y: y, W: v.Cell, H: v.Cell}, ui.Hex("#F07AA4"), 4, 2)
+	}
+	if v.EffectCell >= 0 && time.Since(v.LastEffect) < 350*time.Millisecond {
+		row, col := v.EffectCell/g.Cols, v.EffectCell%g.Cols
+		k := float32(time.Since(v.LastEffect)) / float32(350*time.Millisecond)
+		size := v.Cell * (1 + k*1.5)
+		x := r.X + (float32(col)+0.5)*v.Cell - v.X - size/2
+		y := r.Y + (float32(row)+0.5)*v.Cell - v.Y - size/2
+		p.Stroke(ui.Rect{X: x, Y: y, W: size, H: size}, t.Accent.Alpha(1-k), 6, 2)
+		p.AnimationFrame()
+	}
+	mini := ui.Rect{X: r.X + r.W - 158, Y: r.Y + r.H - 158, W: 148, H: 148}
+	p.Fill(mini, ui.Hex("#0B1423").Alpha(0.94), 6)
+	for _, index := range a.duelTrail {
+		x := mini.X + float32(index%g.Cols)/float32(g.Cols)*mini.W
+		y := mini.Y + float32(index/g.Cols)/float32(g.Rows)*mini.H
+		color := ui.Hex("#55B2D6")
+		if g.Cells[index].Owner == DuelAI {
+			color = ui.Hex("#F07AA4")
+		}
+		p.Fill(ui.Rect{X: x, Y: y, W: 3, H: 3}, color, 0)
+	}
+	view := ui.Rect{X: mini.X + v.X/(float32(g.Cols)*v.Cell)*mini.W, Y: mini.Y + v.Y/(float32(g.Rows)*v.Cell)*mini.H, W: r.W / (float32(g.Cols) * v.Cell) * mini.W, H: r.H / (float32(g.Rows) * v.Cell) * mini.H}
+	p.Stroke(view, ui.Hex("#F4F8FD"), 2, 1.5)
+	p.Stroke(mini, t.Border, 6, 1)
+	p.Text(r.X+14, r.Y+r.H-32, fmt.Sprintf("(%d, %d) · %.0f%% · 拖动平移 / 滚轮缩放", v.HoverRow, v.HoverCol, v.Cell/42*100), 12, t.TextMuted)
+}
+
+func abs32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}

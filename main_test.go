@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -118,7 +119,7 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 	app := newMinesweeperApp(12345)
 	tt := ui.NewTester(app.view, 1120, 820)
 
-	if !tt.HasText("MyGO!!!!! 迷子扫雷") || !tt.HasText("MINES 010") {
+	if !tt.HasText("MyGO!!!!! 迷子扫雷") || !tt.HasText("MINES 10") {
 		t.Fatalf("expected title and MINES 010 badge in initial view")
 	}
 
@@ -126,7 +127,7 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 	if err := tt.Click("RiNG 排练室"); err != nil {
 		t.Fatalf("failed clicking segmented difficulty: %v", err)
 	}
-	if app.diffIdx != 1 || app.game.Cols != 16 || !tt.HasText("MINES 040") {
+	if app.diffIdx != 1 || app.game.Cols != 16 || !tt.HasText("MINES 40") {
 		t.Fatalf("expected 16x16 board after clicking RiNG 排练室, got cols=%d", app.game.Cols)
 	}
 
@@ -155,7 +156,7 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 	if err := tt.RightClick("cell-0-0"); err != nil {
 		t.Fatalf("failed right clicking cell-0-0: %v", err)
 	}
-	if app.game.FlagsPlaced != 1 || !tt.HasText("MINES 009") {
+	if app.game.FlagsPlaced != 1 || !tt.HasText("MINES 9") {
 		t.Fatalf("expected 1 flag placed and MINES 009, got %d", app.game.FlagsPlaced)
 	}
 
@@ -169,7 +170,7 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 
 	// Advance clock past 2 seconds and verify live timer badge
 	tt.Advance(2100 * time.Millisecond)
-	if app.elapsed < 2 || !tt.HasText("TIME 002s") {
+	if app.elapsed < 2 || !tt.HasText("TIME 2s") {
 		t.Fatalf("expected TIME 002s, got elapsed=%d", app.elapsed)
 	}
 
@@ -185,5 +186,29 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 	tt.Key(0, ui.KeyR)
 	if app.game.Status != StatusIdle || app.elapsed != 0 {
 		t.Fatalf("expected reset after R")
+	}
+}
+
+func TestClassicBoardUsesWideWindowSpace(t *testing.T) {
+	app := newMinesweeperApp(12345)
+	tt := ui.NewTester(app.view, 1280, 900)
+	r, ok := tt.Find("cell-0-0")
+	if !ok || r.W < 55 || r.H < 55 {
+		t.Fatalf("classic cells remain tiny: %+v found=%v", r, ok)
+	}
+}
+
+func TestClassicBoardFitsEveryDifficulty(t *testing.T) {
+	for i := 0; i < 4; i++ {
+		app := newMinesweeperApp(12345)
+		app.diffIdx = i
+		app.resetGame(false)
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.Frame()
+		label := fmt.Sprintf("cell-%d-%d", app.game.Rows-1, app.game.Cols-1)
+		r, ok := tt.Find(label)
+		if !ok || r.Y+r.H > 900 {
+			t.Fatalf("difficulty %d bottom cell clipped: %+v", i, r)
+		}
 	}
 }

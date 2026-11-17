@@ -1,0 +1,353 @@
+package main
+
+import (
+	"math"
+	"math/rand/v2"
+)
+
+type DuelOwner uint8
+
+const (
+	DuelNobody DuelOwner = iota
+	DuelPlayer
+	DuelAI
+)
+
+type Duel struct {
+	PlayerScore  int
+	AIScore      int
+	PlayerCombo  int
+	Elapsed      float64
+	Duration     float64
+	NextAI       float64
+	StunnedUntil float64
+	ScanUntil    float64
+	LastAction   int
+	LastCell     int
+	LastAI       int
+	Settled      bool
+	frontier     map[int]bool
+	rng          *rand.Rand
+}
+
+type DuelTick struct {
+	AITurn   *ActionResult
+	AICell   int
+	Finished bool
+}
+
+func newDuel(g *Game) *Duel {
+	return &Duel{
+		Duration: 5 * 60,
+		NextAI:   1.1,
+		LastCell: -1,
+		LastAI:   -1,
+		frontier: make(map[int]bool),
+		rng:      rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())),
+	}
+}
+
+func (d *Duel) remaining() float64  { return max(0, d.Duration-d.Elapsed) }
+func (d *Duel) playerStunned() bool { return d.Elapsed < d.StunnedUntil }
+
+func (g *Game) TickDuel(delta float64) DuelTick {
+	d := g.duel
+	if d == nil || g.Status != StatusPlaying || delta <= 0 || math.IsNaN(delta) {
+		return DuelTick{}
+	}
+	d.Elapsed = min(d.Duration, d.Elapsed+delta)
+	if d.Elapsed >= d.Duration {
+		g.finishDuel()
+		return DuelTick{Finished: true}
+	}
+	if d.Elapsed < d.NextAI {
+		return DuelTick{}
+	}
+	d.NextAI = d.Elapsed + 0.72
+	index, ok := g.chooseAIAction()
+	if !ok {
+		return DuelTick{}
+	}
+	row, col := index/g.Cols, index%g.Cols
+	cell := g.Cell(row, col)
+	var result ActionResult
+	if cell.Flagged {
+		result = ActionResult{Kind: ActionNoop}
+	} else if cell.AITurn {
+		result = g.flagDuel(row, col, DuelAI)
+	} else {
+		result = g.revealDuel(row, col, DuelAI)
+	}
+	d.LastAI = index
+	if result.Kind == ActionWon {
+		d.Settled = true
+	}
+	return DuelTick{AITurn: &result, AICell: index}
+}
+
+func (g *Game) revealDuel(row, col int, owner DuelOwner) ActionResult {
+	d := g.duel
+	if g.Status == StatusWon || g.Status == StatusLost || (owner == DuelPlayer && d.playerStunned()) {
+		return ActionResult{Kind: ActionNoop}
+	}
+	start := g.Cell(row, col)
+	if start == nil || start.Revealed || start.Flagged || (owner == DuelAI && start.Owner == DuelPlayer) {
+		return ActionResult{Kind: ActionNoop}
+	}
+	if !g.FirstClick {
+		g.PlaceMines(row, col)
+		g.FirstClick = true
+		g.Status = StatusPlaying
+	}
+	index := row*g.Cols + col
+	d.LastAction = index
+	if owner == DuelPlayer {
+		d.LastCell = index
+	}
+	g.Moves++
+	if start.IsMine {
+		start.Exploded = true
+		start.Revealed = true
+		start.Owner = owner
+		if owner == DuelPlayer {
+			if g.BandMode && g.MemberID == MemberSoyorin && g.SkillUsesLeft > 0 {
+				g.SkillUsesLeft--
+				g.UsedSkill = true
+				start.Flagged = true
+				start.FlagOwner = owner
+				start.ShieldSaved = true
+				g.FlagsPlaced++
+				return ActionResult{Kind: ActionShielded, QuoteEvent: "shield"}
+			}
+			d.PlayerScore -= 100
+			d.PlayerCombo = 0
+			d.StunnedUntil = d.Elapsed + 2.4
+			return ActionResult{Kind: ActionLost, QuoteEvent: "duelMine", NewMemes: []string{MemeNeverHappy}}
+		}
+		d.AIScore -= 100
+		d.NextAI = d.Elapsed + 2.4
+		return ActionResult{Kind: ActionLost}
+	}
+	if owner == DuelPlayer {
+		d.PlayerCombo++
+	}
+	revealed := g.revealSafe(start, func(revealedIndex int, cell *Cell) {
+		if cell.Owner == DuelAI && owner == DuelPlayer {
+			d.PlayerScore++
+			d.AIScore--
+		}
+		cell.Owner = owner
+		cell.AITurn = false
+		g.rememberFrontier(revealedIndex)
+	})
+	if owner == DuelPlayer {
+		d.PlayerScore += revealed
+		g.adjustGravity(-min(12, revealed/12))
+	} else {
+		d.AIScore += revealed
+	}
+	if g.checkWin() {
+		return ActionResult{Kind: ActionWon, RevealedCount: revealed, QuoteEvent: "won", NewMemes: g.winMemes()}
+	}
+	return ActionResult{Kind: ActionRevealed, RevealedCount: revealed}
+}
+
+func (g *Game) flagDuel(row, col int, owner DuelOwner) ActionResult {
+	d := g.duel
+	if g.Status != StatusIdle && g.Status != StatusPlaying {
+		return ActionResult{Kind: ActionNoop}
+	}
+	if owner == DuelPlayer && d.playerStunned() {
+		return ActionResult{Kind: ActionNoop}
+	}
+	cell := g.Cell(row, col)
+	if cell == nil || cell.Revealed || cell.Flagged || (owner == DuelAI && cell.Owner == DuelPlayer) {
+		return ActionResult{Kind: ActionNoop}
+	}
+	cell.AITurn = false
+	cell.Flagged = true
+	cell.FlagOwner = owner
+	g.FlagsPlaced++
+	d.frontier[row*g.Cols+col] = false
+	return ActionResult{Kind: ActionFlagged}
+}
+
+func (g *Game) UnflagDuel(row, col int) ActionResult {
+	cell := g.Cell(row, col)
+	if g.duel == nil || (g.Status != StatusPlaying && g.Status != StatusIdle) || g.duel.playerStunned() || cell == nil || !cell.Flagged || cell.FlagOwner != DuelPlayer || cell.FlagScored {
+		return ActionResult{Kind: ActionNoop}
+	}
+	cell.Flagged = false
+	cell.FlagOwner = DuelNobody
+	g.FlagsPlaced--
+	g.duel.frontier[row*g.Cols+col] = true
+	return ActionResult{Kind: ActionUnflag}
+}
+
+func (g *Game) ClaimDuelMines(row, col int) ActionResult {
+	d := g.duel
+	if d == nil || g.Status != StatusPlaying || d.playerStunned() {
+		return ActionResult{Kind: ActionNoop}
+	}
+	center := g.Cell(row, col)
+	if center == nil || !center.Revealed || center.Adjacent <= 0 {
+		return ActionResult{Kind: ActionNoop}
+	}
+	unknown := 0
+	flagged := 0
+	for _, n := range g.Neighbors(row, col) {
+		if !n.Revealed && !n.Flagged {
+			unknown++
+		}
+		if n.Flagged || n.Exploded {
+			flagged++
+		}
+	}
+	if unknown == 0 || unknown != center.Adjacent-flagged {
+		return ActionResult{Kind: ActionNoop}
+	}
+	claimed := 0
+	for _, n := range g.Neighbors(row, col) {
+		if n.IsMine && !n.Revealed && !n.Flagged && n.Owner != DuelAI {
+			n.Flagged = true
+			n.FlagOwner = DuelPlayer
+			n.FlagScored = true
+			n.AITurn = false
+			g.FlagsPlaced++
+			claimed++
+		}
+	}
+	if claimed == 0 {
+		return ActionResult{Kind: ActionNoop}
+	}
+	d.PlayerScore += claimed * 75
+	return ActionResult{Kind: ActionFlagged, RevealedCount: claimed}
+}
+
+func (g *Game) useDuelSkill() ActionResult {
+	d := g.duel
+	if !g.BandMode || g.Status != StatusPlaying || g.SkillUsesLeft <= 0 || (d.playerStunned() && g.MemberID != MemberTomori) {
+		return ActionResult{Kind: ActionNoop}
+	}
+	g.SkillUsesLeft--
+	g.UsedSkill = true
+	d.ScanUntil = d.Elapsed + 7
+	d.NextAI += 1.2
+	if g.MemberID == MemberTomori {
+		d.StunnedUntil = 0
+	} else if g.MemberID == MemberAnon {
+		d.PlayerScore += min(75, d.PlayerCombo*5)
+	} else if g.MemberID == MemberTaki {
+		d.NextAI += 1.8
+	}
+	return ActionResult{Kind: ActionSkill, QuoteEvent: "skill"}
+}
+
+func (g *Game) ScanAt(row, col int) (count int, active bool) {
+	d := g.duel
+	if d == nil || d.Elapsed >= d.ScanUntil || row < 0 || col < 0 {
+		return 0, false
+	}
+	for r := max(0, row-4); r <= min(g.Rows-1, row+4); r++ {
+		for c := max(0, col-4); c <= min(g.Cols-1, col+4); c++ {
+			if g.Cell(r, c).IsMine {
+				count++
+			}
+		}
+	}
+	return count, true
+}
+
+func (g *Game) finishDuel() {
+	if g.duel.Settled {
+		return
+	}
+	g.duel.Settled = true
+	g.Status = StatusWon
+	for i := range g.Cells {
+		cell := &g.Cells[i]
+		if !cell.Flagged || cell.FlagScored {
+			continue
+		}
+		cell.FlagScored = true
+		if cell.IsMine {
+			if cell.FlagOwner == DuelPlayer {
+				g.duel.PlayerScore += 75
+			} else if cell.FlagOwner == DuelAI {
+				g.duel.AIScore += 75
+			}
+		} else {
+			cell.WrongFlag = true
+			if cell.FlagOwner == DuelPlayer {
+				g.duel.PlayerScore -= 30
+			} else if cell.FlagOwner == DuelAI {
+				g.duel.AIScore -= 30
+			}
+		}
+	}
+}
+
+func (g *Game) chooseAIAction() (int, bool) {
+	d := g.duel
+	for index := range d.frontier {
+		cell := &g.Cells[index]
+		if cell.Revealed || cell.Flagged || cell.Owner == DuelPlayer {
+			delete(d.frontier, index)
+			continue
+		}
+		for _, n := range g.Neighbors(cell.Row, cell.Col) {
+			if !n.Revealed || n.Adjacent <= 0 {
+				continue
+			}
+			unknown, flags := 0, 0
+			for _, near := range g.Neighbors(n.Row, n.Col) {
+				if !near.Revealed && !near.Flagged && near.Owner != DuelPlayer && !near.Exploded {
+					unknown++
+				}
+				if near.Flagged || near.Exploded {
+					flags++
+				}
+			}
+			if unknown == n.Adjacent-flags && unknown > 0 {
+				cell.AITurn = true
+				return index, true
+			}
+			if flags == n.Adjacent && unknown > 0 {
+				return index, true
+			}
+		}
+	}
+	for range 160 {
+		index := d.rng.IntN(len(g.Cells))
+		cell := &g.Cells[index]
+		if !cell.Revealed && !cell.Flagged && cell.Owner != DuelPlayer {
+			return index, true
+		}
+	}
+	for index := range d.frontier {
+		cell := &g.Cells[index]
+		if !cell.Revealed && !cell.Flagged && cell.Owner != DuelPlayer {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func (g *Game) rememberFrontier(index int) {
+	row, col := index/g.Cols, index%g.Cols
+	g.duel.frontier[index] = true
+	for dr := -1; dr <= 1; dr++ {
+		for dc := -1; dc <= 1; dc++ {
+			cell := g.Cell(row+dr, col+dc)
+			if cell == nil {
+				continue
+			}
+			next := cell.Row*g.Cols + cell.Col
+			if !cell.Revealed && !cell.Flagged {
+				g.duel.frontier[next] = true
+			} else {
+				delete(g.duel.frontier, next)
+			}
+		}
+	}
+}
