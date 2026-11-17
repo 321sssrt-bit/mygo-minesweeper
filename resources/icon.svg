@@ -1,10 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <!--
     App icon: a page of graph paper with five hand-written exclamation
-    marks, left to right in the band order, each in the member's day ink.
-    Original vector art. Every colour comes from palette.go: the day paper,
-    the band colour for the ruled grid, and each member's day ink (the
-    official image colour darkened for the page).
+    marks, left to right in the band order, each in the member's day ink,
+    and one sticking plaster stuck across the middle of them: the rift
+    between the five, patched.
+    Original vector art. Every colour comes from palette.go: the day paper
+    and its plaster, the band colour for the ruled grid, and each member's
+    day ink (the official image colour darkened for the page).
     resources/icon.png is this file exported at 1024 px by
     TestAppIconExport in icon_test.go, which also says how to run it.
   -->
@@ -45,6 +47,26 @@
   <g fill="#6E6EA4" transform="translate(835.3 295.5) rotate(6)"><!-- 5 Taki -->
     <path d="M-52.6 0C-52.6 -60.5 52.6 -60.5 52.6 0C55.6 131.9 36.6 250 24.6 347.2C24.6 379.2 -24.6 379.2 -24.6 347.2C-28.6 243 -45.6 125 -52.6 0Z"/>
     <ellipse cx="2" cy="445.8" rx="45.9" ry="42.6" transform="rotate(-10 2 445.8)"/>
+  </g>
+  <!-- a sticking plaster stuck across the middle of the five: the rift between them, patched -->
+  <g transform="translate(512 456) rotate(-15)">
+    <rect x="-318" y="-72" width="644" height="168" rx="84" fill="#5A4628" fill-opacity="0.18"/>
+    <rect x="-322" y="-84" width="644" height="168" rx="84" fill="#E8C49A" stroke="#BF946A" stroke-width="12.6"/>
+    <rect x="-77.3" y="-57.1" width="154.6" height="114.2" rx="16.8" fill="#F5DFC2"/>
+    <g fill="#BF946A">
+      <circle cx="-161" cy="-28.6" r="8.4"/>
+      <circle cx="-193.2" cy="0" r="8.4"/>
+      <circle cx="-161" cy="28.6" r="8.4"/>
+      <circle cx="-231.8" cy="-28.6" r="8.4"/>
+      <circle cx="-264" cy="0" r="8.4"/>
+      <circle cx="-231.8" cy="28.6" r="8.4"/>
+      <circle cx="161" cy="-28.6" r="8.4"/>
+      <circle cx="193.2" cy="0" r="8.4"/>
+      <circle cx="161" cy="28.6" r="8.4"/>
+      <circle cx="231.8" cy="-28.6" r="8.4"/>
+      <circle cx="264" cy="0" r="8.4"/>
+      <circle cx="231.8" cy="28.6" r="8.4"/>
+    </g>
   </g>
   <rect x="82" y="82" width="860" height="860" rx="190" fill="none" stroke="#2E2A25" stroke-opacity="0.14" stroke-width="4"/>
 </svg>
