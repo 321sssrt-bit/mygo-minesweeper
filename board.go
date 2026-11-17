@@ -187,11 +187,61 @@ func containsIndex(list []int, target int) bool {
 	return false
 }
 
+func (a *minesweeperApp) applyCanvasCellAction(row, col, button int) ActionResult {
+	if a.game == nil {
+		return ActionResult{Kind: ActionNoop}
+	}
+	cell := a.game.Cell(row, col)
+	if cell == nil {
+		return ActionResult{Kind: ActionNoop}
+	}
+	if a.game.duel == nil {
+		if button == 1 || (button == 0 && a.flagMode) {
+			return a.game.ToggleFlag(row, col, a.allowQuestion)
+		}
+		if button == 0 {
+			if cell.Revealed {
+				return a.game.Chord(row, col)
+			}
+			return a.game.Reveal(row, col)
+		}
+		return ActionResult{Kind: ActionNoop}
+	}
+	if button == 1 || (button == 0 && a.flagMode) {
+		result := a.game.ToggleFlag(row, col, false)
+		if result.Kind == ActionNoop {
+			result = a.game.UnflagDuel(row, col)
+		}
+		return result
+	}
+	if button == 0 {
+		if cell.Revealed && !cell.Exploded && cell.Adjacent > 0 {
+			result := a.game.ClaimDuelMines(row, col)
+			if result.Kind == ActionNoop {
+				result = a.game.Chord(row, col)
+			}
+			return result
+		}
+		if !cell.Revealed {
+			return a.game.Reveal(row, col)
+		}
+	}
+	return ActionResult{Kind: ActionNoop}
+}
+
+func (a *minesweeperApp) classicBoard(c *ui.Context) {
+	a.canvasBoard(c, "classic-stage", "classic-board", "经典棋盘")
+}
+
 func (a *minesweeperApp) duelBoard(c *ui.Context) {
+	a.canvasBoard(c, "duel-stage", "duel-board", "百万格决斗战场")
+}
+
+func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label string) {
 	v := a.board
 	v.clamp(a.game)
-	ui.Column(c.Key("duel-stage")).Grow(1).FillWidth().Children(func() {
-		boardBox := ui.Box(c.Key("duel-board")).Grow(1).FillWidth().Label("百万格决斗战场").
+	ui.Column(c.Key(stageKey)).Grow(1).FillWidth().Children(func() {
+		boardBox := ui.Box(c.Key(boardKey)).Grow(1).FillWidth().Label(label).
 			Cursor(ui.CursorPointer).Focusable()
 		hovered := boardBox.Hovered()
 		if v.WasHovered && !hovered && !v.Pressed {
@@ -213,7 +263,7 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 				return true
 			case ui.InputPointerDown:
 				v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
-				if ev.Button > 2 {
+				if ev.Button < 0 || ev.Button > 2 {
 					return false
 				}
 				if ev.Button == 0 && v.minimapFor(a.game, ev.X, ev.Y) {
@@ -250,30 +300,14 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 				button, dragged := v.PressButton, v.Dragging
 				v.Pressed, v.Dragging = false, false
 				v.updateHover(a.game)
-				if ev.Canceled || dragged {
+				if ev.Canceled || dragged || v.minimapFor(a.game, ev.X, ev.Y) || v.minimapFor(a.game, v.PressX, v.PressY) {
 					return true
 				}
 				row, col, ok := v.cellAt(a.game, ev.X, ev.Y)
 				if !ok {
 					return true
 				}
-				var result ActionResult
-				if button == 1 || (button == 0 && a.flagMode) {
-					result = a.game.ToggleFlag(row, col, false)
-					if result.Kind == ActionNoop {
-						result = a.game.UnflagDuel(row, col)
-					}
-				} else if button == 0 {
-					cell := a.game.Cell(row, col)
-					if cell.Revealed && !cell.Exploded && cell.Adjacent > 0 {
-						result = a.game.ClaimDuelMines(row, col)
-						if result.Kind == ActionNoop {
-							result = a.game.Chord(row, col)
-						}
-					} else if !cell.Revealed {
-						result = a.game.Reveal(row, col)
-					}
-				}
+				result := a.applyCanvasCellAction(row, col, button)
 				if result.Kind != ActionNoop {
 					a.pendingResult = result
 					a.pendingRow = row
@@ -299,7 +333,7 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 			a.paintDuelBoard(p, r)
 		})
 
-		if a.game.duel != nil && a.game.Status == StatusPlaying && a.game.duel.playerStunned() {
+		if a.game != nil && a.game.duel != nil && a.game.Status == StatusPlaying && a.game.duel.playerStunned() {
 			d := a.game.duel
 			hint := "暂无法操作棋盘 · 等待硬直结束"
 			if a.bandMode() && a.memberID == MemberTomori {
