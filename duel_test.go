@@ -1022,3 +1022,273 @@ func TestDuelUIUsesGameplayNotTrackID(t *testing.T) {
 		t.Fatalf("expected mode switch enabled for GameplayClassic track, got modeIdx=%d", app3.modeIdx)
 	}
 }
+
+func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
+	cases := []struct {
+		name  string
+		rows  int
+		cols  int
+		mines int
+	}{
+		{name: "50x50", rows: 50, cols: 50, mines: 430},
+		{name: "100x100", rows: 100, cols: 100, mines: 1600},
+		{name: "60x80", rows: 60, cols: 80, mines: 800},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newMinesweeperApp(42)
+			app.diffIdx = 4
+			app.game = NewGame(Difficulty{
+				ID:       "test-" + tc.name,
+				Gameplay: GameplayDuel,
+				Rows:     tc.rows,
+				Cols:     tc.cols,
+				Mines:    tc.mines,
+			}, true, MemberAnon, 42)
+
+			tt := ui.NewTester(app.view, 960, 640)
+			tt.Frame()
+
+			r, ok := tt.Find("百万格决斗战场")
+			if !ok {
+				t.Fatal("duel board missing")
+			}
+
+			// Initial viewport centers on board middle rather than clamping to bottom-right.
+			centerRow, centerCol, ok := app.board.cellAt(app.game, r.W/2, r.H/2)
+			if !ok || centerRow != tc.rows/2 || centerCol != tc.cols/2 {
+				t.Fatalf("initial center got (%d,%d) ok=%v, want (%d,%d)", centerRow, centerCol, ok, tc.rows/2, tc.cols/2)
+			}
+
+			// Clicking center reveals the centered cell.
+			tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+			if !app.game.FirstClick || !app.game.Cell(centerRow, centerCol).Revealed {
+				t.Fatalf("click at initial center (%d,%d) did not reveal", centerRow, centerCol)
+			}
+
+			// Scroll zoom keeps world anchor fixed and respects [10, 42] bounds.
+			anchorX, anchorY := r.W*0.35, r.H*0.4
+			wx := (app.board.X + anchorX) / app.board.Cell
+			wy := (app.board.Y + anchorY) / app.board.Cell
+			tt.Scroll(r.X+anchorX, r.Y+anchorY, 0, -240)
+			if math.Abs(float64((app.board.X+anchorX)/app.board.Cell-wx)) > 0.02 ||
+				math.Abs(float64((app.board.Y+anchorY)/app.board.Cell-wy)) > 0.02 {
+				t.Fatalf("zoom anchor drifted on %s", tc.name)
+			}
+
+			// Zoom all the way out to Cell=10 (smaller than viewport for 50x50) and verify clamping & cellAt edges.
+			app.board.zoom(app.game, r.W/2, r.H/2, 0.01)
+			if app.board.Cell != 10 {
+				t.Fatalf("expected min cell size 10, got %v", app.board.Cell)
+			}
+			maxX := max(float32(0), float32(tc.cols)*app.board.Cell-app.board.Width)
+			maxY := max(float32(0), float32(tc.rows)*app.board.Cell-app.board.Height)
+			if app.board.X < 0 || app.board.Y < 0 || app.board.X > maxX || app.board.Y > maxY {
+				t.Fatalf("clamped offset out of bounds: (%v,%v) max=(%v,%v)", app.board.X, app.board.Y, maxX, maxY)
+			}
+			if row, col, ok := app.board.cellAt(app.game, -5, 10); ok {
+				t.Fatalf("cellAt accepted negative x: (%d,%d)", row, col)
+			}
+			if row, col, ok := app.board.cellAt(app.game, float32(tc.cols)*app.board.Cell+5, 10); ok {
+				t.Fatalf("cellAt accepted x past board edge: (%d,%d)", row, col)
+			}
+
+			// Minimap viewport rect remains strictly inside minimap bounds even when board < viewport.
+			mini := app.board.minimapBoundsFor(app.game)
+			mini.X += r.X
+			mini.Y += r.Y
+			vp := minimapViewportRect(mini, tc.rows, tc.cols, app.board.X, app.board.Y, r.W, r.H, app.board.Cell)
+			if vp.X < mini.X || vp.Y < mini.Y || vp.X+vp.W > mini.X+mini.W+0.01 || vp.Y+vp.H > mini.Y+mini.H+0.01 {
+				t.Fatalf("minimap viewport escaped mini bounds at min zoom: vp=%+v mini=%+v", vp, mini)
+			}
+
+			// Zoom to max (Cell=42) so both 50x50 and 100x100 exceed viewport, then test minimap click-to-jump.
+			app.board.zoom(app.game, r.W/2, r.H/2, 10)
+			if app.board.Cell != 42 {
+				t.Fatalf("expected max cell size 42, got %v", app.board.Cell)
+			}
+
+			localMini := app.board.minimapBoundsFor(app.game)
+			// Click top-left corner of minimap -> clamps to (0,0).
+			tt.ClickAt(r.X+localMini.X+1, r.Y+localMini.Y+1)
+			if app.board.X != 0 || app.board.Y != 0 {
+				t.Fatalf("minimap top-left jump did not clamp to (0,0): (%v,%v)", app.board.X, app.board.Y)
+			}
+
+			// Click bottom-right corner of minimap -> clamps to (maxX, maxY).
+			tt.ClickAt(r.X+localMini.X+localMini.W-1, r.Y+localMini.Y+localMini.H-1)
+			wantMaxX := max(float32(0), float32(tc.cols)*app.board.Cell-app.board.Width)
+			wantMaxY := max(float32(0), float32(tc.rows)*app.board.Cell-app.board.Height)
+			if math.Abs(float64(app.board.X-wantMaxX)) > 0.5 || math.Abs(float64(app.board.Y-wantMaxY)) > 0.5 {
+				t.Fatalf("minimap bottom-right jump got (%v,%v), want (%v,%v)", app.board.X, app.board.Y, wantMaxX, wantMaxY)
+			}
+
+			// Click interior target (rows/3, cols*2/3) on minimap -> centers viewport on that exact cell.
+			targetRow, targetCol := tc.rows/3, tc.cols*2/3
+			clickX := r.X + localMini.X + (float32(targetCol)+0.5)/float32(tc.cols)*localMini.W
+			clickY := r.Y + localMini.Y + (float32(targetRow)+0.5)/float32(tc.rows)*localMini.H
+			tt.ClickAt(clickX, clickY)
+			gotRow, gotCol, ok := app.board.cellAt(app.game, r.W/2, r.H/2)
+			if !ok || absInt(gotRow-targetRow) > 1 || absInt(gotCol-targetCol) > 1 {
+				t.Fatalf("minimap jump to (%d,%d) landed at (%d,%d) ok=%v", targetRow, targetCol, gotRow, gotCol, ok)
+			}
+
+			// Minimap marker clamping stays within minimap bounds for all board corners.
+			for _, idx := range []int{0, tc.cols - 1, (tc.rows - 1) * tc.cols, tc.rows*tc.cols - 1} {
+				mx, my := minimapMarkerPos(mini, tc.rows, tc.cols, idx, 5)
+				if mx < mini.X+5 || mx > mini.X+mini.W-5 || my < mini.Y+5 || my > mini.Y+mini.H-5 {
+					t.Fatalf("marker out of minimap bounds on %s idx=%d: (%v,%v)", tc.name, idx, mx, my)
+				}
+			}
+
+			// Zoom-out then Ctrl+0 recenters cleanly.
+			tt.Key(ui.Ctrl, ui.KeyMinus)
+			tt.Key(ui.Ctrl, ui.Key0)
+			reRow, reCol, ok := app.board.cellAt(app.game, r.W/2, r.H/2)
+			if !ok || reRow != tc.rows/2 || reCol != tc.cols/2 {
+				t.Fatalf("Ctrl+0 recenter got (%d,%d) ok=%v, want (%d,%d)", reRow, reCol, ok, tc.rows/2, tc.cols/2)
+			}
+		})
+	}
+}
+
+func TestDuel1000FirstFrameParity(t *testing.T) {
+	app := newMinesweeperApp(42)
+	app.diffIdx = 4
+	app.resetGame(false)
+
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.Frame()
+
+	// Preserve original 1000x1000 initial offset (487*26, 487*26) and fixed 148x148 minimap.
+	if app.board.X != 487*26 || app.board.Y != 487*26 || app.board.Cell != 26 {
+		t.Fatalf("1000x1000 initial viewport drifted: X=%v Y=%v Cell=%v", app.board.X, app.board.Y, app.board.Cell)
+	}
+	v := newBoardView()
+	v.Width, v.Height = 120, 120
+	mini := v.minimapBoundsFor(app.game)
+	if mini.W != 148 || mini.H != 148 {
+		t.Fatalf("1000x1000 minimap size changed: %+v", mini)
+	}
+}
+
+func TestBoardMinimapCoversSmallBoardsWithoutGaps(t *testing.T) {
+	// Sub-100 boards (50x50 and non-divisor 60x80): production minimapAxisSlots must map every grid slot without gaps.
+	for _, tc := range []struct {
+		rows int
+		cols int
+	}{
+		{rows: 50, cols: 50},
+		{rows: 60, cols: 80},
+	} {
+		g := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: tc.rows, Cols: tc.cols, Mines: 1}, true, MemberAnon, 42)
+		// Reveal from (0,0) with mine tucked at bottom-right corner using public Game API.
+		g.FirstClick = true
+		g.Status = StatusPlaying
+		g.Cell(tc.rows-1, tc.cols-1).IsMine = true
+		g.RecomputeAdjacency()
+		if res := g.ToggleFlag(tc.rows-1, tc.cols-1, false); res.Kind != ActionFlagged {
+			t.Fatalf("%dx%d corner flag failed: %+v", tc.rows, tc.cols, res)
+		}
+		if res := g.Reveal(0, 0); res.Kind != ActionRevealed && res.Kind != ActionWon {
+			t.Fatalf("%dx%d reveal failed: %+v", tc.rows, tc.cols, res)
+		}
+
+		rowMap, colMap := minimapAxisSlots(g)
+		emptyMapped := 0
+		for br := range minimapGridSize {
+			for bc := range minimapGridSize {
+				blk := g.duel.Minimap[rowMap[br]*minimapGridSize+colMap[bc]]
+				if blk.Player == 0 {
+					emptyMapped++
+				}
+			}
+		}
+		if emptyMapped > 0 {
+			t.Fatalf("%dx%d minimapAxisSlots left %d empty slots", tc.rows, tc.cols, emptyMapped)
+		}
+	}
+
+	// Verify classic-shaped Game (duel == nil) on 50x50 and 100x100 works safely with boardView helpers.
+	for _, size := range []int{50, 100} {
+		classic := &Game{Rows: size, Cols: size, Cells: make([]Cell, size*size)}
+		v := newBoardView()
+		v.Width, v.Height = 800, 600
+		v.centerBoard(classic)
+		row, col, ok := v.cellAt(classic, v.Width/2, v.Height/2)
+		if !ok || row != size/2 || col != size/2 {
+			t.Fatalf("classic %dx%d boardView center got (%d,%d) ok=%v", size, size, row, col, ok)
+		}
+		v.zoom(classic, 100, 100, 0.2)
+		v.clamp(classic)
+		mini := v.minimapBoundsFor(classic)
+		vp := minimapViewportRect(mini, classic.Rows, classic.Cols, v.X, v.Y, v.Width, v.Height, v.Cell)
+		if vp.W <= 0 || vp.H <= 0 || vp.X < mini.X || vp.Y < mini.Y || vp.X+vp.W > mini.X+mini.W+0.01 || vp.Y+vp.H > mini.Y+mini.H+0.01 {
+			t.Fatalf("classic %dx%d minimap viewport invalid: vp=%+v mini=%+v", size, size, vp, mini)
+		}
+	}
+}
+
+func TestBoardViewNonFiniteAndZeroBounds(t *testing.T) {
+	nan := float32(math.NaN())
+	inf := float32(math.Inf(1))
+	ninf := float32(math.Inf(-1))
+	mini := ui.Rect{X: 100, Y: 100, W: 148, H: 148}
+
+	invalidRects := []ui.Rect{
+		minimapViewportRect(mini, 50, 50, 0, 0, nan, 100, 26),
+		minimapViewportRect(mini, 50, 50, nan, 0, 100, 100, 26),
+		minimapViewportRect(mini, 50, 50, 0, 0, inf, 100, 26),
+		minimapViewportRect(mini, 50, 50, 0, 0, -1, 100, 26),
+		minimapViewportRect(mini, 50, 50, 0, 0, 100, 100, 0),
+		minimapViewportRect(mini, 0, 50, 0, 0, 100, 100, 26),
+		minimapViewportRect(ui.Rect{X: 10, Y: 10, W: 0, H: 148}, 50, 50, 0, 0, 100, 100, 26),
+	}
+	for i, r := range invalidRects {
+		if r != (ui.Rect{}) {
+			t.Fatalf("case %d: expected empty rect for invalid geometry, got %+v", i, r)
+		}
+		for _, f := range []float32{r.X, r.Y, r.W, r.H} {
+			if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+				t.Fatalf("case %d: rect contains non-finite field: %+v", i, r)
+			}
+		}
+	}
+
+	g := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 50, Cols: 50, Mines: 10}, true, MemberAnon, 42)
+	v := newBoardView()
+	v.Width, v.Height = 800, 600
+	v.centerBoard(g)
+
+	// Non-finite cellAt coordinates must return (-1, -1, false).
+	for _, pt := range [][2]float32{{nan, 10}, {10, nan}, {inf, 10}, {10, ninf}} {
+		if r, c, ok := v.cellAt(g, pt[0], pt[1]); ok || r != -1 || c != -1 {
+			t.Fatalf("cellAt(%v,%v) = (%d,%d,%v), want (-1,-1,false)", pt[0], pt[1], r, c, ok)
+		}
+	}
+
+	// Non-finite zoom inputs are ignored without poisoning boardView fields.
+	v.zoom(g, nan, 10, 1.2)
+	v.zoom(g, 10, 10, nan)
+	v.zoom(g, 10, 10, -1)
+	if math.IsNaN(float64(v.X)) || math.IsNaN(float64(v.Y)) || math.IsNaN(float64(v.Cell)) {
+		t.Fatalf("zoom poisoned boardView with NaN: %+v", v)
+	}
+
+	// clamp recovers from corrupted non-finite fields.
+	v.X, v.Y, v.Cell, v.Width, v.Height = nan, inf, nan, nan, ninf
+	v.clamp(g)
+	for _, f := range []float32{v.X, v.Y, v.Cell, v.Width, v.Height} {
+		if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+			t.Fatalf("clamp left non-finite value in boardView: %+v", v)
+		}
+	}
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
