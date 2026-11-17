@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    App icon: a page of graph paper with five hand-written exclamation
+    marks in the band order and a sticking plaster on the lower-left corner.
+    Original vector art. Every colour comes from palette.go: the day paper,
+    the band colour for the ruled grid, and each member's day ink (the
+    official image colour darkened for the page).
+    resources/icon.png is this file exported at 1024 px by
+    TestAppIconExport in icon_test.go, which also says how to run it.
+  -->
+  <defs>
+    <clipPath id="page"><rect x="80" y="80" width="864" height="864" rx="192"/></clipPath>
+  </defs>
+  <g fill="#5A4628">
+    <rect x="80" y="82" width="864" height="864" rx="192" fill-opacity="0.05"/>
+    <rect x="78" y="82" width="868" height="868" rx="194" fill-opacity="0.045"/>
+    <rect x="76" y="83" width="872" height="872" rx="196" fill-opacity="0.04"/>
+    <rect x="73" y="83" width="878" height="878" rx="199" fill-opacity="0.03"/>
+    <rect x="70" y="84" width="884" height="884" rx="202" fill-opacity="0.022"/>
+    <rect x="66" y="84" width="892" height="892" rx="206" fill-opacity="0.015"/>
+  </g>
+  <rect x="80" y="80" width="864" height="864" rx="192" fill="#FFFEFA"/>
+  <g clip-path="url(#page)" stroke="#3388BB" stroke-opacity="0.16" stroke-width="5">
+    <path d="M176 80V944M272 80V944M368 80V944M464 80V944M560 80V944M656 80V944M752 80V944M848 80V944M80 176H944M80 272H944M80 368H944M80 464H944M80 560H944M80 656H944M80 752H944M80 848H944"/>
+  </g>
+  <!-- five exclamation marks, band order, each in the member's day ink -->
+  <g class="bang" fill="#2879A2" transform="translate(262 236) rotate(6)"><!-- 1 Tomori -->
+    <path d="M-47 0C-47 -54 47 -54 47 0C49 117.8 33 223.2 22 310C22 338.6 -22 338.6 -22 310C-27 217 -41 111.6 -47 0Z"/>
+    <ellipse cx="3" cy="397" rx="41" ry="37" transform="rotate(-12 3 397)"/>
+  </g>
+  <g class="bang" fill="#E90021" transform="translate(398 220) rotate(7)"><!-- 2 Anon -->
+    <path d="M-49 0C-49 -56.3 49 -56.3 49 0C42 124.6 25 236.2 23 328C23 357.9 -23 357.9 -23 328C-37 229.6 -52 118.1 -49 0Z"/>
+    <ellipse cx="-2" cy="416" rx="42" ry="38" transform="rotate(18 -2 416)"/>
+  </g>
+  <g class="bang" fill="#218521" transform="translate(534 242) rotate(5)"><!-- 3 Rana -->
+    <path d="M-46 0C-46 -52.9 46 -52.9 46 0C47 115.5 32 218.9 22 304C22 332.6 -22 332.6 -22 304C-28 212.8 -41 109.4 -46 0Z"/>
+    <ellipse cx="2" cy="391" rx="41" ry="37" transform="rotate(-6 2 391)"/>
+  </g>
+  <g class="bang" fill="#976C00" transform="translate(670 224) rotate(7)"><!-- 4 Soyo -->
+    <path d="M-48 0C-48 -55.2 48 -55.2 48 0C42 123.1 26 233.3 23 324C23 353.9 -23 353.9 -23 324C-36 226.8 -50 116.6 -48 0Z"/>
+    <ellipse cx="-3" cy="411" rx="42" ry="37" transform="rotate(14 -3 411)"/>
+  </g>
+  <g class="bang" fill="#6E6EA4" transform="translate(806 238) rotate(6)"><!-- 5 Taki -->
+    <path d="M-47 0C-47 -54 47 -54 47 0C50 117.8 34 223.2 22 310C22 338.6 -22 338.6 -22 310C-26 217 -40 111.6 -47 0Z"/>
+    <ellipse cx="2" cy="398" rx="41" ry="38" transform="rotate(-10 2 398)"/>
+  </g>
+  <!-- sticking plaster on the lower-left corner -->
+  <g transform="translate(214 810) rotate(45)">
+    <rect x="-147" y="-49" width="300" height="116" rx="58" fill="#5A4628" fill-opacity="0.16"/>
+    <rect x="-150" y="-58" width="300" height="116" rx="58" fill="#E8C49A" stroke="#BF946A" stroke-width="9"/>
+    <rect x="-46" y="-42" width="92" height="84" rx="10" fill="#F5DFC2"/>
+    <g fill="#BF946A">
+      <circle cx="-112" cy="-18" r="8"/>
+      <circle cx="-84" cy="18" r="8"/>
+      <circle cx="84" cy="-18" r="8"/>
+      <circle cx="112" cy="18" r="8"/>
+    </g>
+  </g>
+  <rect x="82" y="82" width="860" height="860" rx="190" fill="none" stroke="#2E2A25" stroke-opacity="0.14" stroke-width="4"/>
+</svg>
