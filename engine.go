@@ -12,11 +12,14 @@ const (
 )
 
 type Difficulty struct {
-	ID           string
-	Label        string
-	Song         string
-	Subtitle     string
-	Gameplay     Gameplay
+	ID       string
+	Label    string
+	Song     string
+	Subtitle string
+	Gameplay Gameplay
+	// Haruhikage marks a 春日影演出 track: a classic loss on it plays
+	// the 「为什么要演奏春日影！？」 scene instead of the plain defeat.
+	Haruhikage   bool
 	Rows         int
 	Cols         int
 	Mines        int
@@ -59,6 +62,7 @@ var Difficulties = []Difficulty{
 		Song:         "春日影 (Crychic Ver.)",
 		Subtitle:     "30×16 · 99雷",
 		Gameplay:     GameplayClassic,
+		Haruhikage:   true,
 		Rows:         16,
 		Cols:         30,
 		Mines:        99,
@@ -459,7 +463,7 @@ func (g *Game) Reveal(row, col int) ActionResult {
 		g.Gravity = 100
 		quoteEvent := "lost"
 		var memes []string
-		if g.Difficulty.ID == "hard" {
+		if g.Difficulty.Haruhikage {
 			quoteEvent = "haruhikageLost"
 			memes = append(memes, MemeHaruhikage)
 		}
