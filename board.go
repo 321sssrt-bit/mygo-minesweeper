@@ -12,6 +12,7 @@ type boardView struct {
 	X, Y           float32
 	Cell           float32
 	Width, Height  float32
+	needsCenter    bool
 	HoverRow       int
 	HoverCol       int
 	HoverX, HoverY float32
@@ -27,12 +28,21 @@ type boardView struct {
 	LastHoverHint  HoverHint
 }
 
+const (
+	minimapSize   = float32(148)
+	minimapMargin = float32(10)
+)
+
 func newBoardView() *boardView {
-	return &boardView{Cell: 26, X: 487 * 26, Y: 487 * 26, HoverRow: -1, HoverCol: -1, EffectCell: -1}
+	return &boardView{Cell: 26, X: 487 * 26, Y: 487 * 26, needsCenter: true, HoverRow: -1, HoverCol: -1, EffectCell: -1}
+}
+
+func isFinite32(v float32) bool {
+	return !math.IsNaN(float64(v)) && !math.IsInf(float64(v), 0)
 }
 
 func (v *boardView) updateHover(g *Game) {
-	if !v.HasHover || v.minimap(v.HoverX, v.HoverY) || v.HoverX < 0 || v.HoverY < 0 || v.HoverX >= v.Width || v.HoverY >= v.Height {
+	if !v.HasHover || v.minimapFor(g, v.HoverX, v.HoverY) || v.HoverX < 0 || v.HoverY < 0 || v.HoverX >= v.Width || v.HoverY >= v.Height {
 		v.HoverRow, v.HoverCol = -1, -1
 		return
 	}
@@ -45,25 +55,60 @@ func (v *boardView) updateHover(g *Game) {
 }
 
 func (v *boardView) clamp(g *Game) {
+	if !isFinite32(v.Cell) {
+		v.Cell = 26
+	}
 	v.Cell = max(10, min(42, v.Cell))
-	v.Width, v.Height = max(100, v.Width), max(100, v.Height)
-	v.X = max(0, min(float32(g.Cols)*v.Cell-v.Width, v.X))
-	v.Y = max(0, min(float32(g.Rows)*v.Cell-v.Height, v.Y))
+	if !isFinite32(v.Width) || v.Width < 100 {
+		v.Width = 100
+	}
+	if !isFinite32(v.Height) || v.Height < 100 {
+		v.Height = 100
+	}
+	if g == nil || g.Rows <= 0 || g.Cols <= 0 {
+		v.X, v.Y = 0, 0
+		v.HoverRow, v.HoverCol = -1, -1
+		return
+	}
+	if !isFinite32(v.X) {
+		v.X = 0
+	}
+	if !isFinite32(v.Y) {
+		v.Y = 0
+	}
+	maxX := max(float32(0), float32(g.Cols)*v.Cell-v.Width)
+	maxY := max(float32(0), float32(g.Rows)*v.Cell-v.Height)
+	v.X = max(0, min(maxX, v.X))
+	v.Y = max(0, min(maxY, v.Y))
 	v.updateHover(g)
 }
 
 func (v *boardView) center(g *Game, row, col int) {
+	v.needsCenter = false
+	if g == nil || g.Rows <= 0 || g.Cols <= 0 {
+		return
+	}
 	v.X = (float32(col)+0.5)*v.Cell - v.Width/2
 	v.Y = (float32(row)+0.5)*v.Cell - v.Height/2
 	v.clamp(g)
 }
 
 func (v *boardView) centerBoard(g *Game) {
+	if g == nil || g.Rows <= 0 || g.Cols <= 0 {
+		return
+	}
 	v.center(g, g.Rows/2, g.Cols/2)
 }
 
 func (v *boardView) zoom(g *Game, atX, atY, factor float32) {
-	old := v.Cell
+	if g == nil || factor <= 0 || !isFinite32(factor) || !isFinite32(atX) || !isFinite32(atY) {
+		return
+	}
+	v.needsCenter = false
+	if !isFinite32(v.Cell) {
+		v.Cell = 26
+	}
+	old := max(float32(10), v.Cell)
 	next := max(10, min(42, old*factor))
 	worldX := (v.X + atX) / old
 	worldY := (v.Y + atY) / old
@@ -74,12 +119,63 @@ func (v *boardView) zoom(g *Game, atX, atY, factor float32) {
 }
 
 func (v *boardView) cellAt(g *Game, x, y float32) (int, int, bool) {
-	col, row := int((v.X+x)/v.Cell), int((v.Y+y)/v.Cell)
-	return row, col, row >= 0 && row < g.Rows && col >= 0 && col < g.Cols
+	if g == nil || g.Rows <= 0 || g.Cols <= 0 || v.Cell <= 0 ||
+		!isFinite32(v.Cell) || !isFinite32(x) || !isFinite32(y) || !isFinite32(v.X) || !isFinite32(v.Y) {
+		return -1, -1, false
+	}
+	if x < 0 || y < 0 || (v.Width > 0 && x >= v.Width) || (v.Height > 0 && y >= v.Height) {
+		return -1, -1, false
+	}
+	wx, wy := v.X+x, v.Y+y
+	if wx < 0 || wy < 0 {
+		return -1, -1, false
+	}
+	colF, rowF := wx/v.Cell, wy/v.Cell
+	if colF >= float32(g.Cols) || rowF >= float32(g.Rows) {
+		return -1, -1, false
+	}
+	return int(rowF), int(colF), true
 }
 
-func (v *boardView) minimap(x, y float32) bool {
-	return x >= v.Width-158 && y >= v.Height-158 && x <= v.Width-10 && y <= v.Height-10
+func (v *boardView) minimapBoundsFor(g *Game) ui.Rect {
+	if g != nil && g.Rows == 1000 && g.Cols == 1000 {
+		return ui.Rect{
+			X: v.Width - minimapSize - minimapMargin,
+			Y: v.Height - minimapSize - minimapMargin,
+			W: minimapSize,
+			H: minimapSize,
+		}
+	}
+	s := min(minimapSize, max(float32(20), min(v.Width, v.Height)-minimapMargin*2))
+	return ui.Rect{
+		X: v.Width - minimapMargin - s,
+		Y: v.Height - minimapMargin - s,
+		W: s,
+		H: s,
+	}
+}
+
+func (v *boardView) minimapFor(g *Game, x, y float32) bool {
+	if !isFinite32(x) || !isFinite32(y) {
+		return false
+	}
+	mini := v.minimapBoundsFor(g)
+	return x >= mini.X && y >= mini.Y && x <= mini.X+mini.W && y <= mini.Y+mini.H
+}
+
+func (v *boardView) minimapCellAt(g *Game, x, y float32) (int, int) {
+	if g == nil || g.Rows <= 0 || g.Cols <= 0 || !isFinite32(x) || !isFinite32(y) {
+		return 0, 0
+	}
+	mini := v.minimapBoundsFor(g)
+	if !isFinite32(mini.W) || !isFinite32(mini.H) || mini.W <= 0 || mini.H <= 0 {
+		return 0, 0
+	}
+	fx := max(float32(0), min(float32(1), (x-mini.X)/mini.W))
+	fy := max(float32(0), min(float32(1), (y-mini.Y)/mini.H))
+	row := min(g.Rows-1, max(0, int(fy*float32(g.Rows))))
+	col := min(g.Cols-1, max(0, int(fx*float32(g.Cols))))
+	return row, col
 }
 
 func containsIndex(list []int, target int) bool {
@@ -120,8 +216,9 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 				if ev.Button > 2 {
 					return false
 				}
-				if ev.Button == 0 && v.minimap(ev.X, ev.Y) {
-					v.center(a.game, int((ev.Y-(v.Height-158))/148*float32(a.game.Rows)), int((ev.X-(v.Width-158))/148*float32(a.game.Cols)))
+				if ev.Button == 0 && v.minimapFor(a.game, ev.X, ev.Y) {
+					row, col := v.minimapCellAt(a.game, ev.X, ev.Y)
+					v.center(a.game, row, col)
 					return true
 				}
 				v.Pressed = true
@@ -138,6 +235,7 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 					v.Dragging = true
 				}
 				if v.Dragging {
+					v.needsCenter = false
 					v.X -= ev.X - v.DragX
 					v.Y -= ev.Y - v.DragY
 					v.DragX, v.DragY = ev.X, ev.Y
@@ -188,11 +286,20 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 			return false
 		}).Draw(func(p *ui.Painter, r ui.Rect) {
 			v.Width, v.Height = r.W, r.H
-			v.clamp(a.game)
+			if v.needsCenter {
+				v.needsCenter = false
+				if a.game != nil && (a.game.Rows != 1000 || a.game.Cols != 1000) {
+					v.centerBoard(a.game)
+				} else {
+					v.clamp(a.game)
+				}
+			} else {
+				v.clamp(a.game)
+			}
 			a.paintDuelBoard(p, r)
 		})
 
-		if a.game.Status == StatusPlaying && a.game.duel.playerStunned() {
+		if a.game.duel != nil && a.game.Status == StatusPlaying && a.game.duel.playerStunned() {
 			d := a.game.duel
 			hint := "暂无法操作棋盘 · 等待硬直结束"
 			if a.bandMode() && a.memberID == MemberTomori {
@@ -316,13 +423,13 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 				y := r.Y + float32(v.HoverRow-4)*v.Cell - v.Y
 				p.Stroke(ui.Rect{X: x, Y: y, W: 9 * v.Cell, H: 9 * v.Cell}, ui.Hex("#E8A849"), 5, 2)
 			}
-			if g.duel.LastAI >= 0 {
+			if g.duel != nil && g.Cols > 0 && g.duel.LastAI >= 0 {
 				row, col := g.duel.LastAI/g.Cols, g.duel.LastAI%g.Cols
 				x := r.X + float32(col)*v.Cell - v.X
 				y := r.Y + float32(row)*v.Cell - v.Y
 				p.Stroke(ui.Rect{X: x, Y: y, W: v.Cell, H: v.Cell}, ui.Hex("#F07AA4"), 4, 2)
 			}
-			if v.EffectCell >= 0 {
+			if v.EffectCell >= 0 && g.Cols > 0 {
 				elapsed := now.Sub(v.LastEffect)
 				if elapsed >= 0 && elapsed < 350*time.Millisecond {
 					row, col := v.EffectCell/g.Cols, v.EffectCell%g.Cols
@@ -345,79 +452,83 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 			p.Fill(ui.Rect{X: r.X + 12, Y: r.Y + 12, W: 166, H: 34}, ui.Hex("#3C301D"), 6)
 			p.Text(r.X+23, r.Y+20, fmt.Sprintf("9×9 扫描：%d 雷", count), 14, ui.Hex("#F5D99C"))
 		}
-		if g.Status == StatusPlaying && g.duel.playerStunned() {
+		if g.duel != nil && g.Status == StatusPlaying && g.duel.playerStunned() {
 			pulse := 0.45 + 0.55*float32(0.5+0.5*math.Sin(float64(now.UnixMilli())/120.0))
 			p.Stroke(ui.Rect{X: r.X + 2, Y: r.Y + 2, W: r.W - 4, H: r.H - 4}, ui.Hex("#FB7185").Alpha(pulse), 8, 4)
 			p.AnimationFrame()
 		}
-		mini := ui.Rect{X: r.X + r.W - 158, Y: r.Y + r.H - 158, W: 148, H: 148}
+		mini := v.minimapBoundsFor(g)
+		mini.X += r.X
+		mini.Y += r.Y
 		p.Fill(mini, ui.Hex("#0B1423").Alpha(0.94), 6)
-	if len(g.duel.Minimap) == minimapGridSize*minimapGridSize {
-		bw := mini.W / float32(minimapGridSize)
-		bh := mini.H / float32(minimapGridSize)
-		fillW := max(1.5, bw)
-		fillH := max(1.5, bh)
-		for br := range minimapGridSize {
-			for bc := range minimapGridSize {
-				blk := g.duel.Minimap[br*minimapGridSize+bc]
-				if blk.Player == 0 && blk.AI == 0 {
-					continue
+		if g.duel != nil && len(g.duel.Minimap) == minimapGridSize*minimapGridSize {
+			rowMap, colMap := minimapAxisSlots(g)
+			bw := mini.W / float32(minimapGridSize)
+			bh := mini.H / float32(minimapGridSize)
+			fillW := max(1.5, bw)
+			fillH := max(1.5, bh)
+			for br := range minimapGridSize {
+				srcRowOff := rowMap[br] * minimapGridSize
+				for bc := range minimapGridSize {
+					blk := g.duel.Minimap[srcRowOff+colMap[bc]]
+					if blk.Player == 0 && blk.AI == 0 {
+						continue
+					}
+					var color ui.Color
+					switch {
+					case blk.Player > 0 && blk.AI > 0:
+						density := min(float32(1), float32(blk.Player+blk.AI)/24)
+						color = ui.Hex("#A78BFA").Alpha(0.65 + 0.35*density)
+					case blk.Player > 0:
+						density := min(float32(1), float32(blk.Player)/20)
+						color = ui.Hex("#55B2D6").Alpha(0.65 + 0.35*density)
+					default:
+						density := min(float32(1), float32(blk.AI)/20)
+						color = ui.Hex("#F07AA4").Alpha(0.65 + 0.35*density)
+					}
+					bx := mini.X + float32(bc)*bw
+					by := mini.Y + float32(br)*bh
+					p.Fill(ui.Rect{X: bx, Y: by, W: min(fillW, mini.X+mini.W-bx), H: min(fillH, mini.Y+mini.H-by)}, color, 0)
 				}
-				var color ui.Color
-				switch {
-				case blk.Player > 0 && blk.AI > 0:
-					density := min(float32(1), float32(blk.Player+blk.AI)/24)
-					color = ui.Hex("#A78BFA").Alpha(0.65 + 0.35*density)
-				case blk.Player > 0:
-					density := min(float32(1), float32(blk.Player)/20)
-					color = ui.Hex("#55B2D6").Alpha(0.65 + 0.35*density)
-				default:
-					density := min(float32(1), float32(blk.AI)/20)
-					color = ui.Hex("#F07AA4").Alpha(0.65 + 0.35*density)
-				}
-				bx := mini.X + float32(bc)*bw
-				by := mini.Y + float32(br)*bh
-				p.Fill(ui.Rect{X: bx, Y: by, W: min(fillW, mini.X+mini.W-bx), H: min(fillH, mini.Y+mini.H-by)}, color, 0)
 			}
 		}
-	}
-	pulsing := g.Status == StatusPlaying
-	pulse := float32(0)
-	if pulsing {
-		ms := float32(p.Now().UnixMilli() % 1200)
-		if ms < 0 {
-			ms += 1200
-		}
-		pulse = ms / 1200.0
-	}
-	hasAI := g.duel.LastAI >= 0 && g.duel.LastAI < len(g.Cells)
-	hasPlayer := g.duel.LastCell >= 0 && g.duel.LastCell < len(g.Cells)
-	var ax, ay float32
-	if hasAI {
-		ax, ay = minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastAI, 5)
+		pulsing := g.Status == StatusPlaying
+		pulse := float32(0)
 		if pulsing {
-			ring := clampMinimapRect(mini, ax-(3+pulse*4.5), ay-(3+pulse*4.5), (3+pulse*4.5)*2)
-			p.Stroke(ring, ui.Hex("#F07AA4").Alpha(1-pulse*0.75), 99, 1.5)
+			ms := float32(p.Now().UnixMilli() % 1200)
+			if ms < 0 {
+				ms += 1200
+			}
+			pulse = ms / 1200.0
 		}
-		p.Fill(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#F07AA4"), 1)
-		p.Stroke(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#FDF2F8"), 1, 1)
-	}
-	if hasPlayer {
-		px, py := minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastCell, 5)
+		hasAI := g.duel != nil && g.duel.LastAI >= 0 && g.duel.LastAI < len(g.Cells)
+		hasPlayer := g.duel != nil && g.duel.LastCell >= 0 && g.duel.LastCell < len(g.Cells)
+		var ax, ay float32
 		if hasAI {
-			px, py = separateMinimapMarker(mini, px, py, ax, ay, 5)
+			ax, ay = minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastAI, 5)
+			if pulsing {
+				ring := clampMinimapRect(mini, ax-(3+pulse*4.5), ay-(3+pulse*4.5), (3+pulse*4.5)*2)
+				p.Stroke(ring, ui.Hex("#F07AA4").Alpha(1-pulse*0.75), 99, 1.5)
+			}
+			p.Fill(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#F07AA4"), 1)
+			p.Stroke(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#FDF2F8"), 1, 1)
 		}
-		if pulsing {
-			ring := clampMinimapRect(mini, px-(3+pulse*3.5), py-(3+pulse*3.5), (3+pulse*3.5)*2)
-			p.Stroke(ring, ui.Hex("#38BDF8").Alpha(1-pulse*0.75), 99, 1.5)
+		if hasPlayer {
+			px, py := minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastCell, 5)
+			if hasAI {
+				px, py = separateMinimapMarker(mini, px, py, ax, ay, 5)
+			}
+			if pulsing {
+				ring := clampMinimapRect(mini, px-(3+pulse*3.5), py-(3+pulse*3.5), (3+pulse*3.5)*2)
+				p.Stroke(ring, ui.Hex("#38BDF8").Alpha(1-pulse*0.75), 99, 1.5)
+			}
+			p.Fill(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#38BDF8"), 99)
+			p.Stroke(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#F4F8FD"), 99, 1)
 		}
-		p.Fill(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#38BDF8"), 99)
-		p.Stroke(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#F4F8FD"), 99, 1)
-	}
-	if pulsing && (hasAI || hasPlayer) {
-		p.AnimationFrame()
-	}
-		view := ui.Rect{X: mini.X + v.X/(float32(g.Cols)*v.Cell)*mini.W, Y: mini.Y + v.Y/(float32(g.Rows)*v.Cell)*mini.H, W: r.W / (float32(g.Cols) * v.Cell) * mini.W, H: r.H / (float32(g.Rows) * v.Cell) * mini.H}
+		if pulsing && (hasAI || hasPlayer) {
+			p.AnimationFrame()
+		}
+		view := minimapViewportRect(mini, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
 		p.Stroke(view, ui.Hex("#F4F8FD"), 2, 1.5)
 		p.Stroke(mini, t.Border, 6, 1)
 		p.Text(r.X+14, r.Y+r.H-32, fmt.Sprintf("(%d, %d) · %.0f%% · 拖动平移 / 滚轮缩放", v.HoverRow, v.HoverCol, v.Cell/42*100), 12, t.TextMuted)
@@ -454,10 +565,50 @@ func (a *minesweeperApp) pruneAndDrawPopups(p *ui.Painter, r ui.Rect, now time.T
 	}
 }
 
+func minimapAxisSlots(g *Game) (rowMap, colMap [minimapGridSize]int) {
+	for i := range minimapGridSize {
+		if g != nil && g.duel != nil && g.Rows > 0 && g.Rows < minimapGridSize {
+			rowMap[i] = g.duel.minimapBlockIndex(g, i*g.Rows/minimapGridSize, 0) / minimapGridSize
+		} else {
+			rowMap[i] = i
+		}
+		if g != nil && g.duel != nil && g.Cols > 0 && g.Cols < minimapGridSize {
+			colMap[i] = g.duel.minimapBlockIndex(g, 0, i*g.Cols/minimapGridSize) % minimapGridSize
+		} else {
+			colMap[i] = i
+		}
+	}
+	return rowMap, colMap
+}
+
+func minimapViewportRect(mini ui.Rect, rows, cols int, viewX, viewY, viewW, viewH, cellSize float32) ui.Rect {
+	if rows <= 0 || cols <= 0 ||
+		!isFinite32(mini.X) || !isFinite32(mini.Y) || !isFinite32(mini.W) || !isFinite32(mini.H) ||
+		mini.W <= 0 || mini.H <= 0 ||
+		!isFinite32(viewX) || !isFinite32(viewY) || !isFinite32(viewW) || !isFinite32(viewH) || !isFinite32(cellSize) ||
+		viewW < 0 || viewH < 0 || cellSize <= 0 {
+		return ui.Rect{}
+	}
+	boardW := float32(cols) * cellSize
+	boardH := float32(rows) * cellSize
+	x1 := max(float32(0), min(float32(1), viewX/boardW))
+	x2 := max(x1, min(float32(1), (viewX+viewW)/boardW))
+	y1 := max(float32(0), min(float32(1), viewY/boardH))
+	y2 := max(y1, min(float32(1), (viewY+viewH)/boardH))
+	w := min(mini.W, (x2-x1)*mini.W)
+	h := min(mini.H, (y2-y1)*mini.H)
+	x := min(mini.X+mini.W-w, mini.X+x1*mini.W)
+	y := min(mini.Y+mini.H-h, mini.Y+y1*mini.H)
+	return ui.Rect{X: x, Y: y, W: w, H: h}
+}
+
 func minimapMarkerPos(mini ui.Rect, rows, cols, cellIdx int, margin float32) (float32, float32) {
+	if rows <= 0 || cols <= 0 {
+		return mini.X + mini.W/2, mini.Y + mini.H/2
+	}
 	row, col := cellIdx/cols, cellIdx%cols
-	x := mini.X + (float32(col)+0.5)/float32(max(1, cols))*mini.W
-	y := mini.Y + (float32(row)+0.5)/float32(max(1, rows))*mini.H
+	x := mini.X + (float32(col)+0.5)/float32(cols)*mini.W
+	y := mini.Y + (float32(row)+0.5)/float32(rows)*mini.H
 	x = max(mini.X+margin, min(mini.X+mini.W-margin, x))
 	y = max(mini.Y+margin, min(mini.Y+mini.H-margin, y))
 	return x, y
