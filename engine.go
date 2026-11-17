@@ -94,6 +94,21 @@ var Difficulties = []Difficulty{
 	},
 }
 
+// TrackKageiromai is the 30x30 classic track of the seven-track ladder (spec
+// #1): ~65% no-skill clear rate per the win-rate simulation. Defined here but
+// deliberately absent from Difficulties until its setlist ticket lands.
+var TrackKageiromai = Difficulty{
+	ID:           "kageiromai",
+	Label:        "影色舞",
+	Song:         "影色舞",
+	Subtitle:     "30×30 · 150雷",
+	Gameplay:     GameplayClassic,
+	Rows:         30,
+	Cols:         30,
+	Mines:        150,
+	SkillCharges: 3,
+}
+
 type GameStatus int
 
 const (
