@@ -464,6 +464,16 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 						}
 					}
 					if !detail {
+						// Too small for a knot: a dot of its ink still tells a
+						// mine (and a hit one) from opened ground.
+						if cell.IsMine {
+							ink := pal.Graphite
+							if cell.Exploded {
+								ink = pal.BoomInk
+							}
+							s := tile.W * 0.5
+							p.Fill(ui.Rect{X: tile.X + (tile.W-s)/2, Y: tile.Y + (tile.H-s)/2, W: s, H: s}, ink, s/2)
+						}
 						continue
 					}
 					switch {
@@ -594,7 +604,11 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 		view := minimapViewportRect(mini, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
 		p.Stroke(view, ui.Hex("#F4F8FD"), 2, 1.5)
 		p.Stroke(mini, t.Border, 6, 1)
-		p.Text(r.X+14, r.Y+r.H-32, fmt.Sprintf("(%d, %d) · %.0f%% · 拖动平移 / 滚轮缩放", v.HoverRow, v.HoverCol, v.Cell/42*100), 12, t.TextMuted)
+		// The caption sits on a scrap of the sheet so it reads over slips.
+		caption := ui.Span{Text: fmt.Sprintf("(%d, %d) · %.0f%% · 拖动平移 / 滚轮缩放", v.HoverRow, v.HoverCol, v.Cell/42*100), Size: 12, Color: t.TextMuted}
+		cw, ch := p.MeasureText(0, caption)
+		p.Fill(ui.Rect{X: r.X + 8, Y: r.Y + r.H - 36, W: cw + 12, H: ch + 8}, pal.Sheet.Alpha(0.92), 6)
+		p.RichText(r.X+14, r.Y+r.H-32, 0, caption)
 	})
 }
 
@@ -656,17 +670,21 @@ func propRect(tile ui.Rect) ui.Rect {
 }
 
 // paintSlip paints a paper slip stuck on the page, with an optional
-// outline and prop on it. Without detail it lies flat and bare. Unlike
-// the classic grid's few hundred widgets, the canvas repaints thousands
-// of slips a frame, so they are not tilted: at canvas sizes the tilt is
-// under a pixel, and turned shadows cost far more to draw.
+// outline and prop on it. Without detail it lies flat, keeping only a
+// thin outline. Unlike the classic grid's few hundred widgets, the canvas
+// repaints thousands of slips a frame, so they are not tilted: at canvas
+// sizes the tilt is under a pixel, and turned shadows cost far more.
 func paintSlip(p *ui.Painter, tile ui.Rect, radius float32, bg, shade, outline ui.Color, prop *ui.SVG, detail bool) {
 	if detail {
 		p.Shadow(tile, radius, 0, 1, 1.5, 0, shade)
 	}
 	p.Fill(tile, bg, radius)
-	if outline.A > 0 && tile.W >= 13 {
-		p.Stroke(tile, outline, radius, 1.5)
+	if outline.A > 0 {
+		width := float32(1.5)
+		if !detail {
+			width = 1
+		}
+		p.Stroke(tile, outline, radius, width)
 	}
 	if detail && prop != nil {
 		p.Image(prop, propRect(tile), ui.Contain)

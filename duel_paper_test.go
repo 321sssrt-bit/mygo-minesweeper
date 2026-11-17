@@ -52,6 +52,15 @@ func TestDuelCanvasPaintsPaperDayAndNight(t *testing.T) {
 				"player": duelCellPaper(pal, DuelPlayer),
 				"ai":     duelCellPaper(pal, DuelAI),
 			}
+			v := app.board
+			// Sample only cells in open view: not under the minimap or the
+			// caption along the bottom edge.
+			center := func(row, col int) (float32, float32, bool) {
+				x := (float32(col)+0.5)*v.Cell - v.X
+				y := (float32(row)+0.5)*v.Cell - v.Y
+				open := x > 0 && y > 0 && x < board.W && y < board.H-48 && !v.minimapFor(g, x, y)
+				return board.X + x, board.Y + y, open
+			}
 			found := map[string][2]int{}
 			for row := duelStageRow - 6; row <= duelStageRow+6; row++ {
 				for col := duelStageCol - 8; col <= duelStageCol+12; col++ {
@@ -65,24 +74,69 @@ func TestDuelCanvasPaintsPaperDayAndNight(t *testing.T) {
 					case c.Revealed && !c.IsMine && c.Adjacent == 0 && c.Owner == DuelAI:
 						kind = "ai"
 					}
-					if _, seen := found[kind]; kind != "" && !seen && g.duel.LastAI != row*g.Cols+col {
+					_, _, open := center(row, col)
+					if _, seen := found[kind]; kind != "" && !seen && open && g.duel.LastAI != row*g.Cols+col {
 						found[kind] = [2]int{row, col}
 					}
 				}
 			}
 			img := tt.Image()
-			v := app.board
 			for kind, color := range want {
 				at, ok := found[kind]
 				if !ok {
-					t.Fatalf("staged duel has no %s cell near the stage", kind)
+					t.Fatalf("staged duel has no %s cell in open view", kind)
 				}
-				x := board.X + (float32(at[1])+0.5)*v.Cell - v.X
-				y := board.Y + (float32(at[0])+0.5)*v.Cell - v.Y
+				x, y, _ := center(at[0], at[1])
 				got := img.RGBAAt(int(x), int(y))
 				if !near(got.R, color.R) || !near(got.G, color.G) || !near(got.B, color.B) {
 					t.Errorf("%s cell (%d,%d) painted #%02X%02X%02X, want %s", kind, at[0], at[1], got.R, got.G, got.B, hexOf(color))
 				}
+			}
+		})
+	}
+}
+
+// Zoomed out past drawing knots, a mine that went off still shows as a dot
+// of the hit knot's ink, apart from the territory wash around it.
+func TestDuelHitMineReadsZoomedOut(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app := stageDuelScene(dark)
+			g := app.game
+			g.duel.NextAI = 1e9
+			var hit *Cell
+			for row := duelStageRow - 6; row <= duelStageRow+6 && hit == nil; row++ {
+				for col := duelStageCol + 4; col <= duelStageCol+12; col++ {
+					if c := g.Cell(row, col); c.IsMine && !c.Revealed && !c.Flagged {
+						hit = c
+						break
+					}
+				}
+			}
+			if hit == nil {
+				t.Fatal("no hidden mine near the stage")
+			}
+			g.revealDuel(hit.Row, hit.Col, DuelAI)
+			if !hit.Exploded {
+				t.Fatal("staged AI step did not set the mine off")
+			}
+			tt := ui.NewTester(app.view, 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+			app.board.Cell = 10
+			app.board.center(g, hit.Row, hit.Col)
+			tt.Frame()
+			board, ok := tt.Find("百万格决斗战场")
+			if !ok {
+				t.Fatal("duel board not found")
+			}
+			v := app.board
+			x := board.X + (float32(hit.Col)+0.5)*v.Cell - v.X
+			y := board.Y + (float32(hit.Row)+0.5)*v.Cell - v.Y
+			got := tt.Image().RGBAAt(int(x*2), int(y*2))
+			want := paperFor(dark).BoomInk
+			if !near(got.R, want.R) || !near(got.G, want.G) || !near(got.B, want.B) {
+				t.Errorf("hit mine at cell size 10 painted #%02X%02X%02X, want its ink %s", got.R, got.G, got.B, hexOf(want))
 			}
 		})
 	}
