@@ -272,3 +272,145 @@ func TestDuelMinimapLiveMarkersAndReset(t *testing.T) {
 	}
 }
 
+func TestDuelFixtureBoundsRespectsConfiguredMines(t *testing.T) {
+	g := NewGame(Difficulty{ID: "duel", Rows: 6, Cols: 6, Mines: 4}, true, MemberAnon, 42)
+	if g.Rows != 6 || g.Cols != 6 || g.Mines != 4 {
+		t.Fatalf("expected 6x6 with 4 mines, got %dx%d mines=%d", g.Rows, g.Cols, g.Mines)
+	}
+	res := g.Reveal(3, 3)
+	if res.Kind != ActionRevealed {
+		t.Fatalf("expected ActionRevealed, got %+v", res)
+	}
+	mines := 0
+	for i := range g.Cells {
+		if g.Cells[i].IsMine {
+			mines++
+		}
+	}
+	if mines != 4 {
+		t.Fatalf("expected 4 placed mines, got %d", mines)
+	}
+}
+
+func TestDuelChordCountsExplodedAndDeduplicatesSoyorinShield(t *testing.T) {
+	// Case A: Exploded unflagged mine counts once toward Chord.
+	g := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	g.Cell(0, 0).IsMine = true
+	g.RecomputeAdjacency()
+	for i := range g.Cells {
+		c := &g.Cells[i]
+		if c.Row == 0 && c.Col == 0 {
+			c.Exploded = true
+			c.Revealed = true
+			continue
+		}
+		if c.Row == 0 && c.Col == 1 {
+			continue
+		}
+		c.Revealed = true
+		c.Owner = DuelPlayer
+		g.RevealedSafe++
+	}
+	res := g.Chord(1, 1)
+	if res.Kind != ActionRevealed && res.Kind != ActionWon {
+		t.Fatalf("expected chord around exploded mine to reveal safe cell, got %+v", res)
+	}
+	if !g.Cell(0, 1).Revealed {
+		t.Fatal("expected (0,1) to be revealed by chord")
+	}
+
+	// Case B: Soyorin shield sets both Exploded and Flagged; must count once, not twice.
+	g2 := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 2, SkillCharges: 1}, true, MemberSoyorin, 42)
+	g2.FirstClick = true
+	g2.Status = StatusPlaying
+	g2.Cell(0, 0).IsMine = true
+	g2.Cell(0, 2).IsMine = true
+	g2.RecomputeAdjacency()
+	for i := range g2.Cells {
+		c := &g2.Cells[i]
+		if (c.Row == 0 && c.Col == 0) || (c.Row == 0 && c.Col == 1) || (c.Row == 0 && c.Col == 2) {
+			continue
+		}
+		c.Revealed = true
+		c.Owner = DuelPlayer
+		g2.RevealedSafe++
+	}
+	if sr := g2.Reveal(0, 0); sr.Kind != ActionShielded {
+		t.Fatalf("expected Soyorin shield, got %+v", sr)
+	}
+	// Only 1 known mine around (1,1) which has Adjacent=2 -> must Noop, not double-count!
+	if nr := g2.Chord(1, 1); nr.Kind != ActionNoop {
+		t.Fatalf("Soyorin shield double-counted in chord: %+v", nr)
+	}
+	// Flagging the second mine satisfies Adjacent=2 -> reveals (0,1).
+	g2.ToggleFlag(0, 2, false)
+	if wr := g2.Chord(1, 1); wr.Kind != ActionRevealed && wr.Kind != ActionWon {
+		t.Fatalf("expected chord to succeed after flagging second mine, got %+v", wr)
+	}
+	if !g2.Cell(0, 1).Revealed {
+		t.Fatal("expected (0,1) revealed after second mine flagged")
+	}
+
+	// Stunned chord must Noop.
+	g3 := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	g3.FirstClick = true
+	g3.Status = StatusPlaying
+	g3.Cell(0, 0).IsMine = true
+	g3.RecomputeAdjacency()
+	g3.Cell(1, 1).Revealed = true
+	g3.Cell(0, 0).Flagged = true
+	g3.duel.StunnedUntil = 2.4
+	if sr := g3.Chord(1, 1); sr.Kind != ActionNoop {
+		t.Fatalf("expected stunned chord Noop, got %+v", sr)
+	}
+}
+
+func TestDuelClaimMinesAndWrongFlagPenalty(t *testing.T) {
+	// Valid claim awards +75/mine.
+	g := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	g.Cell(0, 0).IsMine = true
+	g.RecomputeAdjacency()
+	for i := range g.Cells {
+		c := &g.Cells[i]
+		if c.Row == 0 && c.Col == 0 {
+			continue
+		}
+		c.Revealed = true
+		c.Owner = DuelPlayer
+		g.RevealedSafe++
+	}
+	res := g.ClaimDuelMines(1, 1)
+	if res.Kind != ActionFlagged || res.RevealedCount != 1 || g.duel.PlayerScore != 75 {
+		t.Fatalf("expected +75 claim, got %+v score=%d", res, g.duel.PlayerScore)
+	}
+
+	// Wrong-flag scenario where public condition matches: must reveal non-mine cell instead of Noop.
+	g2 := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 2}, true, MemberAnon, 42)
+	g2.FirstClick = true
+	g2.Status = StatusPlaying
+	g2.Cell(4, 4).IsMine = true
+	g2.Cell(4, 3).IsMine = true
+	g2.RecomputeAdjacency()
+	for i := range g2.Cells {
+		c := &g2.Cells[i]
+		if (c.Row == 0 && c.Col == 0) || (c.Row == 0 && c.Col == 1) || c.IsMine {
+			continue
+		}
+		c.Revealed = true
+		c.Owner = DuelPlayer
+		g2.RevealedSafe++
+	}
+	// Place wrong flag at (0,0) and set (1,1).Adjacent = 2 so unknown(1) == 2 - flagged(1).
+	g2.ToggleFlag(0, 0, false)
+	g2.Cell(1, 1).Adjacent = 2
+	beforeScore := g2.duel.PlayerScore
+	claimRes := g2.ClaimDuelMines(1, 1)
+	if claimRes.Kind == ActionNoop || !g2.Cell(0, 1).Revealed || g2.duel.PlayerScore != beforeScore+1 {
+		t.Fatalf("expected non-mine (0,1) revealed instead of risk-free noop, got %+v revealed=%v score=%d", claimRes, g2.Cell(0, 1).Revealed, g2.duel.PlayerScore)
+	}
+}
+

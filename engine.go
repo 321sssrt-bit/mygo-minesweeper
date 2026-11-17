@@ -183,7 +183,6 @@ func NewGame(diff Difficulty, bandMode bool, memberID MemberID, seed ...uint64) 
 	}
 	if diff.ID == "duel" {
 		g.duel = newDuel(g)
-		g.Mines = 180000
 	}
 	return g
 }
@@ -402,6 +401,9 @@ func (g *Game) Chord(row, col int) ActionResult {
 	if g.Status != StatusPlaying {
 		return ActionResult{Kind: ActionNoop}
 	}
+	if g.duel != nil && g.duel.playerStunned() {
+		return ActionResult{Kind: ActionNoop}
+	}
 	center := g.Cell(row, col)
 	if center == nil || !center.Revealed || center.Adjacent <= 0 {
 		return ActionResult{Kind: ActionNoop}
@@ -410,7 +412,7 @@ func (g *Game) Chord(row, col int) ActionResult {
 	neighbors := g.Neighbors(row, col)
 	flagged := 0
 	for _, n := range neighbors {
-		if n.Flagged {
+		if n.Flagged || (g.duel != nil && n.Exploded) {
 			flagged++
 		}
 	}

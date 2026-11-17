@@ -253,21 +253,47 @@ func (g *Game) ClaimDuelMines(row, col int) ActionResult {
 	if center == nil || !center.Revealed || center.Adjacent <= 0 {
 		return ActionResult{Kind: ActionNoop}
 	}
-	unknown := 0
+	var targets []*Cell
 	flagged := 0
 	for _, n := range g.Neighbors(row, col) {
 		if !n.Revealed && !n.Flagged {
-			unknown++
+			targets = append(targets, n)
 		}
 		if n.Flagged || n.Exploded {
 			flagged++
 		}
 	}
-	if unknown == 0 || unknown != center.Adjacent-flagged {
+	if len(targets) == 0 || len(targets) != center.Adjacent-flagged {
 		return ActionResult{Kind: ActionNoop}
 	}
+	var nonMines []*Cell
+	for _, n := range targets {
+		if !n.IsMine {
+			nonMines = append(nonMines, n)
+		}
+	}
+	if len(nonMines) > 0 {
+		totalRevealed := 0
+		var lastRes ActionResult
+		for _, n := range nonMines {
+			if n.Revealed || n.Flagged {
+				continue
+			}
+			res := g.revealDuel(n.Row, n.Col, DuelPlayer)
+			totalRevealed += res.RevealedCount
+			lastRes = res
+			if res.Kind == ActionWon || res.Kind == ActionLost || res.Kind == ActionShielded {
+				lastRes.RevealedCount = totalRevealed
+				return lastRes
+			}
+		}
+		if totalRevealed > 0 {
+			return ActionResult{Kind: ActionRevealed, RevealedCount: totalRevealed}
+		}
+		return lastRes
+	}
 	claimed := 0
-	for _, n := range g.Neighbors(row, col) {
+	for _, n := range targets {
 		if n.IsMine && !n.Revealed && !n.Flagged && n.Owner != DuelAI {
 			n.Flagged = true
 			n.FlagOwner = DuelPlayer
