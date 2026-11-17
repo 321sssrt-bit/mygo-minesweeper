@@ -11,6 +11,9 @@ Built with [`egoist/mygo`](https://github.com/egoist/mygo) · Direct3D 11 / Meta
 
 </div>
 
+> [!NOTE]
+> **声明**：本项目的初衷是为了测试gemini的玩梗能力，不代表本人的立场，如有冒犯，我先磕头
+
 ---
 
 ## 实机画面 · Live Showcase
