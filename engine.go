@@ -127,6 +127,36 @@ var TrackSenzaihyoumei = Difficulty{
 	AIInterval:   1.0,
 }
 
+// TrackUtakotoba is the 50x50 classic track of the seven-track ladder (spec
+// #1): ~50% no-skill clear rate per the win-rate simulation. Defined here but
+// deliberately absent from Difficulties until its setlist ticket lands.
+var TrackUtakotoba = Difficulty{
+	ID:           "utakotoba",
+	Label:        "一辈子契约",
+	Song:         "诗超绊",
+	Subtitle:     "50×50 · 425雷",
+	Gameplay:     GameplayClassic,
+	Rows:         50,
+	Cols:         50,
+	Mines:        425,
+	SkillCharges: 4,
+}
+
+// TrackMayoiuta is the 100x100 classic track of the seven-track ladder (spec
+// #1): ~32% no-skill clear rate per the win-rate simulation. Defined here but
+// deliberately absent from Difficulties until its setlist ticket lands.
+var TrackMayoiuta = Difficulty{
+	ID:           "mayoiuta",
+	Label:        "迷路日々",
+	Song:         "迷路日々",
+	Subtitle:     "100×100 · 1660雷",
+	Gameplay:     GameplayClassic,
+	Rows:         100,
+	Cols:         100,
+	Mines:        1660,
+	SkillCharges: 5,
+}
+
 type GameStatus int
 
 const (
@@ -221,7 +251,7 @@ type Game struct {
 }
 
 func NewGame(diff Difficulty, bandMode bool, memberID MemberID, seed ...uint64) *Game {
-	limitRows, limitCols := 30, 40
+	limitRows, limitCols := 100, 100
 	if diff.Gameplay == GameplayDuel {
 		limitRows, limitCols = 1000, 1000
 	}
