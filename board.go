@@ -386,11 +386,15 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 		// The canvas is graph paper, as under the classic grid.
 		p.Fill(r, pal.Board, 8)
 		p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
-			firstCol, lastCol := int(v.X/v.Cell), min(g.Cols, int((v.X+r.W)/v.Cell)+2)
-			firstRow, lastRow := int(v.Y/v.Cell), min(g.Rows, int((v.Y+r.H)/v.Cell)+2)
-			// Ruled lines run along the cell edges, only as far as the board.
-			top, bottom := max(r.Y, r.Y-v.Y), min(r.Y+r.H, r.Y+float32(g.Rows)*v.Cell-v.Y)
-			left, right := max(r.X, r.X-v.X), min(r.X+r.W, r.X+float32(g.Cols)*v.Cell-v.X)
+			// One cell of margin before the view too: a shake (at most a
+			// cell) must not bare the page along the top or left edge.
+			firstCol, lastCol := int(v.X/v.Cell)-1, min(g.Cols, int((v.X+r.W)/v.Cell)+2)
+			firstRow, lastRow := int(v.Y/v.Cell)-1, min(g.Rows, int((v.Y+r.H)/v.Cell)+2)
+			// Ruled lines run along the cell edges, only as far as the board,
+			// and past the view by the shake so its edges keep their lines.
+			sx, sy := abs32(shakeX), abs32(shakeY)
+			top, bottom := max(r.Y-sy, r.Y-v.Y), min(r.Y+r.H+sy, r.Y+float32(g.Rows)*v.Cell-v.Y)
+			left, right := max(r.X-sx, r.X-v.X), min(r.X+r.W+sx, r.X+float32(g.Cols)*v.Cell-v.X)
 			for col := max(0, firstCol); col <= lastCol; col++ {
 				x := r.X + float32(col)*v.Cell - v.X
 				p.Line(x, top, x, bottom, 1, pal.Grid)
