@@ -670,10 +670,10 @@ func propRect(tile ui.Rect) ui.Rect {
 }
 
 // paintSlip paints a paper slip stuck on the page, with an optional
-// outline and prop on it. Without detail it lies flat, keeping only a
-// thin outline. Unlike the classic grid's few hundred widgets, the canvas
-// repaints thousands of slips a frame, so they are not tilted: at canvas
-// sizes the tilt is under a pixel, and turned shadows cost far more.
+// outline and prop on it; without detail, only a thinner outline. Unlike
+// the classic grid's slips these stay square: the canvas repaints
+// thousands a frame, the tilt is under a pixel at canvas sizes, and
+// turned shadows cost far more to draw.
 func paintSlip(p *ui.Painter, tile ui.Rect, radius float32, bg, shade, outline ui.Color, prop *ui.SVG, detail bool) {
 	if detail {
 		p.Shadow(tile, radius, 0, 1, 1.5, 0, shade)
