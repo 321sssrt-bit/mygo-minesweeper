@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -103,6 +104,9 @@ func TestAppIconSourceIsOriginalVectorArt(t *testing.T) {
 		"foreignObject": true, "style": true, "script": true, "a": true,
 	}
 	paints := map[string]bool{"fill": true, "stroke": true, "stop-color": true, "flood-color": true, "lighting-color": true, "color": true}
+	// fill and stroke may also be none or a gradient by id, with no fallback;
+	// the other paint attributes take a colour only.
+	paintRef := regexp.MustCompile(`^url\(#[A-Za-z_][\w.-]*\)$`)
 	filled := map[string]bool{"path": true, "rect": true, "circle": true, "ellipse": true, "polygon": true, "polyline": true}
 	mentionsBand := func(s string) bool { return strings.Contains(strings.ToLower(s), "mygo") }
 
@@ -123,27 +127,42 @@ func TestAppIconSourceIsOriginalVectorArt(t *testing.T) {
 		case xml.StartElement:
 			name := tok.Name.Local
 			sc := stack[len(stack)-1]
-			sc.clip = sc.clip || name == "clipPath"
+			switch name {
+			case "clipPath":
+				sc.clip = true
+			case "marker", "mask":
+				sc.clip = false // drawn, even from inside a clip path
+			}
 			if notShapes[name] {
 				t.Errorf("%s has <%s>: the icon is drawn shapes only", iconSource, name)
 			}
 			stopColor := false
 			for _, a := range tok.Attr {
 				k, v := a.Name.Local, strings.TrimSpace(a.Value)
+				if mentionsBand(v) {
+					t.Errorf("%s <%s %s=%q> names the band", iconSource, name, k, v)
+				}
+				if k == "href" {
+					t.Errorf("%s <%s %s>: the icon links to nothing", iconSource, name, k)
+				}
+				if a.Name.Space != "" {
+					continue // the rasterizer ignores other namespaced attributes
+				}
 				switch {
-				case k == "href" || k == "style":
-					t.Errorf("%s <%s %s>: no links, and colours only as attributes", iconSource, name, k)
+				case k == "style":
+					t.Errorf("%s <%s style>: write colours as attributes", iconSource, name)
 				case paints[k]:
 					if k == "fill" {
 						sc.fill = true
 					}
 					stopColor = stopColor || k == "stop-color"
-					if v != "none" && !strings.HasPrefix(v, "url(#") && !allowed[strings.ToUpper(v)] {
+					ok := allowed[strings.ToUpper(v)]
+					if k == "fill" || k == "stroke" {
+						ok = ok || v == "none" || paintRef.MatchString(v)
+					}
+					if !ok {
 						t.Errorf("%s <%s %s=%q>: not a day palette colour", iconSource, name, k, v)
 					}
-				}
-				if mentionsBand(v) {
-					t.Errorf("%s <%s %s=%q> names the band", iconSource, name, k, v)
 				}
 			}
 			if filled[name] && !sc.fill && !sc.clip {
