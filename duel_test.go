@@ -317,12 +317,12 @@ func TestNewGameBuildsByGameplayNotTrackID(t *testing.T) {
 	if duel.Rows != 50 || duel.Cols != 50 {
 		t.Fatalf("duel gameplay keeps the million-cell clamp: %dx%d", duel.Rows, duel.Cols)
 	}
-	classic := NewGame(Difficulty{ID: "duel", Rows: 50, Cols: 50, Mines: 2}, true, MemberAnon, 42)
+	classic := NewGame(Difficulty{ID: "duel", Rows: 120, Cols: 120, Mines: 2}, true, MemberAnon, 42)
 	if classic.duel != nil {
 		t.Fatal("track ID alone must not trigger duel rules")
 	}
-	if classic.Rows != 30 || classic.Cols != 40 {
-		t.Fatalf("classic gameplay keeps the 30x40 clamp: %dx%d", classic.Rows, classic.Cols)
+	if classic.Rows != 100 || classic.Cols != 100 {
+		t.Fatalf("classic gameplay keeps the 100x100 clamp: %dx%d", classic.Rows, classic.Cols)
 	}
 }
 
