@@ -287,7 +287,7 @@ func TestDuelMinimapLiveMarkersAndReset(t *testing.T) {
 }
 
 func TestDuelFixtureBoundsRespectsConfiguredMines(t *testing.T) {
-	g := NewGame(Difficulty{ID: "duel", Rows: 6, Cols: 6, Mines: 4}, true, MemberAnon, 42)
+	g := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 6, Cols: 6, Mines: 4}, true, MemberAnon, 42)
 	if g.Rows != 6 || g.Cols != 6 || g.Mines != 4 {
 		t.Fatalf("expected 6x6 with 4 mines, got %dx%d mines=%d", g.Rows, g.Cols, g.Mines)
 	}
@@ -306,9 +306,26 @@ func TestDuelFixtureBoundsRespectsConfiguredMines(t *testing.T) {
 	}
 }
 
+func TestNewGameBuildsByGameplayNotTrackID(t *testing.T) {
+	duel := NewGame(Difficulty{ID: "encore", Gameplay: GameplayDuel, Rows: 50, Cols: 50, Mines: 2}, true, MemberAnon, 42)
+	if duel.duel == nil {
+		t.Fatal("gameplay duel must build duel rules regardless of track ID")
+	}
+	if duel.Rows != 50 || duel.Cols != 50 {
+		t.Fatalf("duel gameplay keeps the million-cell clamp: %dx%d", duel.Rows, duel.Cols)
+	}
+	classic := NewGame(Difficulty{ID: "duel", Rows: 50, Cols: 50, Mines: 2}, true, MemberAnon, 42)
+	if classic.duel != nil {
+		t.Fatal("track ID alone must not trigger duel rules")
+	}
+	if classic.Rows != 30 || classic.Cols != 40 {
+		t.Fatalf("classic gameplay keeps the 30x40 clamp: %dx%d", classic.Rows, classic.Cols)
+	}
+}
+
 func TestDuelChordCountsExplodedAndDeduplicatesSoyorinShield(t *testing.T) {
 	// Case A: Exploded unflagged mine counts once toward Chord.
-	g := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	g := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
 	g.FirstClick = true
 	g.Status = StatusPlaying
 	g.Cell(0, 0).IsMine = true
@@ -336,7 +353,7 @@ func TestDuelChordCountsExplodedAndDeduplicatesSoyorinShield(t *testing.T) {
 	}
 
 	// Case B: Soyorin shield sets both Exploded and Flagged; must count once, not twice.
-	g2 := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 2, SkillCharges: 1}, true, MemberSoyorin, 42)
+	g2 := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 2, SkillCharges: 1}, true, MemberSoyorin, 42)
 	g2.FirstClick = true
 	g2.Status = StatusPlaying
 	g2.Cell(0, 0).IsMine = true
@@ -368,7 +385,7 @@ func TestDuelChordCountsExplodedAndDeduplicatesSoyorinShield(t *testing.T) {
 	}
 
 	// Stunned chord must Noop.
-	g3 := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	g3 := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
 	g3.FirstClick = true
 	g3.Status = StatusPlaying
 	g3.Cell(0, 0).IsMine = true
@@ -383,7 +400,7 @@ func TestDuelChordCountsExplodedAndDeduplicatesSoyorinShield(t *testing.T) {
 
 func TestDuelClaimMinesAndWrongFlagPenalty(t *testing.T) {
 	// Valid claim awards +75/mine.
-	g := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	g := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
 	g.FirstClick = true
 	g.Status = StatusPlaying
 	g.Cell(0, 0).IsMine = true
@@ -403,7 +420,7 @@ func TestDuelClaimMinesAndWrongFlagPenalty(t *testing.T) {
 	}
 
 	// Wrong-flag scenario where public condition matches: must reveal non-mine cell instead of Noop.
-	g2 := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 2}, true, MemberAnon, 42)
+	g2 := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 2}, true, MemberAnon, 42)
 	g2.FirstClick = true
 	g2.Status = StatusPlaying
 	g2.Cell(4, 4).IsMine = true
@@ -430,7 +447,7 @@ func TestDuelClaimMinesAndWrongFlagPenalty(t *testing.T) {
 
 func TestDuelHoverHintsPriorityPublicOnlyAndStun(t *testing.T) {
 	// Strictly public-state check: non-mine cell looks claimable from public numbers alone.
-	g := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	g := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
 	g.FirstClick = true
 	g.Status = StatusPlaying
 	g.Cell(4, 4).IsMine = true
@@ -451,7 +468,7 @@ func TestDuelHoverHintsPriorityPublicOnlyAndStun(t *testing.T) {
 	}
 
 	// Exploded neighbor counts toward Chordable hint, and stun suppresses hover hints.
-	g2 := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	g2 := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
 	g2.FirstClick = true
 	g2.Status = StatusPlaying
 	g2.Cell(0, 0).IsMine = true
@@ -471,7 +488,7 @@ func TestDuelHoverHintsPriorityPublicOnlyAndStun(t *testing.T) {
 	// Headless UI Duel canvas hover + flagMode toggle + claim click consistency.
 	app := newMinesweeperApp(42)
 	app.diffIdx = 4
-	app.game = NewGame(Difficulty{ID: "duel", Rows: 6, Cols: 6, Mines: 1}, true, MemberAnon, 42)
+	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 6, Cols: 6, Mines: 1}, true, MemberAnon, 42)
 	app.game.FirstClick = true
 	app.game.Status = StatusPlaying
 	app.game.Cell(0, 0).IsMine = true
@@ -513,7 +530,7 @@ func TestDuelHoverHintsPriorityPublicOnlyAndStun(t *testing.T) {
 func TestDuelHoverSyncsAfterZoomAndDrag(t *testing.T) {
 	app := newMinesweeperApp(42)
 	app.diffIdx = 4
-	app.game = NewGame(Difficulty{ID: "duel", Rows: 60, Cols: 60, Mines: 2}, true, MemberAnon, 42)
+	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 60, Cols: 60, Mines: 2}, true, MemberAnon, 42)
 	app.game.FirstClick = true
 	app.game.Status = StatusPlaying
 	app.game.Cell(20, 20).IsMine = true
@@ -600,7 +617,7 @@ func TestDuelHoverSyncsAfterZoomAndDrag(t *testing.T) {
 func TestDuelFloatingScorePopupsAndRippleLifecycle(t *testing.T) {
 	app := newMinesweeperApp(42)
 	app.diffIdx = 4
-	app.game = NewGame(Difficulty{ID: "duel", Rows: 12, Cols: 12, Mines: 1}, true, MemberAnon, 42)
+	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 12, Cols: 12, Mines: 1}, true, MemberAnon, 42)
 	app.game.Cell(11, 11).IsMine = true
 	app.game.FirstClick = true
 	app.game.Status = StatusPlaying
@@ -635,7 +652,7 @@ func TestDuelFloatingScorePopupsAndRippleLifecycle(t *testing.T) {
 	}
 
 	// Claimable mine popup (+75 收雷!) + bounded cap test.
-	gClaim := NewGame(Difficulty{ID: "duel", Rows: 6, Cols: 6, Mines: 1}, true, MemberAnon, 42)
+	gClaim := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 6, Cols: 6, Mines: 1}, true, MemberAnon, 42)
 	gClaim.FirstClick = true
 	gClaim.Status = StatusPlaying
 	gClaim.Cell(0, 0).IsMine = true
@@ -679,7 +696,7 @@ func TestDuelShakeBoundsAndStunWarningHUD(t *testing.T) {
 	app := newMinesweeperApp(42)
 	app.diffIdx = 4
 	app.memberID = MemberTomori
-	app.game = NewGame(Difficulty{ID: "duel", Rows: 8, Cols: 8, Mines: 2, SkillCharges: 1}, true, MemberTomori, 42)
+	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 8, Cols: 8, Mines: 2, SkillCharges: 1}, true, MemberTomori, 42)
 	app.game.FirstClick = true
 	app.game.Status = StatusPlaying
 	app.game.Cell(3, 3).IsMine = true
@@ -800,7 +817,7 @@ func TestDuelRecenterUsesBoardCenter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newMinesweeperApp(42)
 			app.diffIdx = 4
-			app.game = NewGame(Difficulty{ID: "duel", Rows: tc.rows, Cols: tc.cols, Mines: 10}, true, MemberAnon, 42)
+			app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: tc.rows, Cols: tc.cols, Mines: 10}, true, MemberAnon, 42)
 			tt := ui.NewTester(app.view, 1280, 900)
 			tt.Frame()
 
@@ -836,7 +853,7 @@ func TestDuelRecenterUsesBoardCenter(t *testing.T) {
 	// Small board fully inside viewport clamps cleanly to (0,0) without panic or negative offsets.
 	app := newMinesweeperApp(42)
 	app.diffIdx = 4
-	app.game = NewGame(Difficulty{ID: "duel", Rows: 12, Cols: 12, Mines: 1}, true, MemberAnon, 42)
+	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 12, Cols: 12, Mines: 1}, true, MemberAnon, 42)
 	tt := ui.NewTester(app.view, 1280, 900)
 	tt.Frame()
 	tt.Key(ui.Ctrl, ui.Key0)

@@ -361,7 +361,7 @@ func TestQADuelSkillAndIdleFlagEdges(t *testing.T) {
 }
 
 func TestQADuelMineAndClaimKnownMines(t *testing.T) {
-	g := NewGame(Difficulty{ID: "duel", Rows: 5, Cols: 5, Mines: 2}, true, MemberAnon, 42)
+	g := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 2}, true, MemberAnon, 42)
 	g.FirstClick = true
 	g.Status = StatusPlaying
 	g.Cell(0, 0).Revealed = true
