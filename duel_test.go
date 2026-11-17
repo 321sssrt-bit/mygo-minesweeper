@@ -1336,4 +1336,27 @@ func TestDuelHaruhikageSceneNeedsMarkerAndScoreLoss(t *testing.T) {
 	if !slices.Contains(g.duel.NewMemes, MemeHaruhikage) || g.duel.QuoteEvent != "haruhikageLost" {
 		t.Fatalf("cleared board score loss should still unlock the scene, got memes=%v event=%q", g.duel.NewMemes, g.duel.QuoteEvent)
 	}
+
+	// Flag scoring runs before the outcome check: an AI mine flag flips a
+	// draw into a scene-triggering loss, a player mine flag flips it into
+	// a silent win.
+	flagFlip := func(owner DuelOwner) *Game {
+		g := NewGame(Difficulty{Gameplay: GameplayDuel, Haruhikage: true, Rows: 5, Cols: 5, Mines: 1, DuelDuration: 60}, true, MemberAnon, 42)
+		g.FirstClick = true
+		g.Status = StatusPlaying
+		g.Cell(0, 0).IsMine = true
+		g.flagDuel(0, 0, owner)
+		g.duel.PlayerScore = 100
+		g.duel.AIScore = 100
+		g.TickDuel(60)
+		return g
+	}
+	flipped := flagFlip(DuelAI)
+	if !slices.Contains(flipped.duel.NewMemes, MemeHaruhikage) || flipped.duel.QuoteEvent != "haruhikageLost" {
+		t.Fatalf("AI flag flipping a draw into a loss must trigger the scene, got memes=%v event=%q", flipped.duel.NewMemes, flipped.duel.QuoteEvent)
+	}
+	saved := flagFlip(DuelPlayer)
+	if len(saved.duel.NewMemes) != 0 || saved.duel.QuoteEvent != "" {
+		t.Fatalf("player flag flipping a draw into a win must not trigger, got memes=%v event=%q", saved.duel.NewMemes, saved.duel.QuoteEvent)
+	}
 }
