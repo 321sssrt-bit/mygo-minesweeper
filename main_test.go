@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image/png"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -84,6 +85,40 @@ func TestHaruhikageLossTriggersMemeAndAlert(t *testing.T) {
 	}
 	if !foundHaruhikage || !foundNeverHappy {
 		t.Fatalf("expected both haruhikage and never_happy memes, got %v", res.NewMemes)
+	}
+}
+
+func TestHaruhikageSceneFollowsMarkerNotID(t *testing.T) {
+	hitMine := func(diff Difficulty, moves int) ActionResult {
+		g := NewGame(diff, false, MemberAnon, 7)
+		g.FirstClick = true
+		g.Moves = moves
+		g.Cell(0, 0).IsMine = true
+		return g.Reveal(0, 0)
+	}
+
+	// A marked track plays the scene under any ID.
+	if marked := hitMine(Difficulty{ID: "encore", Haruhikage: true, Rows: 5, Cols: 5, Mines: 1}, 0); marked.QuoteEvent != "haruhikageLost" || !slices.Contains(marked.NewMemes, MemeHaruhikage) {
+		t.Fatalf("expected marker to trigger haruhikage scene, got %+v", marked)
+	}
+	// An unmarked track never does, even when its ID is "hard".
+	if unmarked := hitMine(Difficulty{ID: "hard", Rows: 5, Cols: 5, Mines: 1}, 0); unmarked.QuoteEvent != "lost" || slices.Contains(unmarked.NewMemes, MemeHaruhikage) {
+		t.Fatalf("expected no haruhikage scene without the marker, got %+v", unmarked)
+	}
+	// A marked loss past the early moves still skips never_happy.
+	if late := hitMine(Difficulty{ID: "encore", Haruhikage: true, Rows: 5, Cols: 5, Mines: 1}, 5); late.QuoteEvent != "haruhikageLost" || !slices.Contains(late.NewMemes, MemeHaruhikage) || slices.Contains(late.NewMemes, MemeNeverHappy) {
+		t.Fatalf("expected haruhikage only on a late marked loss, got %+v", late)
+	}
+	// The marker is classic-only: a marked duel mine stays duelMine.
+	if duel := hitMine(Difficulty{Gameplay: GameplayDuel, Haruhikage: true, Rows: 5, Cols: 5, Mines: 1}, 0); duel.QuoteEvent != "duelMine" || slices.Contains(duel.NewMemes, MemeHaruhikage) {
+		t.Fatalf("expected marked duel loss to stay duelMine, got %+v", duel)
+	}
+	// A shield save on a marked track is not a loss and skips the scene.
+	shielded := NewGame(Difficulty{Haruhikage: true, Rows: 5, Cols: 5, Mines: 1, SkillCharges: 1}, true, MemberSoyorin, 7)
+	shielded.FirstClick = true
+	shielded.Cell(0, 0).IsMine = true
+	if shieldRes := shielded.Reveal(0, 0); shieldRes.Kind != ActionShielded || shieldRes.QuoteEvent != "shield" || slices.Contains(shieldRes.NewMemes, MemeHaruhikage) {
+		t.Fatalf("expected shield save without the scene meme, got %+v", shieldRes)
 	}
 }
 
@@ -472,5 +507,3 @@ func TestAppIconAndBundleConfig(t *testing.T) {
 		t.Fatalf("unexpected mygo.json icon/license config: %+v", cfg)
 	}
 }
-
-
