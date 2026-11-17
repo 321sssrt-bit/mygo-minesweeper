@@ -1348,6 +1348,16 @@ func TestDuelHaruhikageSceneNeedsMarkerAndScoreLoss(t *testing.T) {
 	if len(lead.duel.NewMemes) != 0 || lead.duel.QuoteEvent != "" {
 		t.Fatalf("score-lead clear must not record the scene, got memes=%v event=%q", lead.duel.NewMemes, lead.duel.QuoteEvent)
 	}
+	tied := NewGame(Difficulty{Gameplay: GameplayDuel, Haruhikage: true, Rows: 5, Cols: 5, Mines: 24}, true, MemberAnon, 42)
+	tied.duel.PlayerScore = 99
+	tied.duel.AIScore = 100
+	res = tied.Reveal(0, 0)
+	if res.Kind != ActionWon || res.QuoteEvent != "" || len(res.NewMemes) != 0 {
+		t.Fatalf("draw clear should silence the won line and win memes, got %+v", res)
+	}
+	if len(tied.duel.NewMemes) != 0 || tied.duel.QuoteEvent != "" {
+		t.Fatalf("draw clear must not record the scene, got memes=%v event=%q", tied.duel.NewMemes, tied.duel.QuoteEvent)
+	}
 
 	// The player's own wrong flag costs 30 at settlement and can alone
 	// produce a losing score.
