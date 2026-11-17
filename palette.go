@@ -224,9 +224,10 @@ func bandAidSVG(fill, pad, edge ui.Color, cross string) string {
 	return s + `</svg>`
 }
 
-// knotSVG is a 心结: a pencil scribble tangled into a knot.
+// knotSVG is a 心结: one pencil stroke tangled into a knot. Its loose end
+// stays a short curl hugging the knot, so nothing reads as a handle.
 func knotSVG(c ui.Color) string {
-	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 14.5c-2.2-3.6.6-8.4 5-8.2 4.6.2 6.4 5 3.8 8.1-2.4 2.9-7.6 2.3-8.2-1.3-.6-3.3 3.4-5.6 6.4-4.1 2.8 1.4 2.4 5.4-.6 6.1-2.4.6-4.3-1.6-3.2-3.6 1-1.8 3.8-1.4 3.9.6M6.2 17.6l2-2.1M16.4 15.2l2.3 2.6" fill="none" stroke="` +
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6.3 16.6c-.1-.7.5-1.2.7-2.1-2.2-3.6.6-8.4 5-8.2 4.6.2 6.4 5 3.8 8.1-2.4 2.9-7.6 2.3-8.2-1.3-.6-3.3 3.4-5.6 6.4-4.1 2.8 1.4 2.4 5.4-.6 6.1-2.4.6-4.3-1.6-3.2-3.6 1-1.8 3.8-1.4 3.9.6" fill="none" stroke="` +
 		hexOf(c) + `" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
 }
 
