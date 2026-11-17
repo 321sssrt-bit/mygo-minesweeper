@@ -26,6 +26,7 @@ type Duel struct {
 	PlayerCombo  int
 	Elapsed      float64
 	Duration     float64
+	AIInterval   float64
 	NextAI       float64
 	StunnedUntil float64
 	ScanUntil    float64
@@ -45,14 +46,23 @@ type DuelTick struct {
 }
 
 func newDuel(g *Game) *Duel {
+	duration := g.Difficulty.DuelDuration
+	if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 1) {
+		duration = defaultDuelDuration
+	}
+	interval := g.Difficulty.AIInterval
+	if interval <= 0 || math.IsNaN(interval) || math.IsInf(interval, 1) {
+		interval = defaultAIInterval
+	}
 	return &Duel{
-		Duration: 5 * 60,
-		NextAI:   1.1,
-		LastCell: -1,
-		LastAI:   -1,
-		Minimap:  make([]MinimapBlock, minimapGridSize*minimapGridSize),
-		frontier: make(map[int]bool),
-		rng:      rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())),
+		Duration:   duration,
+		AIInterval: interval,
+		NextAI:     1.1,
+		LastCell:   -1,
+		LastAI:     -1,
+		Minimap:    make([]MinimapBlock, minimapGridSize*minimapGridSize),
+		frontier:   make(map[int]bool),
+		rng:        rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())),
 	}
 }
 
@@ -112,7 +122,7 @@ func (g *Game) TickDuel(delta float64) DuelTick {
 	if d.Elapsed < d.NextAI {
 		return DuelTick{}
 	}
-	d.NextAI = d.Elapsed + 0.72
+	d.NextAI = d.Elapsed + d.AIInterval
 	index, ok := g.chooseAIAction()
 	if !ok {
 		return DuelTick{}
@@ -178,7 +188,7 @@ func (g *Game) revealDuel(row, col int, owner DuelOwner) ActionResult {
 			return ActionResult{Kind: ActionLost, ScoreDelta: d.PlayerScore - beforeScore, QuoteEvent: "duelMine", NewMemes: []string{MemeNeverHappy}}
 		}
 		d.AIScore -= 100
-		d.NextAI = d.Elapsed + 2.4
+		d.NextAI = max(d.NextAI, d.Elapsed+2.4)
 		return ActionResult{Kind: ActionLost}
 	}
 	if owner == DuelPlayer {

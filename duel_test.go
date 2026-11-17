@@ -1,6 +1,8 @@
 package main
 
 import (
+	"math"
+	"math/rand/v2"
 	"testing"
 	"time"
 
@@ -320,6 +322,56 @@ func TestNewGameBuildsByGameplayNotTrackID(t *testing.T) {
 	}
 	if classic.Rows != 30 || classic.Cols != 40 {
 		t.Fatalf("classic gameplay keeps the 30x40 clamp: %dx%d", classic.Rows, classic.Cols)
+	}
+}
+
+func TestDuelDurationAndAIPaceComeFromTrack(t *testing.T) {
+	std := NewGame(Difficulties[4], true, MemberAnon, 42)
+	if std.duel.Duration != 300 || std.duel.AIInterval != 0.72 {
+		t.Fatalf("standard duel keeps 5min/0.72s: duration=%v interval=%v", std.duel.Duration, std.duel.AIInterval)
+	}
+	bare := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 1}, true, MemberAnon, 42)
+	if bare.duel.Duration != 300 || bare.duel.AIInterval != 0.72 {
+		t.Fatalf("unconfigured duel must fall back to 5min/0.72s: duration=%v interval=%v", bare.duel.Duration, bare.duel.AIInterval)
+	}
+	nan := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 1, DuelDuration: math.NaN(), AIInterval: math.Inf(1)}, true, MemberAnon, 42)
+	if nan.duel.Duration != 300 || nan.duel.AIInterval != 0.72 {
+		t.Fatalf("non-finite pacing must fall back to 5min/0.72s: duration=%v interval=%v", nan.duel.Duration, nan.duel.AIInterval)
+	}
+
+	g := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 8, Cols: 8, Mines: 32, DuelDuration: 60, AIInterval: 0.25}, true, MemberAnon, 42)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	g.duel.rng = rand.New(rand.NewPCG(7, 9))
+	// Flagged checkerboard mines: every AI step is one safe reveal, no flood or mine hit.
+	for i := range g.Cells {
+		c := &g.Cells[i]
+		if (c.Row+c.Col)%2 == 0 {
+			c.IsMine = true
+			c.Flagged = true
+		}
+	}
+	g.RecomputeAdjacency()
+	if g.duel.Duration != 60 || g.duel.AIInterval != 0.25 {
+		t.Fatalf("track pacing not applied: duration=%v interval=%v", g.duel.Duration, g.duel.AIInterval)
+	}
+	if tick := g.TickDuel(1.05); tick.AITurn != nil {
+		t.Fatal("AI acted before its first step")
+	}
+	if tick := g.TickDuel(0.1); tick.AITurn == nil || g.duel.NextAI != g.duel.Elapsed+0.25 {
+		t.Fatalf("AI did not step at the track interval: %+v next=%v elapsed=%v", tick, g.duel.NextAI, g.duel.Elapsed)
+	}
+	if g.TickDuel(0.1).AITurn != nil {
+		t.Fatal("AI stepped early under custom interval")
+	}
+	if g.TickDuel(0.2).AITurn == nil {
+		t.Fatal("AI skipped the custom interval")
+	}
+	if g.TickDuel(58.5).Finished {
+		t.Fatal("duel finished before the track duration")
+	}
+	if tick := g.TickDuel(0.1); !tick.Finished || g.Status != StatusWon || g.duel.remaining() != 0 {
+		t.Fatalf("duel did not end at 60s: %+v status=%v", tick, g.Status)
 	}
 }
 

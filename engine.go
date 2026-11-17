@@ -21,7 +21,14 @@ type Difficulty struct {
 	Cols         int
 	Mines        int
 	SkillCharges int
+	DuelDuration float64
+	AIInterval   float64
 }
+
+const (
+	defaultDuelDuration = 5 * 60
+	defaultAIInterval   = 0.72
+)
 
 var Difficulties = []Difficulty{
 	{
@@ -78,6 +85,8 @@ var Difficulties = []Difficulty{
 		Cols:         1000,
 		Mines:        180000,
 		SkillCharges: 6,
+		DuelDuration: defaultDuelDuration,
+		AIInterval:   defaultAIInterval,
 	},
 }
 
