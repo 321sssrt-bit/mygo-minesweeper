@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"math/rand/v2"
+	"slices"
 	"testing"
 	"time"
 
@@ -1291,4 +1292,48 @@ func absInt(v int) int {
 		return -v
 	}
 	return v
+}
+
+func TestDuelHaruhikageSceneNeedsMarkerAndScoreLoss(t *testing.T) {
+	settle := func(marked bool, player, ai int) *Game {
+		g := NewGame(Difficulty{Gameplay: GameplayDuel, Haruhikage: marked, Rows: 5, Cols: 5, Mines: 1, DuelDuration: 60}, true, MemberAnon, 42)
+		g.FirstClick = true
+		g.Status = StatusPlaying
+		g.duel.PlayerScore = player
+		g.duel.AIScore = ai
+		g.TickDuel(60)
+		return g
+	}
+	lost := settle(true, 10, 100)
+	if !slices.Contains(lost.duel.NewMemes, MemeHaruhikage) || lost.duel.QuoteEvent != "haruhikageLost" {
+		t.Fatalf("marked score loss should unlock the scene, got memes=%v event=%q", lost.duel.NewMemes, lost.duel.QuoteEvent)
+	}
+	lost.finishDuel()
+	if len(lost.duel.NewMemes) != 1 {
+		t.Fatalf("settlement must stay idempotent, got %v", lost.duel.NewMemes)
+	}
+	for _, tc := range []struct {
+		name       string
+		marked     bool
+		player, ai int
+	}{
+		{"marked win", true, 200, 100},
+		{"marked draw", true, 100, 100},
+		{"unmarked loss", false, 10, 100},
+	} {
+		g := settle(tc.marked, tc.player, tc.ai)
+		if len(g.duel.NewMemes) != 0 || g.duel.QuoteEvent != "" {
+			t.Fatalf("%s must not trigger the scene, got memes=%v event=%q", tc.name, g.duel.NewMemes, g.duel.QuoteEvent)
+		}
+	}
+
+	// Cleared-board path: checkWin also settles through finishDuel.
+	g := NewGame(Difficulty{Gameplay: GameplayDuel, Haruhikage: true, Rows: 5, Cols: 5, Mines: 24}, true, MemberAnon, 42)
+	g.duel.AIScore = 500
+	if res := g.Reveal(0, 0); res.Kind != ActionWon {
+		t.Fatalf("expected instant board clear, got %+v", res)
+	}
+	if !slices.Contains(g.duel.NewMemes, MemeHaruhikage) || g.duel.QuoteEvent != "haruhikageLost" {
+		t.Fatalf("cleared board score loss should still unlock the scene, got memes=%v event=%q", g.duel.NewMemes, g.duel.QuoteEvent)
+	}
 }
