@@ -13,6 +13,9 @@ import (
 // pre-staged engine tracks to verify the setlist popover against the
 // target seven-track layout without altering Difficulties globally.
 func sevenTrackSetlist() []Difficulty {
+	if len(Difficulties) >= 7 {
+		return append([]Difficulty(nil), Difficulties...)
+	}
 	return []Difficulty{
 		Difficulties[0],
 		Difficulties[1],
@@ -20,7 +23,7 @@ func sevenTrackSetlist() []Difficulty {
 		TrackUtakotoba,
 		TrackMayoiuta,
 		TrackSenzaihyoumei,
-		Difficulties[4],
+		Difficulties[len(Difficulties)-1],
 	}
 }
 
@@ -103,6 +106,89 @@ func TestSetlistPopoverSelectBySongName(t *testing.T) {
 	tt.ClickAt(1200, 860)
 	if app.setlistOpen {
 		t.Fatal("clicking outside should dismiss the setlist popover")
+	}
+}
+
+func TestSetlistPopoverOutsideClickDoesNotHitBoard(t *testing.T) {
+	// Classic board: clicking an unrevealed mine cell outside the open popover
+	// must only dismiss the popover without revealing or detonating the cell.
+	app := newMinesweeperApp(12345)
+	tt := ui.NewTester(app.view, 1280, 900)
+	if err := tt.Click("cell-5-5"); err != nil {
+		t.Fatalf("start classic game: %v", err)
+	}
+	targetRect, ok := tt.Find("cell-3-7")
+	if !ok {
+		t.Fatal("cell-3-7 not found")
+	}
+	movesBefore := app.game.Moves
+	flagsBefore := app.game.FlagsPlaced
+	statusBefore := app.game.Status
+
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("open setlist popover: %v", err)
+	}
+	tt.ClickAt(targetRect.X+targetRect.W/2, targetRect.Y+targetRect.H/2)
+	if app.setlistOpen {
+		t.Fatal("clicking outside popover on classic cell should dismiss popover")
+	}
+	if app.game.Moves != movesBefore || app.game.Status != statusBefore || app.game.Cell(3, 7).Revealed {
+		t.Fatalf("dismiss click leaked onto classic cell (3,7): moves=%d->%d status=%v->%v revealed=%v",
+			movesBefore, app.game.Moves, statusBefore, app.game.Status, app.game.Cell(3, 7).Revealed)
+	}
+
+	// Right-clicking outside on a cell must also dismiss without placing a flag.
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("reopen setlist popover for right-click test: %v", err)
+	}
+	tt.RightClickAt(targetRect.X+targetRect.W/2, targetRect.Y+targetRect.H/2)
+	if app.setlistOpen || app.game.FlagsPlaced != flagsBefore {
+		t.Fatalf("right-click dismiss leaked onto classic board: open=%v flags=%d->%d",
+			app.setlistOpen, flagsBefore, app.game.FlagsPlaced)
+	}
+
+	// Duel canvas: clicking outside on the duel board must dismiss without revealing.
+	duelApp := newMinesweeperApp(42)
+	duelApp.diffIdx = len(Difficulties) - 1
+	duelApp.resetGame(false)
+	dtt := ui.NewTester(duelApp.view, 1280, 900)
+	dtt.Frame()
+	boardRect, ok := dtt.Find("百万格决斗战场")
+	if !ok {
+		t.Fatal("duel board not found")
+	}
+	if err := dtt.Click("歌单"); err != nil {
+		t.Fatalf("open setlist in duel: %v", err)
+	}
+	dtt.ClickAt(boardRect.X+boardRect.W*0.75, boardRect.Y+boardRect.H*0.5)
+	if duelApp.setlistOpen || duelApp.game.FirstClick || duelApp.game.Moves != 0 {
+		t.Fatalf("dismiss click leaked onto duel board: open=%v firstClick=%v moves=%d",
+			duelApp.setlistOpen, duelApp.game.FirstClick, duelApp.game.Moves)
+	}
+}
+
+func TestSetlistAccentContrastMeetsWCAGAA(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		app := newMinesweeperApp(1)
+		app.darkMode = dark
+		pal := app.paper()
+		theme := app.activeTheme()
+		cases := []struct {
+			name string
+			bg   ui.Color
+		}{
+			{"trigger-idle", pal.Slip.Alpha(0.45).Over(theme.Surface)},
+			{"trigger-hover", pal.Slip.Alpha(0.85).Over(theme.Surface)},
+			{"trigger-open", theme.Accent.Alpha(0.14).Over(theme.Surface)},
+			{"popover-selected", theme.Accent.Alpha(0.14).Over(theme.Surface)},
+		}
+		for _, tc := range cases {
+			ink := setlistAccentInk(pal, tc.bg)
+			ratio := contrast(ink, tc.bg)
+			if ratio < minInkContrast {
+				t.Errorf("dark=%v %s: contrast %.2f < %.1f", dark, tc.name, ratio, minInkContrast)
+			}
+		}
 	}
 }
 

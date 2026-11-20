@@ -393,6 +393,7 @@ func (a *minesweeperApp) activeTheme() *ui.Theme {
 func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string) {
 	d := a.game.duel
 	a.duelEnded = true
+	a.setlistOpen = false
 	a.pushChat("决斗结算", "#E8A849", result)
 	a.applyQuote(d.QuoteEvent)
 	a.unlockMemes(c, d.NewMemes)
@@ -461,25 +462,42 @@ var (
 	setlistCheckIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3 8.5L6.5 12L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 )
 
+// setlistAccentInk derives a WCAG-AA (4.5:1+) ink from the 乐队色 against
+// the exact composited background a setlist control paints beneath its text.
+func setlistAccentInk(pal *palette, bg ui.Color) ui.Color {
+	under := *pal
+	under.Board = bg
+	under.Sheet = bg
+	return under.InkOf(bandColor)
+}
+
 func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme) {
 	cur := a.game.Difficulty
 	trigger := ui.ButtonBase(c.Key("setlist-trigger")).
 		Padding(6, 12).Radius(6).Cursor(ui.CursorPointer).
 		Label("歌单").HasPopup(ui.PopupListBox).Expanded(a.setlistOpen)
 
-	if a.setlistOpen {
-		trigger.Background(t.Accent.Alpha(0.14).Over(t.Surface)).Border(1, t.Accent.Alpha(0.7))
-	} else if trigger.Hovered() {
-		trigger.Background(pal.Slip.Alpha(0.85).Over(t.Surface)).Border(1, pal.Rule)
-	} else {
-		trigger.Background(pal.Slip.Alpha(0.45).Over(t.Surface)).Border(1, pal.Rule)
+	var triggerBg ui.Color
+	var triggerBorder ui.Color
+	switch {
+	case a.setlistOpen:
+		triggerBg = t.Accent.Alpha(0.14).Over(t.Surface)
+		triggerBorder = t.Accent.Alpha(0.7)
+	case trigger.Hovered():
+		triggerBg = pal.Slip.Alpha(0.85).Over(t.Surface)
+		triggerBorder = pal.Rule
+	default:
+		triggerBg = pal.Slip.Alpha(0.45).Over(t.Surface)
+		triggerBorder = pal.Rule
 	}
-	trigger.Shadow(0, 1, 2, 0, pal.SlipShade.Alpha(0.45))
+	triggerInk := setlistAccentInk(pal, triggerBg)
+	trigger.Background(triggerBg).Border(1, triggerBorder).
+		Shadow(0, 1, 2, 0, pal.SlipShade.Alpha(0.45))
 
 	trigger.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).PassThrough().Children(func() {
-			ui.Box(c).Size(3, 14).Radius(2).Background(t.Accent).PassThrough()
-			ui.Text(c, "歌单").FontSize(12).Bold().TextColor(t.Accent).PassThrough()
+			ui.Box(c).Size(3, 14).Radius(2).Background(triggerInk).PassThrough()
+			ui.Text(c, "歌单").FontSize(12).Bold().TextColor(triggerInk).PassThrough()
 			ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()
 			ui.Text(c, fmt.Sprintf("《%s》", cur.Song)).FontSize(13).Bold().TextColor(t.Text).PassThrough()
 			if cur.Label != "" && cur.Label != cur.Song {
@@ -487,7 +505,7 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 			}
 			chevron, chevronColor := setlistChevronDown, pal.InkMuted
 			if a.setlistOpen {
-				chevron, chevronColor = setlistChevronUp, t.Accent
+				chevron, chevronColor = setlistChevronUp, triggerInk
 			}
 			ui.Icon(c, chevron).Size(13, 13).TextColor(chevronColor).PassThrough()
 		})
@@ -496,6 +514,9 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 	if trigger.Clicked() {
 		a.setlistOpen = !a.setlistOpen
 	}
+
+	selectedBg := t.Accent.Alpha(0.14).Over(t.Surface)
+	selectedInk := setlistAccentInk(pal, selectedBg)
 
 	ui.Popover(c.Key("setlist-popover"), trigger, &a.setlistOpen, func() {
 		ui.Column(c).Width(316).Gap(4).Children(func() {
@@ -511,10 +532,10 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 				for i, d := range Difficulties {
 					selected := i == a.diffIdx
 					item := ui.ButtonBase(c.Key(i)).FillWidth().Padding(7, 10).Radius(6).
-						Cursor(ui.CursorPointer).Label(d.Song).Selected(selected)
+						Cursor(ui.CursorPointer).Label(d.Song).Checked(selected)
 
 					if selected {
-						item.Background(t.Accent.Alpha(0.14).Over(t.Surface))
+						item.Background(selectedBg)
 					} else if item.Hovered() {
 						item.Background(pal.Slip.Alpha(0.6).Over(t.Surface))
 					}
@@ -530,7 +551,7 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 							ui.Textf(c, "%02d", i+1).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum").PassThrough()
 							songEl := ui.Text(c, d.Song).FontSize(13).PassThrough()
 							if selected {
-								songEl.Bold().TextColor(t.Accent)
+								songEl.Bold().TextColor(selectedInk)
 							} else {
 								songEl.TextColor(t.Text)
 							}
@@ -539,7 +560,7 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 							}
 							ui.Spacer(c)
 							if selected {
-								ui.Icon(c, setlistCheckIcon).Size(13, 13).TextColor(t.Accent).PassThrough()
+								ui.Icon(c, setlistCheckIcon).Size(13, 13).TextColor(selectedInk).PassThrough()
 							}
 						})
 					})
@@ -554,7 +575,7 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 				}
 			})
 		})
-	})
+	}).Background(t.Surface)
 }
 
 func (a *minesweeperApp) duelHUD(c *ui.Context) {
@@ -1166,6 +1187,22 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					}
 				})
 			})
+
+			// Shield the workspace while the setlist popover is open so an
+			// outside dismiss click never leaks onto a board cell or mine.
+			if a.setlistOpen {
+				ui.Box(c.Key("setlist-workspace-shield")).Absolute().Top(0).Bottom(0).Start(0).End(0).
+					HandleInput(func(ev ui.InputEvent) bool {
+						switch ev.Kind {
+						case ui.InputPointerDown:
+							a.setlistOpen = false
+							return true
+						case ui.InputPointerUp, ui.InputScroll, ui.InputZoom:
+							return true
+						}
+						return false
+					})
+			}
 		})
 	})
 }
