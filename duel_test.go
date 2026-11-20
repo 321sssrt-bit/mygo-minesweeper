@@ -104,7 +104,7 @@ func TestDuelNativeCanvasInput(t *testing.T) {
 	app.diffIdx = findDifficultyIdx("duel")
 	app.resetGame(false)
 	tt := ui.NewTester(app.view, 1280, 900)
-	if !tt.HasText("春日影 Live") || !tt.HasText("《春日影》") || !tt.HasText("灯 (AI) 0") {
+	if !tt.HasText("解不完的心结") || !tt.HasText("《春日影》") || !tt.HasText("灯 (AI) 0") {
 		t.Fatal("duel HUD not present")
 	}
 	tt.Advance(100 * time.Millisecond)

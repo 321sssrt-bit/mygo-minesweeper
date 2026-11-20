@@ -856,8 +856,8 @@ func TestHaruhikageMovedToDuelAndKageiromaiLossIsPlain(t *testing.T) {
 	}
 	duelDiff := Difficulties[len(Difficulties)-1]
 	if duelDiff.Gameplay != GameplayDuel || duelDiff.Rows != 1000 || duelDiff.Cols != 1000 ||
-		duelDiff.Label != "春日影 Live" || duelDiff.Song != "春日影" || !duelDiff.Haruhikage {
-		t.Fatalf("1000x1000 duel = %+v, want 春日影 Live《春日影》 with Haruhikage=true", duelDiff)
+		duelDiff.Label != "解不完的心结" || duelDiff.Song != "春日影" || !duelDiff.Haruhikage {
+		t.Fatalf("1000x1000 duel = %+v, want 解不完的心结《春日影》 with Haruhikage=true", duelDiff)
 	}
 
 	// Open the live setlist popover and verify track titles.
