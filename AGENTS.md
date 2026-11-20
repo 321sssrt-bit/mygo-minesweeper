@@ -4,15 +4,12 @@ MyGO!!!!! 迷子扫雷：纯 Go 桌面扫雷同人作品，界面基于 egoist/m
 
 ## 工作流程
 
-- 新功能或改版：先 `/grill-with-docs` 拷问到共识，再 `/to-spec` 出规格、`/to-tickets` 拆票。
-- 每张票开工前，列出票里尚未定的决定：有就先拷问，没有就说明；然后等用户说开工。
-- 每张票做完即停：汇报改动、测试结果和截图，用户确认后再进入下一张。
+- 新功能或改版：先 `/grill-with-docs` 拷问到共识，再 `/to-spec` 出规格、`/tower-tickets` 拆票（每张票只属于一轨），由 `$tower-console` 按轨派车、盯 PR 与放行合入。
 
 ## 分支与 PR
 
-- 默认分支是 `master`；每张票从 `origin/master` 开分支。
+- 默认分支是 `master`。
 - PR 正文写 `Closes #<票号>`，并 `Refs` 它所属的规格 issue。
-- 改动可见界面的 PR 附修改前后的多视口实拍截图；用户看图确认前不合入。
 
 ## 文案
 
@@ -30,7 +27,7 @@ MyGO!!!!! 迷子扫雷：纯 Go 桌面扫雷同人作品，界面基于 egoist/m
 ## 字体与截图
 
 - 字体是按源码字符串子集化的霞鹜文楷。改了任何界面字符串就运行 `go generate`（需要 `pip install fonttools`），否则 `TestEmbeddedFontCoversCopy` 会失败。
-- 样张与 README 截图：`MYGO_SNAPSHOT_DIR=<目录> go test -run TestSnapshot .`，输出 `<场景>-<视口>-<day|night>.png`（场景 live/won/lost/duel，视口 small/default/large）。在另一份检出（如 master）上换目录重跑同一命令，即得同名的「修改前」对比图。
+- 实拍样张与 README 截图：`MYGO_SNAPSHOT_DIR=<目录> go test -run TestSnapshot .`，输出 `<场景>-<视口>-<day|night>.png`（场景 live/won/lost/duel，视口 small/default/large）。
 
 ## 测试
 
@@ -57,4 +54,4 @@ Single-context：根目录 `GLOSSARY.md` + `docs/adr/`。See `docs/agents/domain
 
 ### 派车
 
-用 tower-console 派车或给候选车时，阵容与模型 ID 以本仓库为准。See `docs/agents/tower-console.md`.
+本仓库的四轨边界、门禁与桌面实拍方式见 `docs/agents/tower-console.md`。
