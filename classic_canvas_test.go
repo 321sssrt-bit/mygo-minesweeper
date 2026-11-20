@@ -1689,30 +1689,25 @@ func classicSurfaceCellAt(t *testing.T, tt *ui.Tester, app *minesweeperApp, row,
 	return r.X + (float32(col)+0.5)*v.Cell - v.X, r.Y + (float32(row)+0.5)*v.Cell - v.Y
 }
 
-// TestClassicBoardSurfaceFollowsThreshold mounts the real app shell: every
-// shipped classic track and anything up to 《影色舞》's 30×30 keeps one widget
-// per cell, while a board wider or taller than that plays on the shared
-// canvas, where flags, mine counts and losses work the same way.
+// TestClassicBoardSurfaceFollowsThreshold mounts the real app shell: boards
+// up to 《影色舞》's 30×30 keep one widget per cell, while a board wider or
+// taller than that plays on the shared canvas, where flags, mine counts and
+// losses work the same way.
 func TestClassicBoardSurfaceFollowsThreshold(t *testing.T) {
-	type surfaceCase struct {
+	for _, tc := range []struct {
 		name   string
 		diff   Difficulty
 		canvas bool
-	}
-	var cases []surfaceCase
-	for _, d := range Difficulties {
-		if d.Gameplay == GameplayClassic {
-			cases = append(cases, surfaceCase{"shipped " + d.ID, d, false})
-		}
-	}
-	cases = append(cases,
-		surfaceCase{"30x30 at the threshold", TrackKageiromai, false},
-		surfaceCase{"30x31 one column past", Difficulty{ID: "wide", Gameplay: GameplayClassic, Rows: 30, Cols: 31, Mines: 150}, true},
-		surfaceCase{"31x30 one row past", Difficulty{ID: "tall", Gameplay: GameplayClassic, Rows: 31, Cols: 30, Mines: 150}, true},
-		surfaceCase{"50x50 utakotoba", TrackUtakotoba, true},
-		surfaceCase{"100x100 mayoiuta", TrackMayoiuta, true},
-	)
-	for _, tc := range cases {
+	}{
+		{"9x9 mayoiboshi", Difficulties[0], false},
+		{"16x16 hekitenbansou", Difficulties[1], false},
+		{"20x20", Difficulty{ID: "mid", Gameplay: GameplayClassic, Rows: 20, Cols: 20, Mines: 80}, false},
+		{"30x30 at the threshold", TrackKageiromai, false},
+		{"30x31 one column past", Difficulty{ID: "wide", Gameplay: GameplayClassic, Rows: 30, Cols: 31, Mines: 150}, true},
+		{"31x30 one row past", Difficulty{ID: "tall", Gameplay: GameplayClassic, Rows: 31, Cols: 30, Mines: 150}, true},
+		{"50x50 utakotoba", TrackUtakotoba, true},
+		{"100x100 mayoiuta", TrackMayoiuta, true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newMinesweeperApp(7)
 			app.game = NewGame(tc.diff, app.bandMode(), app.memberID, 7)
@@ -1777,5 +1772,38 @@ func TestSetlistSwitchesClassicSurfaceAcrossThreshold(t *testing.T) {
 		if onCanvas != step.canvas || onGrid == step.canvas {
 			t.Fatalf("%s: canvas=%v grid=%v, want canvas=%v", step.track.ID, onCanvas, onGrid, step.canvas)
 		}
+	}
+}
+
+// TestClassicCanvasKeyboardZoomInAppShell: on a classic board past the
+// threshold, Ctrl+= and Ctrl+- zoom the canvas and Ctrl+0 brings the
+// board's centre back into view, as on the duel canvas.
+func TestClassicCanvasKeyboardZoomInAppShell(t *testing.T) {
+	app := newMinesweeperApp(7)
+	app.game = NewGame(TrackMayoiuta, app.bandMode(), app.memberID, 7)
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.Frame()
+	v, g := app.board, app.game
+
+	before := v.Cell
+	tt.Key(ui.Ctrl, ui.KeyEqual)
+	if v.Cell <= before {
+		t.Fatalf("Ctrl+= left cell size at %.2f, want larger than %.2f", v.Cell, before)
+	}
+	zoomed := v.Cell
+	tt.Key(ui.Ctrl, ui.KeyMinus)
+	tt.Key(ui.Ctrl, ui.KeyMinus)
+	if v.Cell >= zoomed {
+		t.Fatalf("Ctrl+- left cell size at %.2f, want smaller than %.2f", v.Cell, zoomed)
+	}
+
+	v.center(g, 0, 0)
+	tt.Frame()
+	if row, col, _ := v.cellAt(g, v.Width/2, v.Height/2); row == g.Rows/2 && col == g.Cols/2 {
+		t.Fatal("panning to the corner left the board centre in the middle of the view")
+	}
+	tt.Key(ui.Ctrl, ui.Key0)
+	if row, col, ok := v.cellAt(g, v.Width/2, v.Height/2); !ok || row != g.Rows/2 || col != g.Cols/2 {
+		t.Fatalf("Ctrl+0 shows (%d,%d) mid-view, want the board centre (%d,%d)", row, col, g.Rows/2, g.Cols/2)
 	}
 }

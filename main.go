@@ -800,7 +800,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		res := a.game.UseSkill()
 		a.handleAction(c, res, now)
 	}
-	if a.isDuel() {
+	if a.isDuel() || a.classicOnCanvas() {
 		if c.Shortcut(ui.Ctrl, ui.KeyEqual) {
 			a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1.15)
 		}
