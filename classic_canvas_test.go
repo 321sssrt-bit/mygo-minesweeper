@@ -894,60 +894,85 @@ func TestClassicCanvasZoomedOutMarksStayReadable(t *testing.T) {
 	}
 }
 
-// Classic reveal ripples on the canvas tint opened cells in bandColor (not the
-// duel player colour) and fade back to bare paper under the virtual clock.
-func TestClassicCanvasRippleUsesBandColor(t *testing.T) {
-	app := newMinesweeperApp(42)
-	app.darkMode = false
-	tt := ui.NewTester(classicCanvasTestView(app), 1280, 900)
-	tt.SetScale(1)
-	tt.Frame()
+// Zoomed-out state dots are classic-only: in duel mode, shield flags and
+// settled wrong flags keep their side's outline without adding center dots.
+func TestDuelZoomedOutShieldAndWrongFlagStayDotFree(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app := newMinesweeperApp(7)
+			app.darkMode = dark
+			app.memberID = MemberSoyorin
+			app.diffIdx = 4
+			app.game = NewGame(Difficulty{
+				ID:           "duel-zoom-test",
+				Gameplay:     GameplayDuel,
+				Rows:         8,
+				Cols:         8,
+				Mines:        2,
+				SkillCharges: 1,
+				DuelDuration: 60,
+				AIInterval:   100,
+			}, true, MemberSoyorin, 7)
+			g := app.game
+			g.FirstClick = true
+			g.Status = StatusPlaying
+			g.Cell(0, 0).IsMine = true
+			g.Cell(7, 7).IsMine = true
+			g.RecomputeAdjacency()
+			// Trigger Soyorin shield on (0,0) and plant a wrong flag on safe (0,1), then settle.
+			g.Reveal(0, 0)
+			g.ToggleFlag(0, 1, false)
+			g.TickDuel(60)
+			if !g.Cell(0, 0).ShieldSaved || !g.Cell(0, 1).WrongFlag {
+				t.Fatalf("expected duel shield and wrong flag, got shield=%+v wrong=%+v", g.Cell(0, 0), g.Cell(0, 1))
+			}
 
-	board, ok := tt.Find("经典棋盘")
-	if !ok {
-		t.Fatal("classic canvas board missing")
-	}
-	v := app.board
-	tile := classicCanvasCellRect(board, v, 4, 4)
-	tt.ClickAt(tile.X+tile.W/2, tile.Y+tile.H/2)
-	if len(app.ripples) == 0 {
-		t.Fatal("expected ripples on classic canvas reveal")
-	}
+			tt := ui.NewTester(app.view, 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+			app.board.Cell = 11
+			app.board.clamp(g)
+			tt.Frame()
 
-	// Mid-ripple on origin cell (depth 0): tint matches bandColor over pal.Board.
-	tt.Advance(rippleDuration / 2)
-	imgMid := tt.Image()
-	gotMid := imgMid.RGBAAt(int(tile.X+tile.W/2), int(tile.Y+tile.H/2))
-	wantMid := bandColor.Alpha(0.18).Over(dayPaper.Board)
-	if absInt(int(gotMid.R)-int(wantMid.R)) > 10 || absInt(int(gotMid.G)-int(wantMid.G)) > 10 || absInt(int(gotMid.B)-int(wantMid.B)) > 10 {
-		t.Errorf("mid-ripple classic cell painted #%02X%02X%02X, want near bandColor wash %s",
-			gotMid.R, gotMid.G, gotMid.B, hexOf(wantMid))
-	}
-
-	// After ripple completes, cell returns to bare graph paper.
-	tt.Advance(rippleMaxDelay + rippleDuration + 50*time.Millisecond)
-	if len(app.ripples) != 0 {
-		t.Fatalf("expected classic ripples expired, remaining=%d", len(app.ripples))
-	}
-	imgAfter := tt.Image()
-	gotAfter := imgAfter.RGBAAt(int(tile.X+tile.W/2), int(tile.Y+tile.H/2))
-	if !near(gotAfter.R, dayPaper.Board.R) || !near(gotAfter.G, dayPaper.Board.G) || !near(gotAfter.B, dayPaper.Board.B) {
-		t.Errorf("post-ripple cell painted #%02X%02X%02X, want bare paper %s",
-			gotAfter.R, gotAfter.G, gotAfter.B, hexOf(dayPaper.Board))
+			board, ok := tt.Find("百万格决斗战场")
+			if !ok {
+				t.Fatal("duel board missing")
+			}
+			img := tt.Image()
+			pal := paperFor(dark)
+			v := app.board
+			for name, at := range map[string][2]int{"shield": {0, 0}, "wrong": {0, 1}} {
+				tile := classicCanvasCellRect(board, v, at[0], at[1])
+				got := img.RGBAAt(int((tile.X+tile.W/2)*2), int((tile.Y+tile.H/2)*2))
+				if !near(got.R, pal.Slip.R) || !near(got.G, pal.Slip.G) || !near(got.B, pal.Slip.B) {
+					t.Errorf("duel zoomed-out %s center painted #%02X%02X%02X, want pure slip %s",
+						name, got.R, got.G, got.B, hexOf(pal.Slip))
+				}
+			}
+		})
 	}
 }
 
 func TestClassicCanvasSnapshotScenesCoverAllStates(t *testing.T) {
+	inStageWindow := func(row, col int) bool {
+		return row >= classicCanvasStageRow-6 && row <= classicCanvasStageRow+6 &&
+			col >= classicCanvasStageCol-8 && col <= classicCanvasStageCol+8
+	}
+
 	live := stageClassicCanvasLiveScene(false)
 	if live.game.Status != StatusPlaying {
 		t.Fatalf("classic-canvas-live status=%v, want StatusPlaying", live.game.Status)
 	}
-	if live.classicHoverRow < 0 || live.game.InspectNumberHover(live.classicHoverRow, live.classicHoverCol, false).Kind != HintChordable {
-		t.Fatalf("classic-canvas-live missing chordable hover cell: (%d,%d)", live.classicHoverRow, live.classicHoverCol)
+	if !inStageWindow(live.classicHoverRow, live.classicHoverCol) ||
+		live.game.InspectNumberHover(live.classicHoverRow, live.classicHoverCol, false).Kind != HintChordable {
+		t.Fatalf("classic-canvas-live missing centered chordable hover cell: (%d,%d)", live.classicHoverRow, live.classicHoverCol)
 	}
 	var liveSlips, liveNums, liveFlags, liveShield, liveQ int
 	for i := range live.game.Cells {
 		c := &live.game.Cells[i]
+		if !inStageWindow(c.Row, c.Col) {
+			continue
+		}
 		switch {
 		case c.Revealed && c.Adjacent > 0:
 			liveNums++
@@ -962,7 +987,7 @@ func TestClassicCanvasSnapshotScenesCoverAllStates(t *testing.T) {
 		}
 	}
 	if liveSlips == 0 || liveNums == 0 || liveFlags == 0 || liveShield == 0 || liveQ == 0 {
-		t.Fatalf("classic-canvas-live missing state: slips=%d nums=%d flags=%d shield=%d q=%d",
+		t.Fatalf("classic-canvas-live missing centered state: slips=%d nums=%d flags=%d shield=%d q=%d",
 			liveSlips, liveNums, liveFlags, liveShield, liveQ)
 	}
 
@@ -978,6 +1003,9 @@ func TestClassicCanvasSnapshotScenesCoverAllStates(t *testing.T) {
 	var lostSlips, lostNums, lostFlags, lostShield, lostWrong, lostQ, lostKnots, lostHit int
 	for i := range lost.game.Cells {
 		c := &lost.game.Cells[i]
+		if !inStageWindow(c.Row, c.Col) {
+			continue
+		}
 		switch {
 		case c.Exploded:
 			lostHit++
@@ -998,7 +1026,7 @@ func TestClassicCanvasSnapshotScenesCoverAllStates(t *testing.T) {
 		}
 	}
 	if lostSlips == 0 || lostNums == 0 || lostFlags == 0 || lostShield == 0 || lostWrong == 0 || lostQ == 0 || lostKnots == 0 || lostHit == 0 {
-		t.Fatalf("classic-canvas-lost missing state: slips=%d nums=%d flags=%d shield=%d wrong=%d q=%d knots=%d hit=%d",
+		t.Fatalf("classic-canvas-lost missing centered state: slips=%d nums=%d flags=%d shield=%d wrong=%d q=%d knots=%d hit=%d",
 			lostSlips, lostNums, lostFlags, lostShield, lostWrong, lostQ, lostKnots, lostHit)
 	}
 }

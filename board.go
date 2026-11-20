@@ -380,7 +380,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	// show them; zoomed out, the board is flat slips, washes and state dots.
 	detail := v.Cell >= 16
 	var shieldDot ui.Color
-	if !detail {
+	if !detail && g.duel == nil {
 		shieldDot = pal.InkOf(memberImage(MemberSoyorin))
 	}
 	numberSize := v.Cell * 0.55
@@ -430,12 +430,14 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						case cell.Flagged && cell.ShieldSaved:
 							prop, dot = art.Shield, shieldDot
 						case cell.Flagged:
-							prop = art.Flag
-							if cell.FlagOwner == DuelNobody {
-								dot = pal.BandAidEdge
-							}
+							prop, dot = art.Flag, pal.BandAidEdge
 						case cell.Questioned:
 							question, dot = true, pal.Graphite
+						}
+						// Duel flags already carry their side's outline when
+						// zoomed out; state dots are classic-only.
+						if g.duel != nil {
+							dot = ui.Color{}
 						}
 						// A duel flag is outlined in its side's colour; classic
 						// flags on the canvas belong to no side.
@@ -474,10 +476,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						elapsed := now.Sub(rip.Start)
 						if elapsed >= rip.Delay && elapsed < rip.Delay+rippleDuration {
 							k := 1 - float32(elapsed-rip.Delay)/float32(rippleDuration)
-							ripColor := bandColor
-							if cell.Owner != DuelNobody {
-								ripColor = duelOwnerColor(cell.Owner)
-							}
+							ripColor := duelOwnerColor(cell.Owner)
 							p.Fill(tile, ripColor.Alpha(0.36*k), radius)
 							if v.Cell >= 15 {
 								p.Stroke(tile, ripColor.Alpha(0.4+0.6*k), radius, 1)
