@@ -430,9 +430,13 @@ func addCrackle(out []float64, r *synthRand, start int, perSecond float64, f fil
 // addPluck is a Karplus-Strong string sounding for length samples:
 // brightness in (0, 1] lowpasses the pluck, t60 is the ring time in seconds.
 func addPluck(out []float64, r *synthRand, start, length int, freq, t60, brightness, gain float64) {
-	// The two-tap average delays half a sample, so the line is that much
-	// shorter than the period.
-	n := int(math.Round(SynthRate/freq - 0.5))
+	// The loop is the line, the two-tap average (half a sample) and an
+	// allpass carrying the fractional rest, kept within [0.1, 1.1) samples
+	// where its delay stays flat, so the string sounds in tune.
+	period := SynthRate / freq
+	n := int(period - 0.6)
+	frac := period - 0.5 - float64(n)
+	c := (1 - frac) / (1 + frac)
 	line := make([]float64, n)
 	lp, mean := 0.0, 0.0
 	for i := range line {
@@ -448,6 +452,7 @@ func addPluck(out []float64, r *synthRand, start, length int, freq, t60, brightn
 	loss := math.Pow(10, -3/(t60*freq))
 	mute := seconds(0.004)
 	end := min(start+length, len(out))
+	prev, apIn, apOut := 0.0, 0.0, 0.0
 	for i, j := start, 0; i < end; i, j = i+1, (j+1)%n {
 		g := gain / top
 		if left := end - i; left < mute {
@@ -455,7 +460,10 @@ func addPluck(out []float64, r *synthRand, start, length int, freq, t60, brightn
 		}
 		cur := line[j]
 		out[i] += g * cur
-		line[j] = loss * 0.5 * (cur + line[(j+1)%n])
+		avg := 0.5 * (cur + prev)
+		apOut = c*avg + apIn - c*apOut
+		apIn, prev = avg, cur
+		line[j] = loss * apOut
 	}
 }
 
