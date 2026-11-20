@@ -23,15 +23,19 @@ var snapshotViewports = []struct {
 }
 
 type snapshotScene struct {
-	name  string
-	stage func(dark bool) *minesweeperApp
+	name   string
+	stage  func(dark bool) *minesweeperApp
+	canvas bool
 }
 
 var snapshotScenes = []snapshotScene{
-	{"live", stageLiveScene},
-	{"won", stageWonScene},
-	{"lost", stageLostScene},
-	{"duel", stageDuelScene},
+	{name: "live", stage: stageLiveScene},
+	{name: "won", stage: stageWonScene},
+	{name: "lost", stage: stageLostScene},
+	{name: "duel", stage: stageDuelScene},
+	{name: "classic-canvas-live", stage: stageClassicCanvasLiveScene, canvas: true},
+	{name: "classic-canvas-won", stage: stageClassicCanvasWonScene, canvas: true},
+	{name: "classic-canvas-lost", stage: stageClassicCanvasLostScene, canvas: true},
 }
 
 // TestSnapshot renders sample screens to PNG for design review and README
@@ -59,7 +63,7 @@ func TestSnapshot(t *testing.T) {
 			for _, vp := range snapshotViewports {
 				app := scene.stage(dark)
 				name := fmt.Sprintf("%s-%s-%s.png", scene.name, vp.name, suffix)
-				writeSnapshot(t, app, vp.width, vp.height, filepath.Join(dir, name))
+				writeSnapshot(t, app, scene.canvas, vp.width, vp.height, filepath.Join(dir, name))
 			}
 		}
 	}
@@ -127,14 +131,112 @@ func stageDuelScene(dark bool) *minesweeperApp {
 	return app
 }
 
+// stageClassicCanvasLiveScene stages a mid-game 16×16 classic board for the
+// paper canvas with slips, numbers, flags, a Soyorin shield flag, ? marks,
+// and a chordable number under hover.
+func stageClassicCanvasLiveScene(dark bool) *minesweeperApp {
+	app := newMinesweeperApp(20261116)
+	app.darkMode = dark
+	app.memberID = MemberSoyorin
+	app.diffIdx = 1
+	app.allowQuestion = true
+	app.resetGame(true)
+	pinStartQuote(app)
+	playSampleGame(app)
+	g := app.game
+	for i := range g.Cells {
+		c := &g.Cells[i]
+		if c.IsMine && !c.Revealed && !c.Flagged && hasRevealedNeighbour(g, c.Row, c.Col) {
+			g.Reveal(c.Row, c.Col)
+			break
+		}
+	}
+	hoverRow, hoverCol := chordableNumber(g)
+	app.classicHoverRow, app.classicHoverCol = hoverRow, hoverCol
+	hintTargets := g.InspectNumberHover(hoverRow, hoverCol, false).Targets
+	questioned := 0
+	for i := range g.Cells {
+		c := &g.Cells[i]
+		if !c.IsMine && !c.Revealed && !c.Flagged && !c.Questioned &&
+			hasRevealedNeighbour(g, c.Row, c.Col) && !containsIndex(hintTargets, i) {
+			g.ToggleFlag(c.Row, c.Col, true)
+			g.ToggleFlag(c.Row, c.Col, true)
+			questioned++
+			if questioned == 2 {
+				break
+			}
+		}
+	}
+	return app
+}
+
+// stageClassicCanvasWonScene stages a cleared 9×9 classic board for the
+// paper canvas with every mine flagged by the engine.
+func stageClassicCanvasWonScene(dark bool) *minesweeperApp {
+	return stageWonScene(dark)
+}
+
+// stageClassicCanvasLostScene stages a lost 9×9 classic board for the paper
+// canvas covering every classic cell state: paper slips, numbers, band-aid
+// flag, Soyorin shield band-aid, wrong flag, ? mark, knots, and hit knot.
+func stageClassicCanvasLostScene(dark bool) *minesweeperApp {
+	app := newMinesweeperApp(7)
+	app.darkMode = dark
+	app.memberID = MemberSoyorin
+	app.diffIdx = 0
+	app.allowQuestion = true
+	app.resetGame(true)
+	pinStartQuote(app)
+	g := app.game
+	g.Reveal(g.Rows/2, g.Cols/2)
+	var right, shield, wrong, question, hit = -1, -1, -1, -1, -1
+	for i := range g.Cells {
+		c := &g.Cells[i]
+		switch {
+		case c.Revealed:
+		case c.IsMine && right < 0 && hasRevealedNeighbour(g, c.Row, c.Col):
+			right = i
+		case c.IsMine && shield < 0 && i != right && hasRevealedNeighbour(g, c.Row, c.Col):
+			shield = i
+		case !c.IsMine && wrong < 0:
+			wrong = i
+		case !c.IsMine && question < 0 && i != wrong:
+			question = i
+		case c.IsMine && hit < 0 && i != right && i != shield:
+			hit = i
+		}
+	}
+	if right >= 0 {
+		g.ToggleFlag(g.Cells[right].Row, g.Cells[right].Col, false)
+	}
+	if wrong >= 0 {
+		g.ToggleFlag(g.Cells[wrong].Row, g.Cells[wrong].Col, false)
+	}
+	if question >= 0 {
+		g.ToggleFlag(g.Cells[question].Row, g.Cells[question].Col, true)
+		g.ToggleFlag(g.Cells[question].Row, g.Cells[question].Col, true)
+	}
+	if shield >= 0 {
+		g.Reveal(g.Cells[shield].Row, g.Cells[shield].Col)
+	}
+	if hit >= 0 {
+		g.Reveal(g.Cells[hit].Row, g.Cells[hit].Col)
+	}
+	return app
+}
+
 // writeSnapshot renders app at width×height into path, pinning
 // time-dependent state so the PNG is reproducible.
-func writeSnapshot(t *testing.T, app *minesweeperApp, width, height int, path string) {
+func writeSnapshot(t *testing.T, app *minesweeperApp, canvas bool, width, height int, path string) {
 	t.Helper()
 	// Saved before NewTester: its first frame clears a hover the pointer
 	// is not on.
 	hoverRow, hoverCol := app.classicHoverRow, app.classicHoverCol
-	tt := ui.NewTester(app.view, width, height)
+	viewFn := app.view
+	if canvas {
+		viewFn = classicCanvasTestView(app)
+	}
+	tt := ui.NewTester(viewFn, width, height)
 	tt.SetScale(2)
 	if app.game.duel != nil {
 		// Park the AI and land the minimap pulse on a phase boundary, then
@@ -147,9 +249,17 @@ func writeSnapshot(t *testing.T, app *minesweeperApp, width, height int, path st
 		// The board's real size only exists after a frame's draw.
 		app.board.center(app.game, duelStageRow, duelStageCol)
 	} else if hoverRow >= 0 {
-		// A staged hover only survives while the pointer is really on
-		// that cell; the hint needs a refresh frame plus its 1ms timer.
-		if r, ok := tt.Find(fmt.Sprintf("cell-%d-%d", hoverRow, hoverCol)); ok {
+		if canvas {
+			tt.Frame()
+			if r, ok := tt.Find("经典棋盘"); ok {
+				v := app.board
+				x := r.X + (float32(hoverCol)+0.5)*v.Cell - v.X
+				y := r.Y + (float32(hoverRow)+0.5)*v.Cell - v.Y
+				tt.Move(x, y)
+			}
+		} else if r, ok := tt.Find(fmt.Sprintf("cell-%d-%d", hoverRow, hoverCol)); ok {
+			// A staged hover only survives while the pointer is really on
+			// that cell; the hint needs a refresh frame plus its 1ms timer.
 			tt.Move(r.X+r.W/2, r.Y+r.H/2)
 			tt.Advance(20 * time.Millisecond)
 		}
