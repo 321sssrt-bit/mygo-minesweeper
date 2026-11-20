@@ -1,6 +1,6 @@
 # 塔台本仓约定
 
-本仓库是纯 Go 桌面程序（基于 egoist/mygo `ui` 包），用 `tower-console` 与 `tower-tickets` 时按下列约定落地；模型阵容沿用全局技能 `docs/routing.md`，其中 **UI 变动车统一升级为 `gemini-4-neon`（`thought_level: "xhigh"`，替代已退役的 `gemini-4-hydrogen`）**。
+本仓库是纯 Go 桌面程序（基于 egoist/mygo `ui` 包），用 `tower-console` 与 `tower-tickets` 时按下列约定落地；模型阵容与推理档位完全沿用全局技能 `docs/routing.md`（`gemini-4-neon` 一律用 `thought_level: "high"`）。
 
 ## 四轨划分
 
