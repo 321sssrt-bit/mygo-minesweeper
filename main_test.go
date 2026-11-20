@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"mygo-minesweeper/internal/scanreport"
 )
 
 func TestFirstClickSafetyAndFloodFill(t *testing.T) {
@@ -1225,5 +1228,244 @@ func TestSnapshotMemesDialog(t *testing.T) {
 		app.unlockedMemes[MemeHaruhikage] = true
 		name := fmt.Sprintf("memes-dialog-default-%s.png", suffix)
 		writeSnapshot(t, app, false, 1280, 900, filepath.Join(dir, name))
+	}
+}
+
+func pixelNearColor(got color.Color, want ui.Color, tol int) bool {
+	gr, gg, gb, _ := got.RGBA()
+	diff := func(a, b int) int {
+		if a > b {
+			return a - b
+		}
+		return b - a
+	}
+	return diff(int(gr>>8), int(want.R)) <= tol &&
+		diff(int(gg>>8), int(want.G)) <= tol &&
+		diff(int(gb>>8), int(want.B)) <= tol
+}
+
+func rectContainsColor(img image.Image, r ui.Rect, want ui.Color, tol int) bool {
+	b := img.Bounds()
+	minX := max(b.Min.X, int(r.X))
+	maxX := min(b.Max.X-1, int(r.X+r.W))
+	minY := max(b.Min.Y, int(r.Y))
+	maxY := min(b.Max.Y-1, int(r.Y+r.H))
+	for y := minY; y <= maxY; y += 2 {
+		for x := minX; x <= maxX; x += 2 {
+			if pixelNearColor(img.At(x, y), want, tol) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestHaruhikagePaperThemeContrastPixelsAndFlows(t *testing.T) {
+	setupLoss := func(dark bool) (*minesweeperApp, *ui.Tester) {
+		app := newMinesweeperApp(42)
+		app.darkMode = dark
+		app.game = NewGame(Difficulty{
+			ID:           "marked-classic",
+			Label:        "春日影 Live",
+			Song:         "春日影",
+			Gameplay:     GameplayClassic,
+			Haruhikage:   true,
+			Rows:         9,
+			Cols:         9,
+			Mines:        1,
+			SkillCharges: 3,
+		}, true, MemberTomori, 7)
+		app.game.FirstClick = true
+		app.game.Status = StatusPlaying
+		app.game.Cell(0, 0).IsMine = true
+		app.game.RecomputeAdjacency()
+
+		tt := ui.NewTester(app.view, 1280, 900)
+		cell0, ok := tt.Find("cell-0-0")
+		if !ok {
+			t.Fatal("cell-0-0 not found")
+		}
+		tt.ClickAt(cell0.X+cell0.W/2, cell0.Y+cell0.H/2)
+		return app, tt
+	}
+
+	for _, dark := range []bool{false, true} {
+		mode := "day"
+		if dark {
+			mode = "night"
+		}
+		t.Run(mode, func(t *testing.T) {
+			pal := paperFor(dark)
+			drama := haruhikageFor(dark)
+
+			// 1. Contrast checks for drama overlay card and questioning dialog.
+			pairs := []struct {
+				name   string
+				fg, bg ui.Color
+			}{
+				{"eyebrow on card", drama.Eyebrow, drama.CardBg},
+				{"title on card", drama.Title, drama.CardBg},
+				{"subtitle on card", drama.Subtitle, drama.CardBg},
+				{"dialog text on bg", drama.DialogText, drama.DialogBg},
+				{"dialog text on surface", drama.DialogText, drama.DialogSurface},
+				{"dialog muted on bg", drama.DialogMuted, drama.DialogBg},
+				{"dialog accent text on accent", drama.DialogAccentText, drama.DialogAccent},
+				{"dialog accent on bg", drama.DialogAccent, drama.DialogBg},
+			}
+			for _, p := range pairs {
+				if cr := contrast(p.fg, p.bg); cr < minInkContrast {
+					t.Errorf("%s contrast = %.2f (< %.1f), fg=%s bg=%s", p.name, cr, minInkContrast, hexOf(p.fg), hexOf(p.bg))
+				}
+			}
+
+			// 2. Headless overlay render pixel verification + click-to-skip flow.
+			app, tt := setupLoss(dark)
+			baseTheme := app.activeTheme()
+			baseAccent, baseBg := baseTheme.Accent, baseTheme.Background
+			dlgTheme := drama.dialogTheme(baseTheme)
+			if dlgTheme.Font != fontFamily || baseTheme.Accent != baseAccent || baseTheme.Background != baseBg {
+				t.Fatalf("dialogTheme mutated baseTheme or dropped font: font=%q", dlgTheme.Font)
+			}
+			if !app.haruhikageIntro || app.haruhikageAlert {
+				t.Fatalf("expected drama overlay active, intro=%v alert=%v", app.haruhikageIntro, app.haruhikageAlert)
+			}
+			tt.Frame()
+			img := tt.Image()
+			wantScrimOnDesk := drama.Scrim.Over(pal.Desk)
+			if got := img.At(1270, 890); !pixelNearColor(got, wantScrimOnDesk, 6) {
+				r, g, b, _ := got.RGBA()
+				t.Errorf("overlay scrim pixel at (1270,890) = #%02X%02X%02X, want near %s", r>>8, g>>8, b>>8, hexOf(wantScrimOnDesk))
+			}
+			titleRect, ok := tt.Find("「……为什么要演奏春日影？！」")
+			if !ok {
+				t.Fatal("drama overlay title not found")
+			}
+			cardPadBand := ui.Rect{X: titleRect.X - 20, Y: titleRect.Y, W: 16, H: titleRect.H}
+			if !rectContainsColor(img, cardPadBand, drama.CardBg, 4) {
+				t.Errorf("drama card padding around %+v did not render palette CardBg %s", titleRect, hexOf(drama.CardBg))
+			}
+
+			if err := tt.Click("春日影演出遮罩"); err != nil {
+				t.Fatalf("failed clicking drama overlay: %v", err)
+			}
+			if app.haruhikageIntro || !app.haruhikageAlert || !tt.HasText("为什么要演奏春日影？！") {
+				t.Fatalf("expected click-to-skip to open AlertDialog, intro=%v alert=%v", app.haruhikageIntro, app.haruhikageAlert)
+			}
+			tt.Frame()
+			dlgImg := tt.Image()
+			dlgRect, ok := tt.Find("为什么要演奏春日影？！")
+			if !ok {
+				t.Fatal("AlertDialog title not found")
+			}
+			dlgPadBand := ui.Rect{X: dlgRect.X + 8, Y: dlgRect.Y + 6, W: dlgRect.W - 16, H: 14}
+			if !rectContainsColor(dlgImg, dlgPadBand, drama.DialogBg, 4) {
+				t.Errorf("AlertDialog header band %+v did not render palette DialogBg %s", dlgPadBand, hexOf(drama.DialogBg))
+			}
+			if forgiveRect, ok := tt.Find("对不起，我错了"); !ok || !rectContainsColor(dlgImg, forgiveRect, drama.DialogSurface, 4) {
+				t.Errorf("AlertDialog secondary button %+v (found=%v) did not render palette DialogSurface %s", forgiveRect, ok, hexOf(drama.DialogSurface))
+			}
+			restartRect, ok := tt.Find("一辈子重开")
+			if !ok || !rectContainsColor(dlgImg, restartRect, drama.DialogAccent, 4) {
+				t.Errorf("AlertDialog primary button %+v (found=%v) did not render palette DialogAccent %s", restartRect, ok, hexOf(drama.DialogAccent))
+			}
+
+			// Verify keyboard focus stays scoped to the dialog theme (not baseTheme.Focus).
+			tt.Key(0, ui.KeyTab)
+			tt.Frame()
+			focusImg := tt.Image()
+			forgiveRect, _ := tt.Find("对不起，我错了")
+			ringBand := ui.Rect{
+				X: min(forgiveRect.X, restartRect.X) - 6,
+				Y: min(forgiveRect.Y, restartRect.Y) - 6,
+				W: max(forgiveRect.X+forgiveRect.W, restartRect.X+restartRect.W) - min(forgiveRect.X, restartRect.X) + 12,
+				H: max(forgiveRect.Y+forgiveRect.H, restartRect.Y+restartRect.H) - min(forgiveRect.Y, restartRect.Y) + 12,
+			}
+			if rectContainsColor(focusImg, ringBand, baseTheme.Focus, 6) {
+				t.Errorf("AlertDialog keyboard focus ring leaked baseTheme.Focus %s instead of dialog theme focus %s", hexOf(baseTheme.Focus), hexOf(dlgTheme.Focus))
+			}
+
+			if err := tt.Click("对不起，我错了"); err != nil {
+				t.Fatalf("failed clicking forgive button: %v", err)
+			}
+			if app.haruhikageAlert || app.game.Status != StatusLost {
+				t.Fatalf("expected dialog dismissed keeping lost board, alert=%v status=%v", app.haruhikageAlert, app.game.Status)
+			}
+			lastChat := app.chatLog[len(app.chatLog)-1]
+			if lastChat.Speaker != "长崎爽世" || !strings.Contains(lastChat.Text, "擅自演奏这首曲子") {
+				t.Fatalf("expected Soyorin apology reply, got %+v", lastChat)
+			}
+
+			// 3. Timed auto-transition to AlertDialog + restart button flow.
+			app2, tt2 := setupLoss(dark)
+			tt2.Advance(haruhikageIntroDuration + 50*time.Millisecond)
+			if app2.haruhikageIntro || !app2.haruhikageAlert || !tt2.HasText("为什么要演奏春日影？！") {
+				t.Fatalf("expected timed transition to AlertDialog, intro=%v alert=%v", app2.haruhikageIntro, app2.haruhikageAlert)
+			}
+			if err := tt2.Click("一辈子重开"); err != nil {
+				t.Fatalf("failed clicking restart button: %v", err)
+			}
+			if app2.game.Status != StatusIdle || app2.haruhikageAlert || app2.haruhikageIntro {
+				t.Fatalf("expected clean reset after restart, status=%v intro=%v alert=%v", app2.game.Status, app2.haruhikageIntro, app2.haruhikageAlert)
+			}
+		})
+	}
+
+	// 4. Whole-repo scanreport must report zero copy violations and zero raw colours.
+	rep, err := scanreport.Scan(".")
+	if err != nil {
+		t.Fatalf("scanreport.Scan failed: %v", err)
+	}
+	if len(rep.Copy) != 0 || len(rep.Colors) != 0 {
+		t.Fatalf("expected zero scanreport findings, got:\n%s", rep)
+	}
+}
+
+func TestSnapshotHaruhikage(t *testing.T) {
+	dir := os.Getenv("MYGO_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set MYGO_SNAPSHOT_DIR to render snapshots")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeHaruhikage := func(dark, showDialog bool, width, height int, filename string) {
+		app := stageDuelScene(dark)
+		tt := ui.NewTester(app.view, width, height)
+		tt.SetScale(2)
+		elapsed := app.game.duel.Elapsed
+		app.game.duel.NextAI = 1e9
+		tt.Advance(time.Duration(1200-tt.Now().UnixMilli()%1200) * time.Millisecond)
+		app.game.duel.Elapsed = elapsed
+		app.elapsed = int(elapsed)
+		app.lastTick = tt.Now()
+		app.board.center(app.game, app.game.Rows/2, app.game.Cols/2-2)
+		if showDialog {
+			app.haruhikageIntro = false
+			app.haruhikageAlert = true
+		} else {
+			app.haruhikageIntro = true
+			app.haruhikageIntroStart = tt.Now()
+			app.haruhikageAlert = false
+		}
+		tt.Frame()
+		tt.Frame()
+		f, err := os.Create(filepath.Join(dir, filename))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dark := range []bool{false, true} {
+		suffix := "day"
+		if dark {
+			suffix = "night"
+		}
+		for _, vp := range snapshotViewports {
+			writeHaruhikage(dark, false, vp.width, vp.height, fmt.Sprintf("haruhikage-overlay-%s-%s.png", vp.name, suffix))
+			writeHaruhikage(dark, true, vp.width, vp.height, fmt.Sprintf("haruhikage-dialog-%s-%s.png", vp.name, suffix))
+		}
 	}
 }

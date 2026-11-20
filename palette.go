@@ -301,6 +301,94 @@ func newDuelHUDColors(p *palette, dp *duelPromptColors) *duelHUDColors {
 	}
 }
 
+// haruhikageDramaColors holds the notebook palette for the Haruhikage
+// lights-out drama overlay and its follow-up questioning AlertDialog.
+type haruhikageDramaColors struct {
+	Scrim      ui.Color
+	CardBg     ui.Color
+	CardBorder ui.Color
+	CardRule   ui.Color
+	CardShadow ui.Color
+	AccentBar  ui.Color
+	Eyebrow    ui.Color
+	Title      ui.Color
+	Subtitle   ui.Color
+
+	DialogBg         ui.Color
+	DialogSurface    ui.Color
+	DialogHover      ui.Color
+	DialogPressed    ui.Color
+	DialogBorder     ui.Color
+	DialogText       ui.Color
+	DialogMuted      ui.Color
+	DialogAccent     ui.Color
+	DialogAccentText ui.Color
+}
+
+var dayHaruhikage, nightHaruhikage = newHaruhikageDramaColors(dayPaper), newHaruhikageDramaColors(nightPaper)
+
+func haruhikageFor(dark bool) *haruhikageDramaColors {
+	if dark {
+		return nightHaruhikage
+	}
+	return dayHaruhikage
+}
+
+func newHaruhikageDramaColors(p *palette) *haruhikageDramaColors {
+	lightsOut := ui.Hex("#120F0C")
+	soyo := memberImage(MemberSoyorin)
+	scrim := lightsOut.Alpha(0.86)
+	cardBg := nightPaper.Board
+	accentBar := dayPaper.BoomInk
+	dialogBg := p.Sheet.Mix(p.Slip, 0.35)
+	dialogSurface := p.Sheet
+	dialogAccentText := p.Sheet
+	if p.Dark {
+		scrim = lightsOut.Alpha(0.90)
+		cardBg = nightPaper.Desk.Mix(nightPaper.Sheet, 0.4)
+		accentBar = dayPaper.BoomInk.Mix(nightPaper.BoomInk, 0.35)
+		dialogBg = p.Sheet
+		dialogSurface = p.Sheet.Mix(p.Slip, 0.45)
+		dialogAccentText = p.Desk
+	}
+	return &haruhikageDramaColors{
+		Scrim:            scrim,
+		CardBg:           cardBg,
+		CardBorder:       soyo.Alpha(0.62).Over(cardBg),
+		CardRule:         nightPaper.Ink.Alpha(0.06),
+		CardShadow:       nightPaper.SlipShade.Alpha(0.62),
+		AccentBar:        accentBar,
+		Eyebrow:          nightPaper.inkOn(cardBg, soyo),
+		Title:            nightPaper.inkOn(cardBg, nightPaper.Ink),
+		Subtitle:         nightPaper.inkOn(cardBg, nightPaper.InkMuted),
+		DialogBg:         dialogBg,
+		DialogSurface:    dialogSurface,
+		DialogHover:      dialogSurface.Mix(p.Ink, 0.06),
+		DialogPressed:    dialogSurface.Mix(p.Ink, 0.12),
+		DialogBorder:     p.BoomInk.Alpha(0.5).Over(dialogBg),
+		DialogText:       p.inkOn(dialogBg, p.Ink),
+		DialogMuted:      p.inkOn(dialogBg, p.InkMuted),
+		DialogAccent:     p.BoomInk,
+		DialogAccentText: dialogAccentText,
+	}
+}
+
+// dialogTheme derives the AlertDialog widget theme from base so the
+// questioning prompt sits on notebook paper with heart-knot emphasis
+// while keeping AlertDialog's native semantics and focus order.
+func (d *haruhikageDramaColors) dialogTheme(base *ui.Theme) *ui.Theme {
+	t := base.WithAccent(d.DialogAccent)
+	t.AccentText = d.DialogAccentText
+	t.Background = d.DialogBg
+	t.Surface = d.DialogSurface
+	t.SurfaceHover = d.DialogHover
+	t.SurfacePressed = d.DialogPressed
+	t.Border = d.DialogBorder
+	t.Text = d.DialogText
+	t.TextMuted = d.DialogMuted
+	return t
+}
+
 // hoverHintColors returns the highlighter fill and crisp cell outline for
 // a number-hover hint on this paper.
 func hoverHintColors(kind HoverHintKind, memberID MemberID, dark bool) (fill, stroke ui.Color) {
