@@ -112,7 +112,7 @@ type MemeAchievement struct {
 }
 
 var AllMemes = []MemeAchievement{
-	{ID: MemeForever, Title: "一辈子！", Desc: "任意曲目完成排练，或在决斗中胜出"},
+	{ID: MemeForever, Title: "一辈子！", Desc: "任意经典曲目通关，或决斗计时结束时胜出"},
 	{ID: MemeHaruhikage, Title: "为什么要演奏春日影！？", Desc: "在《春日影》决斗中比分输给高松灯"},
 	{ID: MemeNeverHappy, Title: "我从来没有觉得扫雷开心过", Desc: "开局前 2 步就踩雷或触发护盾"},
 	{ID: MemeHuman, Title: "好想成为人类啊", Desc: "由高松灯领队并发动技能后通关"},

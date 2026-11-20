@@ -1035,7 +1035,7 @@ func TestMemesAndChatCopyContracts(t *testing.T) {
 		}
 		if diff.Gameplay == GameplayDuel {
 			if len(app.chatLog) < 3 || app.chatLog[1].Speaker != "MyGO!!!!! 决斗室" ||
-				!strings.Contains(app.chatLog[1].Text, "插旗终局结算对错") {
+				!strings.Contains(app.chatLog[1].Text, "手动插旗终局结算对错") {
 				t.Fatalf("duel track %s missing updated duel chat intro: %+v", diff.Song, app.chatLog)
 			}
 		}

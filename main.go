@@ -194,7 +194,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 		a.pushChat("排练重开", hexOf(bandColor), fmt.Sprintf("重新演奏《%s》", diff.Song))
 	}
 	if diff.Gameplay == GameplayDuel {
-		a.pushChat("MyGO!!!!! 决斗室", hexOf(bandColor), "同盘限时抢地：开安全格 +1，踩雷 −100；插旗终局结算对错，不提前露底。")
+		a.pushChat("MyGO!!!!! 决斗室", hexOf(bandColor), "同盘限时抢地：开安全格 +1，踩雷 −100；手动插旗终局结算对错，不提前露底。")
 	}
 	a.pushChat(m.Name, m.ColorHex, a.quote)
 }
