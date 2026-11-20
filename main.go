@@ -591,8 +591,6 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 	case openArrow:
 		a.setlistOpen = true
 		focusSelected = true
-	case a.setlistOpen && trigger.Shortcut(0, ui.KeyEscape):
-		a.setlistOpen = false
 	}
 
 	var listbox ui.Element
@@ -691,7 +689,6 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 									a.resetGame(false)
 								}
 								restoreTriggerFocus = true
-								c.Invalidate()
 							}
 						}
 					})
@@ -702,16 +699,14 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 			if listbox.Shortcut(0, ui.KeyEscape) {
 				a.setlistOpen = false
 				restoreTriggerFocus = true
-				c.Invalidate()
 			}
 		})
-	}).Background(t.Surface)
+	}).Background(t.Surface).KeepFocus()
 
 	if popover.Valid() {
 		trigger.Controls(listbox)
 		if a.setlistOpen && popover.FocusLeft() {
 			a.setlistOpen = false
-			c.Invalidate()
 		}
 	}
 	if restoreTriggerFocus {

@@ -543,14 +543,38 @@ func TestSetlistKeyboardNavigationAndSelection(t *testing.T) {
 		t.Fatal("Tab closing setlist should preserve active game")
 	}
 
-	// Opening with mouse click still allows immediate keyboard navigation and selection.
+	// Opening with mouse click still allows immediate keyboard navigation and selection,
+	// and clicking non-button headers/whitespace inside the popover keeps it open.
 	if err := tt.Click("歌单"); err != nil {
 		t.Fatalf("open setlist with click: %v", err)
+	}
+	for _, header := range []string{"排练歌单", "决斗", "经典"} {
+		info, ok := tt.AccessByRole(ui.RoleText, header)
+		if !ok {
+			t.Fatalf("popover header text %q not found", header)
+		}
+		r := info.Bounds
+		tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+		if !app.setlistOpen {
+			t.Fatalf("clicking internal popover header %q (rect %+v) should keep setlist open", header, r)
+		}
+	}
+	// Clicking internal whitespace beside the header also keeps the popover open.
+	if hdr, ok := tt.AccessByRole(ui.RoleText, "排练歌单"); ok {
+		r := hdr.Bounds
+		tt.ClickAt(r.X+r.W+40, r.Y+r.H/2)
+		if !app.setlistOpen {
+			t.Fatal("clicking internal popover whitespace should keep setlist open")
+		}
+	}
+	// Arrow navigation still works after clicking non-button areas inside the popover.
+	if !tt.Focused("迷星叫") {
+		t.Fatal("expected focus on 迷星叫 after clicking 经典 header and whitespace")
 	}
 	tt.Key(0, ui.KeyDown)
 	tt.Key(0, ui.KeyEnter)
 	if app.setlistOpen || app.diffIdx != 1 || app.game.Difficulty.Song != "碧天伴走" {
-		t.Fatalf("mouse-open + ArrowDown + Enter failed: open=%v idx=%d song=%q", app.setlistOpen, app.diffIdx, app.game.Difficulty.Song)
+		t.Fatalf("mouse-open + header clicks + ArrowDown + Enter failed: open=%v idx=%d song=%q", app.setlistOpen, app.diffIdx, app.game.Difficulty.Song)
 	}
 
 	// Interleaved Gameplay order: arrow navigation follows grouped display order
