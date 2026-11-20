@@ -607,11 +607,16 @@ func TestClassicCanvasPanZoomMinimapAndBoundsSafety(t *testing.T) {
 		t.Fatal("expected flagMode=true")
 	}
 	tt.ClickAt(boardRect.X+mini.X+mini.W-2, boardRect.Y+mini.Y+mini.H-2)
-	wantMaxX := max(float32(0), float32(app.game.Cols)*app.board.Cell-app.board.Width)
-	wantMaxY := max(float32(0), float32(app.game.Rows)*app.board.Cell-app.board.Height)
+	wantMaxX, wantMaxY := app.board.panLimit(app.game)
 	if abs32(app.board.X-wantMaxX) > 0.5 || abs32(app.board.Y-wantMaxY) > 0.5 {
 		t.Fatalf("minimap bottom-right click in flagMode did not jump to max (%v,%v): got (%v,%v)",
 			wantMaxX, wantMaxY, app.board.X, app.board.Y)
+	}
+	// Bottom-right corner cell (79,79) must sit clear of the minimap after jumping there.
+	cornerX := (float32(app.game.Cols)-0.5)*app.board.Cell - app.board.X
+	cornerY := (float32(app.game.Rows)-0.5)*app.board.Cell - app.board.Y
+	if app.board.minimapFor(app.game, cornerX, cornerY) {
+		t.Fatalf("bottom-right cell center (%v,%v) still occluded by minimap %+v", cornerX, cornerY, mini)
 	}
 	if app.game.FlagsPlaced != 0 || app.game.FirstClick {
 		t.Fatal("left-click on minimap in flagMode leaked flag/reveal")
@@ -1740,13 +1745,9 @@ func TestClassicBoardSurfaceFollowsThreshold(t *testing.T) {
 }
 
 // TestSetlistSwitchesClassicSurfaceAcrossThreshold picks tracks from the
-// setlist on the seven-track ladder: the board surface follows each pick,
-// both onto the canvas and back to the widget grid.
+// shipped seven-track setlist: the board surface follows each pick, both onto
+// the canvas and back to the widget grid.
 func TestSetlistSwitchesClassicSurfaceAcrossThreshold(t *testing.T) {
-	orig := Difficulties
-	Difficulties = sevenTrackSetlist()
-	defer func() { Difficulties = orig }()
-
 	app := newMinesweeperApp(42)
 	tt := ui.NewTester(app.view, 1280, 900)
 	for _, step := range []struct {
@@ -1805,5 +1806,66 @@ func TestClassicCanvasKeyboardZoomInAppShell(t *testing.T) {
 	tt.Key(ui.Ctrl, ui.Key0)
 	if row, col, ok := v.cellAt(g, v.Width/2, v.Height/2); !ok || row != g.Rows/2 || col != g.Cols/2 {
 		t.Fatalf("Ctrl+0 shows (%d,%d) mid-view, want the board centre (%d,%d)", row, col, g.Rows/2, g.Cols/2)
+	}
+}
+
+// TestClassicCanvasBottomRightClearsMinimapAcrossZoom verifies that the
+// bottom-right cell of 50x50 and 100x100 classic boards can be panned clear of
+// the minimap and clicked at min/default/max zoom across all snapshot viewports,
+// while boards that do not touch the minimap add no extra overscroll.
+func TestClassicCanvasBottomRightClearsMinimapAcrossZoom(t *testing.T) {
+	for _, track := range []Difficulty{TrackUtakotoba, TrackMayoiuta} {
+		for _, vp := range snapshotViewports {
+			for _, cell := range []float32{10, 26, 42} {
+				name := fmt.Sprintf("%s/%s/cell=%.0f", track.ID, vp.name, cell)
+				t.Run(name, func(t *testing.T) {
+					app := newMinesweeperApp(7)
+					app.game = NewGame(track, false, MemberTomori, 7)
+					tt := ui.NewTester(app.view, vp.width, vp.height)
+					tt.Frame()
+
+					boardRect, ok := tt.Find("经典棋盘")
+					if !ok {
+						t.Fatal("classic canvas missing")
+					}
+					v, g := app.board, app.game
+					v.Cell = cell
+					v.clamp(g)
+
+					boardW := float32(g.Cols) * v.Cell
+					boardH := float32(g.Rows) * v.Cell
+					mini := v.minimapBoundsFor(g)
+					maxX, maxY := v.panLimit(g)
+					if boardW <= mini.X || boardH <= mini.Y {
+						wantX := max(float32(0), boardW-v.Width)
+						wantY := max(float32(0), boardH-v.Height)
+						if maxX != wantX || maxY != wantY {
+							t.Fatalf("non-overlapping board added overscroll: got (%v,%v), want (%v,%v)", maxX, maxY, wantX, wantY)
+						}
+					}
+
+					// Pan to the bottom-right corner and verify (Rows-1, Cols-1) is clear of minimap and clickable.
+					v.center(g, g.Rows-1, g.Cols-1)
+					tt.Frame()
+					lx := (float32(g.Cols)-0.5)*v.Cell - v.X
+					ly := (float32(g.Rows)-0.5)*v.Cell - v.Y
+					if lx < 0 || ly < 0 || lx >= boardRect.W || ly >= boardRect.H || v.minimapFor(g, lx, ly) {
+						t.Fatalf("bottom-right cell center (%v,%v) unreachable in board %+v / minimap %+v", lx, ly, boardRect, mini)
+					}
+					tt.RightClickAt(boardRect.X+lx, boardRect.Y+ly)
+					corner := g.Cell(g.Rows-1, g.Cols-1)
+					if !corner.Flagged || g.FlagsPlaced != 1 {
+						t.Fatalf("right-click on bottom-right cell (%d,%d) failed: flagged=%v total=%d",
+							g.Rows-1, g.Cols-1, corner.Flagged, g.FlagsPlaced)
+					}
+					tt.RightClickAt(boardRect.X+lx, boardRect.Y+ly)
+					tt.ClickAt(boardRect.X+lx, boardRect.Y+ly)
+					if !g.FirstClick || !corner.Revealed || g.Status != StatusPlaying {
+						t.Fatalf("left-click on bottom-right cell (%d,%d) failed: first=%v revealed=%v status=%v",
+							g.Rows-1, g.Cols-1, g.FirstClick, corner.Revealed, g.Status)
+					}
+				})
+			}
+		}
 	}
 }

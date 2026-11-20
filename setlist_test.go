@@ -9,24 +9,6 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// sevenTrackSetlist builds a seven-track ladder from the existing and
-// pre-staged engine tracks to verify the setlist popover against the
-// target seven-track layout without altering Difficulties globally.
-func sevenTrackSetlist() []Difficulty {
-	if len(Difficulties) >= 7 {
-		return append([]Difficulty(nil), Difficulties...)
-	}
-	return []Difficulty{
-		Difficulties[0],
-		Difficulties[1],
-		TrackKageiromai,
-		TrackUtakotoba,
-		TrackMayoiuta,
-		TrackSenzaihyoumei,
-		Difficulties[len(Difficulties)-1],
-	}
-}
-
 func TestSetlistPopoverSelectBySongName(t *testing.T) {
 	app := newMinesweeperApp(12345)
 	tt := ui.NewTester(app.view, 1280, 900)
@@ -202,9 +184,9 @@ func TestSetlistAccentContrastMeetsWCAGAA(t *testing.T) {
 }
 
 func TestSetlistPopoverSevenTracksFitDefaultWindow(t *testing.T) {
-	orig := Difficulties
-	Difficulties = sevenTrackSetlist()
-	defer func() { Difficulties = orig }()
+	if len(Difficulties) != 7 {
+		t.Fatalf("shipped Difficulties count = %d, want 7", len(Difficulties))
+	}
 
 	const winW, winH = 1280, 900
 	app := newMinesweeperApp(12345)
@@ -701,8 +683,149 @@ func TestSetlistScreenReaderSemantics(t *testing.T) {
 	}
 }
 
-// TestSnapshotSetlistPopover renders the 7-track setlist popover expanded
-// in the default 1280×900 viewport for both day and night themes when
+// TestSetlistLargeTracksPlayOnCanvas selects 50x50 《诗超绊》 and 100x100
+// 《迷路日々》 from the shipped setlist popover, verifies both route onto the
+// shared classic canvas, drags the bottom-right corner clear of the minimap,
+// and plays each through opening, flagging, winning, losing, and resetting via
+// headless UI input.
+func TestSetlistLargeTracksPlayOnCanvas(t *testing.T) {
+	for _, want := range []Difficulty{TrackUtakotoba, TrackMayoiuta} {
+		t.Run(want.ID, func(t *testing.T) {
+			app := newMinesweeperApp(12345)
+			tt := ui.NewTester(app.view, 1280, 900)
+
+			if err := tt.Click("歌单"); err != nil {
+				t.Fatalf("open setlist for %s: %v", want.Song, err)
+			}
+			if err := tt.Click(want.Song); err != nil {
+				t.Fatalf("select %s from setlist: %v", want.Song, err)
+			}
+			if app.game.Difficulty != want || app.isDuel() {
+				t.Fatalf("active track = %+v duel=%v, want classic %+v", app.game.Difficulty, app.isDuel(), want)
+			}
+			// Re-pin deterministic seed after setlist selection (selectDifficulty calls resetGame(false)).
+			app.seed = 12345
+			app.resetGame(true)
+			tt.Frame()
+
+			boardRect, ok := tt.Find("经典棋盘")
+			if !ok || boardRect.W <= 0 || boardRect.H <= 0 {
+				t.Fatalf("%s: classic canvas missing: %+v ok=%v", want.ID, boardRect, ok)
+			}
+			if _, hasGrid := tt.Find("cell-0-0"); hasGrid {
+				t.Fatalf("%s: rendered button grid instead of classic canvas", want.ID)
+			}
+
+			cellPoint := func(row, col int) (float32, float32) {
+				v := app.board
+				return boardRect.X + (float32(col)+0.5)*v.Cell - v.X,
+					boardRect.Y + (float32(row)+0.5)*v.Cell - v.Y
+			}
+
+			// First click on the canvas starts the game safely.
+			tt.ClickAt(boardRect.X+boardRect.W/2, boardRect.Y+boardRect.H/2)
+			if !app.game.FirstClick || app.game.Status != StatusPlaying || app.game.RevealedSafe == 0 {
+				t.Fatalf("%s: canvas first click did not start game: first=%v status=%v safe=%d",
+					want.ID, app.game.FirstClick, app.game.Status, app.game.RevealedSafe)
+			}
+
+			// Drag the canvas to its bottom-right limit so the corner cell clears the minimap.
+			mini := app.board.minimapBoundsFor(app.game)
+			maxX, maxY := app.board.panLimit(app.game)
+			for range 12 {
+				if app.board.X >= maxX-0.5 && app.board.Y >= maxY-0.5 {
+					break
+				}
+				sx, sy := boardRect.X+mini.X-20, boardRect.Y+mini.Y-20
+				tt.Press(sx, sy)
+				tt.Move(boardRect.X+20, boardRect.Y+20)
+				tt.Release(boardRect.X+20, boardRect.Y+20)
+			}
+			cornerRow, cornerCol := want.Rows-1, want.Cols-1
+			fx, fy := cellPoint(cornerRow, cornerCol)
+			if app.board.minimapFor(app.game, fx-boardRect.X, fy-boardRect.Y) {
+				t.Fatalf("%s: dragged bottom-right corner (%d,%d) still occluded by minimap", want.ID, cornerRow, cornerCol)
+			}
+			// Right-click the bottom-right corner on the canvas to place and remove a flag.
+			tt.RightClickAt(fx, fy)
+			if !app.game.Cell(cornerRow, cornerCol).Flagged || app.game.FlagsPlaced != 1 {
+				t.Fatalf("%s: right-click on canvas failed to flag (%d,%d): flagged=%v total=%d",
+					want.ID, cornerRow, cornerCol, app.game.Cell(cornerRow, cornerCol).Flagged, app.game.FlagsPlaced)
+			}
+			tt.RightClickAt(fx, fy)
+			if app.game.Cell(cornerRow, cornerCol).Flagged || app.game.FlagsPlaced != 0 {
+				t.Fatalf("%s: second right-click on canvas failed to unflag (%d,%d)", want.ID, cornerRow, cornerCol)
+			}
+
+			// Clear all zero-adjacent regions first, then all remaining numbered
+			// safe cells except the bottom-rightmost one (numbered cells do not
+			// flood-fill), and click that final safe cell on the canvas to win.
+			for i := range app.game.Cells {
+				if c := &app.game.Cells[i]; !c.IsMine && !c.Revealed && c.Adjacent == 0 {
+					app.game.Reveal(c.Row, c.Col)
+				}
+			}
+			var remainingSafe []int
+			for i := range app.game.Cells {
+				if c := &app.game.Cells[i]; !c.IsMine && !c.Revealed {
+					remainingSafe = append(remainingSafe, i)
+				}
+			}
+			if len(remainingSafe) == 0 || app.game.Status != StatusPlaying {
+				t.Fatalf("%s: expected remaining numbered safe cells while playing: rem=%d status=%v",
+					want.ID, len(remainingSafe), app.game.Status)
+			}
+			for _, idx := range remainingSafe[:len(remainingSafe)-1] {
+				c := &app.game.Cells[idx]
+				app.game.Reveal(c.Row, c.Col)
+			}
+			last := &app.game.Cells[remainingSafe[len(remainingSafe)-1]]
+			if app.game.Status != StatusPlaying || last.Revealed {
+				t.Fatalf("%s: expected one final safe cell while playing: last=(%d,%d) revealed=%v status=%v",
+					want.ID, last.Row, last.Col, last.Revealed, app.game.Status)
+			}
+			app.board.center(app.game, last.Row, last.Col)
+			tt.Frame()
+			wx, wy := cellPoint(last.Row, last.Col)
+			tt.ClickAt(wx, wy)
+			if app.game.Status != StatusWon || app.game.FlagsPlaced != want.Mines {
+				t.Fatalf("%s: clicking final safe cell (%d,%d) on canvas did not win: status=%v flags=%d/%d",
+					want.ID, last.Row, last.Col, app.game.Status, app.game.FlagsPlaced, want.Mines)
+			}
+
+			// Reset with R, re-pin seed, reopen via canvas, then hit a mine on the canvas to verify ordinary loss.
+			tt.Key(0, ui.KeyR)
+			if app.game.Status != StatusIdle || app.game.Difficulty != want {
+				t.Fatalf("%s: KeyR failed to reset track: status=%v diff=%+v", want.ID, app.game.Status, app.game.Difficulty)
+			}
+			app.seed = 12345
+			app.resetGame(true)
+			tt.Frame()
+			tt.ClickAt(boardRect.X+boardRect.W/2, boardRect.Y+boardRect.H/2)
+			mineRow, mineCol := -1, -1
+			for i := range app.game.Cells {
+				if c := &app.game.Cells[i]; c.IsMine && !c.Revealed && !c.Flagged {
+					mineRow, mineCol = c.Row, c.Col
+					break
+				}
+			}
+			if mineRow < 0 {
+				t.Fatalf("%s: no mine found after reopen", want.ID)
+			}
+			app.board.center(app.game, mineRow, mineCol)
+			tt.Frame()
+			mx, my := cellPoint(mineRow, mineCol)
+			tt.ClickAt(mx, my)
+			if app.game.Status != StatusLost || app.haruhikageIntro || app.haruhikageAlert {
+				t.Fatalf("%s: mine click on canvas did not produce plain loss: status=%v intro=%v alert=%v",
+					want.ID, app.game.Status, app.haruhikageIntro, app.haruhikageAlert)
+			}
+		})
+	}
+}
+
+// TestSnapshotSetlistPopover renders the shipped 7-track setlist popover
+// expanded in the default 1280×900 viewport for both day and night themes when
 // MYGO_SNAPSHOT_DIR is set.
 func TestSnapshotSetlistPopover(t *testing.T) {
 	dir := os.Getenv("MYGO_SNAPSHOT_DIR")
@@ -712,10 +835,6 @@ func TestSnapshotSetlistPopover(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-
-	orig := Difficulties
-	Difficulties = sevenTrackSetlist()
-	defer func() { Difficulties = orig }()
 
 	for _, dark := range []bool{false, true} {
 		suffix := "day"

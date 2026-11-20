@@ -263,6 +263,17 @@ func TestClassicBoardFitsEveryDifficulty(t *testing.T) {
 		app.resetGame(false)
 		tt := ui.NewTester(app.view, 1280, 900)
 		tt.Frame()
+		if diff.Rows > 30 || diff.Cols > 30 {
+			// Classic boards past 30x30 route onto the shared paper canvas (#35).
+			r, ok := tt.Find("经典棋盘")
+			if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 || r.X+r.W > 1280 || r.Y+r.H > 900 {
+				t.Fatalf("difficulty %d (%s) classic canvas bounds invalid: %+v found=%v", i, diff.ID, r, ok)
+			}
+			if _, hasCell := tt.Find("cell-0-0"); hasCell {
+				t.Fatalf("difficulty %d (%s) rendered button grid instead of classic canvas", i, diff.ID)
+			}
+			continue
+		}
 		if diff.Rows > 20 {
 			// Classic boards taller than 20 rows keep the 22px cell floor and scroll inside ScrollBoth.
 			r, ok := tt.Find("cell-0-0")

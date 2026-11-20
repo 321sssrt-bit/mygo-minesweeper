@@ -57,17 +57,8 @@ var Difficulties = []Difficulty{
 		SkillCharges: 2,
 	},
 	TrackKageiromai,
-	{
-		ID:           "forever",
-		Label:        "一辈子契约",
-		Song:         "诗超绊",
-		Subtitle:     "20×20 · 80雷",
-		Gameplay:     GameplayClassic,
-		Rows:         20,
-		Cols:         20,
-		Mines:        80,
-		SkillCharges: 3,
-	},
+	TrackUtakotoba,
+	TrackMayoiuta,
 	TrackSenzaihyoumei,
 	{
 		ID:           "duel",
@@ -118,8 +109,8 @@ var TrackSenzaihyoumei = Difficulty{
 }
 
 // TrackUtakotoba is the 50x50 classic track of the seven-track ladder (spec
-// #1): ~50% no-skill clear rate per the win-rate simulation. Defined here but
-// deliberately absent from Difficulties until its setlist ticket lands.
+// #1): ~50% no-skill clear rate per the win-rate simulation. Listed as the
+// fourth classic track in Difficulties (#39).
 var TrackUtakotoba = Difficulty{
 	ID:           "utakotoba",
 	Label:        "一辈子契约",
@@ -133,8 +124,8 @@ var TrackUtakotoba = Difficulty{
 }
 
 // TrackMayoiuta is the 100x100 classic track of the seven-track ladder (spec
-// #1): ~32% no-skill clear rate per the win-rate simulation. Defined here but
-// deliberately absent from Difficulties until its setlist ticket lands.
+// #1): ~32% no-skill clear rate per the win-rate simulation. Listed as the
+// fifth classic track in Difficulties (#39).
 var TrackMayoiuta = Difficulty{
 	ID:           "mayoiuta",
 	Label:        "迷路日々",

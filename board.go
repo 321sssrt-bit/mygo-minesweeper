@@ -67,6 +67,22 @@ func (v *boardView) updateHover(g *Game) {
 	v.HoverRow, v.HoverCol = row, col
 }
 
+func (v *boardView) panLimit(g *Game) (float32, float32) {
+	boardW := float32(g.Cols) * v.Cell
+	boardH := float32(g.Rows) * v.Cell
+	maxX := max(float32(0), boardW-v.Width)
+	maxY := max(float32(0), boardH-v.Height)
+	if g.duel == nil {
+		// Reserve overscroll past the bottom-right minimap so corner cells of
+		// large classic boards can always be dragged clear and clicked.
+		if mini := v.minimapBoundsFor(g); boardW > mini.X && boardH > mini.Y {
+			maxX = max(maxX, boardW-max(float32(0), mini.X-minimapMargin))
+			maxY = max(maxY, boardH-max(float32(0), mini.Y-minimapMargin))
+		}
+	}
+	return maxX, maxY
+}
+
 func (v *boardView) clamp(g *Game) {
 	if !isFinite32(v.Cell) {
 		v.Cell = 26
@@ -89,8 +105,7 @@ func (v *boardView) clamp(g *Game) {
 	if !isFinite32(v.Y) {
 		v.Y = 0
 	}
-	maxX := max(float32(0), float32(g.Cols)*v.Cell-v.Width)
-	maxY := max(float32(0), float32(g.Rows)*v.Cell-v.Height)
+	maxX, maxY := v.panLimit(g)
 	v.X = max(0, min(maxX, v.X))
 	v.Y = max(0, min(maxY, v.Y))
 	v.updateHover(g)

@@ -292,8 +292,8 @@ func TestWinRateSimulation(t *testing.T) {
 			t.Fatalf("MYGO_SIM_SEED: %v", err)
 		}
 	}
-	// Spec-measured rates for the classic tracks in Difficulties (#1, #37).
-	want := map[string]float64{"kageiromai": 0.65, "forever": 0.44}
+	// Spec-measured rates for the classic tracks in Difficulties (#1, #37, #39).
+	want := map[string]float64{"kageiromai": 0.65, "utakotoba": 0.50, "mayoiuta": 0.32}
 	rates := map[string]float64{}
 	for _, diff := range Difficulties {
 		if diff.Gameplay == GameplayDuel {
