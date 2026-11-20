@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -750,6 +751,249 @@ func TestSnapshotDuelPrompts(t *testing.T) {
 		tt.Frame()
 
 		path := filepath.Join(dir, fmt.Sprintf("duel-prompts-default-%s.png", suffix))
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := png.Encode(f, tt.Image()); err != nil {
+			f.Close()
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// advanceToStunPulsePeak advances the tester clock to the nearest millisecond
+// where sin(ms/120) reaches its peak so the canvas stun border is rendered at
+// full alert opacity deterministically.
+func advanceToStunPulsePeak(tt *ui.Tester) float32 {
+	base := tt.Now().UnixMilli()
+	bestOffset := int64(0)
+	bestSin := -2.0
+	for off := int64(0); off < 755; off++ {
+		s := math.Sin(float64(base+off) / 120.0)
+		if s > bestSin {
+			bestSin = s
+			bestOffset = off
+		}
+	}
+	if bestOffset > 0 {
+		tt.Advance(time.Duration(bestOffset) * time.Millisecond)
+	}
+	return 0.45 + 0.55*float32(0.5+0.5*math.Sin(float64(tt.Now().UnixMilli())/120.0))
+}
+
+// Duel HUD badges (player score, AI score, stun, scan) and the canvas stun
+// banner keep WCAG-AA contrast on both papers, share the scan note palette
+// with duelPromptsFor, and leave zero raw colours in board.go and duelHUD.
+func TestDuelHUDAndStunContrastAndScanReport(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		pal, dp, hud := paperFor(dark), duelPromptsFor(dark), duelHUDFor(dark)
+		badges := []struct {
+			name string
+			c    badgeColors
+		}{
+			{"player", hud.Player},
+			{"ai", hud.AI},
+			{"stun", hud.Stun},
+			{"scan", hud.Scan},
+		}
+		for _, b := range badges {
+			if got := contrast(b.c.Text, b.c.Bg); got < minInkContrast {
+				t.Errorf("dark=%v %s badge text %s on %s: contrast %.2f < %.1f",
+					dark, b.name, hexOf(b.c.Text), hexOf(b.c.Bg), got, minInkContrast)
+			}
+		}
+		if hud.Scan.Bg != dp.ScanBadgeBg || hud.Scan.Text != dp.ScanBadgeText {
+			t.Errorf("dark=%v HUD scan badge (%s/%s) differs from duelPromptsFor (%s/%s)",
+				dark, hexOf(hud.Scan.Bg), hexOf(hud.Scan.Text), hexOf(dp.ScanBadgeBg), hexOf(dp.ScanBadgeText))
+		}
+		if got := contrast(hud.Banner.Title, hud.Banner.Bg); got < minInkContrast {
+			t.Errorf("dark=%v stun banner title %s on %s: contrast %.2f < %.1f",
+				dark, hexOf(hud.Banner.Title), hexOf(hud.Banner.Bg), got, minInkContrast)
+		}
+		if got := contrast(hud.Banner.Sub, hud.Banner.Bg); got < minInkContrast {
+			t.Errorf("dark=%v stun banner sub %s on %s: contrast %.2f < %.1f",
+				dark, hexOf(hud.Banner.Sub), hexOf(hud.Banner.Bg), got, minInkContrast)
+		}
+		if hud.Banner.Border != pal.BoomInk || hud.Banner.Pulse != pal.BoomInk {
+			t.Errorf("dark=%v stun banner border/pulse = (%s, %s), want BoomInk %s",
+				dark, hexOf(hud.Banner.Border), hexOf(hud.Banner.Pulse), hexOf(pal.BoomInk))
+		}
+	}
+
+	rep, err := scanreport.Scan(".")
+	if err != nil {
+		t.Fatalf("scanreport.Scan failed: %v", err)
+	}
+	if len(rep.Copy) != 0 {
+		t.Errorf("copy violations = %d, want 0:\n%s", len(rep.Copy), rep)
+	}
+	duelHUDForbidden := []string{"#173B49", "#55B2D6", "#3B2740", "#F07AA4", "#701F2B", "#3C301D", "#F5D99C"}
+	boardColors := 0
+	for _, f := range rep.Colors {
+		base := filepath.Base(f.Path)
+		if base == "board.go" {
+			boardColors++
+			t.Errorf("board.go:%d still defines raw colour %s", f.Line, f.Text)
+		}
+		if base == "main.go" {
+			upper := strings.ToUpper(f.Text)
+			for _, hex := range duelHUDForbidden {
+				if strings.Contains(upper, hex) {
+					t.Errorf("main.go:%d still defines migrated duelHUD raw colour %s", f.Line, f.Text)
+				}
+			}
+		}
+	}
+	if boardColors != 0 {
+		t.Errorf("board.go raw colours = %d, want 0", boardColors)
+	}
+	if len(rep.Colors) != 7 {
+		t.Errorf("total raw colours = %d, want 7 (#23 remaining only):\n%s", len(rep.Colors), rep)
+	}
+}
+
+// Rendered duel HUD badges (player, AI, stun, scan), the canvas stun warning
+// banner (bg, border, title, sub), and the pulsing canvas stun border all
+// paint their palette colours in both day and night themes.
+func TestDuelHUDAndStunPaintPaletteColors(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app := stageDuelScene(dark)
+			g := app.game
+			elapsed := g.duel.Elapsed
+			g.duel.NextAI = 1e9
+			g.duel.StunnedUntil = elapsed + 2.1
+			g.duel.ScanUntil = elapsed + 6.4
+
+			tt := ui.NewTester(app.view, 1280, 900)
+			tt.SetScale(2)
+			pulse := advanceToStunPulsePeak(tt)
+			g.duel.Elapsed = elapsed
+			app.elapsed = int(elapsed)
+			app.lastTick = tt.Now()
+			tt.Frame()
+			app.board.center(g, duelStageRow, duelStageCol)
+			tt.Frame()
+
+			img := tt.Image()
+			pal, hud := paperFor(dark), duelHUDFor(dark)
+
+			// 1. Verify all four duel HUD badges paint palette bg and text.
+			badgeCases := []struct {
+				name  string
+				label string
+				style badgeColors
+			}{
+				{"player", fmt.Sprintf("你 %d", g.duel.PlayerScore), hud.Player},
+				{"ai", fmt.Sprintf("高松灯 %d", g.duel.AIScore), hud.AI},
+				{"stun", fmt.Sprintf("硬直 %.1f 秒", g.duel.StunnedUntil-g.duel.Elapsed), hud.Stun},
+				{"scan", fmt.Sprintf("扫描 %.1f 秒", g.duel.ScanUntil-g.duel.Elapsed), hud.Scan},
+			}
+			for _, tc := range badgeCases {
+				r, ok := tt.Find(tc.label)
+				if !ok {
+					t.Fatalf("%s badge %q not found", tc.name, tc.label)
+				}
+				if n := countMatchingPixels(img, r, 2, tc.style.Bg, 14); n < 40 {
+					t.Errorf("%s badge %q missing palette bg %s (matched %d px)", tc.name, tc.label, hexOf(tc.style.Bg), n)
+				}
+				if n := countMatchingPixels(img, r, 2, tc.style.Text, 24); n < 12 {
+					t.Errorf("%s badge %q missing palette text %s (matched %d px)", tc.name, tc.label, hexOf(tc.style.Text), n)
+				}
+			}
+
+			// 2. Verify canvas duel-stun-banner card bg, border, title, and subtitle.
+			titleLabel := fmt.Sprintf("踩雷硬直中 · %.1f 秒", g.duel.StunnedUntil-g.duel.Elapsed)
+			subLabel := "按 E 发动「创可贴指引」立即解除硬直"
+			titleRect, ok := tt.Find(titleLabel)
+			if !ok {
+				t.Fatalf("stun banner title %q not found", titleLabel)
+			}
+			subRect, ok := tt.Find(subLabel)
+			if !ok {
+				t.Fatalf("stun banner subtitle %q not found", subLabel)
+			}
+			cardRect := ui.Rect{
+				X: min(titleRect.X, subRect.X) - 22,
+				Y: titleRect.Y - 14,
+				W: max(titleRect.X+titleRect.W, subRect.X+subRect.W) - min(titleRect.X, subRect.X) + 44,
+				H: (subRect.Y + subRect.H) - titleRect.Y + 28,
+			}
+			if n := countMatchingPixels(img, cardRect, 2, hud.Banner.Bg, 14); n < 120 {
+				t.Errorf("stun banner missing palette bg %s (matched %d px)", hexOf(hud.Banner.Bg), n)
+			}
+			if n := countMatchingPixels(img, cardRect, 2, hud.Banner.Border, 20); n < 40 {
+				t.Errorf("stun banner missing palette border %s (matched %d px)", hexOf(hud.Banner.Border), n)
+			}
+			if n := countMatchingPixels(img, titleRect, 2, hud.Banner.Title, 24); n < 24 {
+				t.Errorf("stun banner title missing palette text %s (matched %d px)", hexOf(hud.Banner.Title), n)
+			}
+			if n := countMatchingPixels(img, subRect, 2, hud.Banner.Sub, 24); n < 24 {
+				t.Errorf("stun banner sub missing palette text %s (matched %d px)", hexOf(hud.Banner.Sub), n)
+			}
+
+			// 3. Verify canvas pulsing stun border paints hud.Banner.Pulse.
+			board, ok := tt.Find("决斗棋盘")
+			if !ok {
+				t.Fatal("duel board not found")
+			}
+			wantPulse := hud.Banner.Pulse.Alpha(pulse).Over(pal.Board)
+			topEdge := ui.Rect{X: board.X + 20, Y: board.Y, W: board.W - 40, H: 8}
+			if n := countMatchingPixels(img, topEdge, 2, wantPulse, 20); n < 80 {
+				t.Errorf("canvas stun pulse border missing palette stroke %s (matched %d px)", hexOf(wantPulse), n)
+			}
+		})
+	}
+}
+
+// TestSnapshotDuelHUDStun renders day and night snapshots showcasing the duel
+// HUD score/stun/scan badges, canvas stun banner, pulsing stun border, and
+// active 9×9 scan overlay when MYGO_SNAPSHOT_DIR is set.
+func TestSnapshotDuelHUDStun(t *testing.T) {
+	dir := os.Getenv("MYGO_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set MYGO_SNAPSHOT_DIR to render snapshots")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dark := range []bool{false, true} {
+		suffix := "day"
+		if dark {
+			suffix = "night"
+		}
+		app := stageDuelScene(dark)
+		g := app.game
+		elapsed := g.duel.Elapsed
+		g.duel.NextAI = 1e9
+		g.duel.StunnedUntil = elapsed + 2.1
+		g.duel.ScanUntil = elapsed + 6.4
+
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.SetScale(2)
+		advanceToStunPulsePeak(tt)
+		g.duel.Elapsed = elapsed
+		app.elapsed = int(elapsed)
+		app.lastTick = tt.Now()
+		tt.Frame()
+		app.board.center(g, duelStageRow, duelStageCol)
+		tt.Frame()
+
+		board, ok := tt.Find("决斗棋盘")
+		if !ok {
+			t.Fatal("duel board not found")
+		}
+		v := app.board
+		hx := board.X + (float32(duelStageCol)+0.5)*v.Cell - v.X
+		hy := board.Y + (float32(duelStageRow)+0.5)*v.Cell - v.Y
+		tt.Move(hx, hy)
+		tt.Frame()
+
+		path := filepath.Join(dir, fmt.Sprintf("duel-hud-stun-default-%s.png", suffix))
 		f, err := os.Create(path)
 		if err != nil {
 			t.Fatal(err)

@@ -368,6 +368,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 
 		if a.game != nil && a.game.duel != nil && a.game.Status == StatusPlaying && a.game.duel.playerStunned() {
 			d := a.game.duel
+			pal, stun := paperFor(a.darkMode), duelHUDFor(a.darkMode).Banner
 			hint := "暂无法操作棋盘 · 等待硬直结束"
 			if a.bandMode() && a.memberID == MemberTomori {
 				if a.game.SkillUsesLeft > 0 {
@@ -379,11 +380,12 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 			ui.Row(c.Key("duel-stun-banner")).Absolute().Top(16).Start(0).End(0).
 				Justify(ui.Center).PassThrough().Children(func() {
 				ui.Column(c).Padding(10, 18).Gap(3).Radius(10).AlignItems(ui.Center).
-					Background(ui.Hex("#450A18").Alpha(0.88)).Border(1.5, ui.Hex("#FB7185")).
+					Background(stun.Bg).Border(1.5, stun.Border).
+					Shadow(0, 2, 8, 0, pal.SlipShade).
 					PassThrough().Children(func() {
 					ui.Textf(c, "踩雷硬直中 · %.1f 秒", max(0, d.StunnedUntil-d.Elapsed)).
-						FontSize(15).Bold().TextColor(ui.Hex("#FFE4E6"))
-					ui.Text(c, hint).FontSize(12).TextColor(ui.Hex("#FDA4AF"))
+						FontSize(15).Bold().TextColor(stun.Title)
+					ui.Text(c, hint).FontSize(12).TextColor(stun.Sub)
 				})
 			})
 		}
@@ -599,7 +601,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		}
 		if g.duel != nil && g.Status == StatusPlaying && g.duel.playerStunned() {
 			pulse := 0.45 + 0.55*float32(0.5+0.5*math.Sin(float64(now.UnixMilli())/120.0))
-			p.Stroke(ui.Rect{X: r.X + 2, Y: r.Y + 2, W: r.W - 4, H: r.H - 4}, ui.Hex("#FB7185").Alpha(pulse), 8, 4)
+			p.Stroke(ui.Rect{X: r.X + 2, Y: r.Y + 2, W: r.W - 4, H: r.H - 4}, duelHUDFor(a.darkMode).Banner.Pulse.Alpha(pulse), 8, 4)
 			p.AnimationFrame()
 		}
 		mini := v.minimapBoundsFor(g)

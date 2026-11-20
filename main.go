@@ -734,10 +734,11 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 
 func (a *minesweeperApp) duelHUD(c *ui.Context) {
 	d := a.game.duel
+	hud := duelHUDFor(a.darkMode)
 	ui.Row(c).Grow(0).Padding(8, 10).Gap(12).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Badge(c, fmt.Sprintf("你 %d", d.PlayerScore)).Background(ui.Hex("#173B49")).TextColor(ui.Hex("#55B2D6"))
-			ui.Badge(c, fmt.Sprintf("高松灯 %d", d.AIScore)).Background(ui.Hex("#3B2740")).TextColor(ui.Hex("#F07AA4"))
+			ui.Badge(c, fmt.Sprintf("你 %d", d.PlayerScore)).Background(hud.Player.Bg).TextColor(hud.Player.Text)
+			ui.Badge(c, fmt.Sprintf("高松灯 %d", d.AIScore)).Background(hud.AI.Bg).TextColor(hud.AI.Text)
 			ui.Badge(c, "剩余 "+formatClock(int(d.remaining()))).Background(c.Theme().Accent.Alpha(0.18))
 		})
 		ui.Row(c).Gap(6).Children(func() {
@@ -758,12 +759,12 @@ func (a *minesweeperApp) duelHUD(c *ui.Context) {
 	ui.Row(c).Padding(4, 8).Gap(8).Children(func() {
 		ui.Badge(c, fmt.Sprintf("连击 ×%d", d.PlayerCombo))
 		if d.playerStunned() {
-			ui.Badge(c, fmt.Sprintf("硬直 %.1f 秒", d.StunnedUntil-d.Elapsed)).Background(ui.Hex("#701F2B"))
+			ui.Badge(c, fmt.Sprintf("硬直 %.1f 秒", d.StunnedUntil-d.Elapsed)).Background(hud.Stun.Bg).TextColor(hud.Stun.Text)
 		} else {
 			ui.Badge(c, "确定全雷时左键点数字收雷 · +75/雷")
 		}
 		if d.Elapsed < d.ScanUntil {
-			ui.Badge(c, fmt.Sprintf("扫描 %.1f 秒", d.ScanUntil-d.Elapsed)).Background(ui.Hex("#3C301D")).TextColor(ui.Hex("#F5D99C"))
+			ui.Badge(c, fmt.Sprintf("扫描 %.1f 秒", d.ScanUntil-d.Elapsed)).Background(hud.Scan.Bg).TextColor(hud.Scan.Text)
 		}
 		ui.Badge(c, fmt.Sprintf("插旗 %d", a.game.FlagsPlaced))
 	})

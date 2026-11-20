@@ -242,6 +242,65 @@ func newDuelPromptColors(p *palette) *duelPromptColors {
 	}
 }
 
+// badgeColors holds the composited pill background and WCAG-AA text ink for
+// one duel HUD badge.
+type badgeColors struct {
+	Bg, Text ui.Color
+}
+
+// duelStunColors holds the palette colours for the canvas stun warning card
+// and the pulsing alert border around the duel board.
+type duelStunColors struct {
+	Bg, Border, Title, Sub, Pulse ui.Color
+}
+
+// duelHUDColors holds the day/night notebook palette for the duel HUD badges
+// and stun alert overlays.
+type duelHUDColors struct {
+	Player, AI, Stun, Scan badgeColors
+	Banner                 duelStunColors
+}
+
+var dayDuelHUD, nightDuelHUD = newDuelHUDColors(dayPaper, dayDuelPrompts), newDuelHUDColors(nightPaper, nightDuelPrompts)
+
+func duelHUDFor(dark bool) *duelHUDColors {
+	if dark {
+		return nightDuelHUD
+	}
+	return dayDuelHUD
+}
+
+func newDuelHUDColors(p *palette, dp *duelPromptColors) *duelHUDColors {
+	scoreAlpha := float32(0.22)
+	stunBadgeAlpha := float32(0.20)
+	bannerBase := p.Sheet
+	bannerAlpha := float32(0.14)
+	if p.Dark {
+		scoreAlpha = 0.20
+		stunBadgeAlpha = 0.24
+		bannerBase = p.Desk
+		bannerAlpha = 0.22
+	}
+	badge := func(base ui.Color, alpha float32) badgeColors {
+		bg := base.Alpha(alpha).Over(p.Sheet)
+		return badgeColors{Bg: bg, Text: p.inkOn(bg, base)}
+	}
+	bannerBg := p.BoomInk.Alpha(bannerAlpha).Over(bannerBase)
+	return &duelHUDColors{
+		Player: badge(duelPalette.Player, scoreAlpha),
+		AI:     badge(duelPalette.AI, scoreAlpha),
+		Stun:   badge(p.BoomInk, stunBadgeAlpha),
+		Scan:   badgeColors{Bg: dp.ScanBadgeBg, Text: dp.ScanBadgeText},
+		Banner: duelStunColors{
+			Bg:     bannerBg,
+			Border: p.BoomInk,
+			Title:  p.inkOn(bannerBg, p.BoomInk),
+			Sub:    p.inkOn(bannerBg, p.Graphite),
+			Pulse:  p.BoomInk,
+		},
+	}
+}
+
 // hoverHintColors returns the highlighter fill and crisp cell outline for
 // a number-hover hint on this paper.
 func hoverHintColors(kind HoverHintKind, memberID MemberID, dark bool) (fill, stroke ui.Color) {
