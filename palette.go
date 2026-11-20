@@ -54,6 +54,40 @@ func paperFor(dark bool) *palette {
 	return dayPaper
 }
 
+// minimapColors are the notebook colours of a classic board's minimap:
+// desk paper for unopened ground, band-blue wash for opened progress,
+// band-aid tone for flags, boom ink for hit mines / wrong flags, and ink
+// for the viewport frame.
+type minimapColors struct {
+	Bg, Border, Opened, Flag, Boom, Viewport ui.Color
+}
+
+var dayMinimap, nightMinimap = newMinimapColors(dayPaper), newMinimapColors(nightPaper)
+
+func classicMinimapFor(dark bool) *minimapColors {
+	if dark {
+		return nightMinimap
+	}
+	return dayMinimap
+}
+
+func newMinimapColors(p *palette) *minimapColors {
+	opened := bandColor.Alpha(0.65).Over(p.Desk)
+	flag := p.InkOf(p.BandAidEdge)
+	if p.Dark {
+		opened = p.InkOf(bandColor).Alpha(0.65).Over(p.Desk)
+		flag = p.BandAid
+	}
+	return &minimapColors{
+		Bg:       p.Desk,
+		Border:   p.Rule.Alpha(1.6),
+		Opened:   opened,
+		Flag:     flag,
+		Boom:     p.BoomInk,
+		Viewport: p.Ink,
+	}
+}
+
 // minInkContrast is the WCAG AA ratio every ink keeps against the paper.
 const minInkContrast = 4.5
 

@@ -576,77 +576,12 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		mini := v.minimapBoundsFor(g)
 		mini.X += r.X
 		mini.Y += r.Y
-		p.Fill(mini, ui.Hex("#0B1423").Alpha(0.94), 6)
-		if g.duel != nil && len(g.duel.Minimap) == minimapGridSize*minimapGridSize {
-			rowMap, colMap := minimapAxisSlots(g)
-			bw := mini.W / float32(minimapGridSize)
-			bh := mini.H / float32(minimapGridSize)
-			fillW := max(1.5, bw)
-			fillH := max(1.5, bh)
-			for br := range minimapGridSize {
-				srcRowOff := rowMap[br] * minimapGridSize
-				for bc := range minimapGridSize {
-					blk := g.duel.Minimap[srcRowOff+colMap[bc]]
-					if blk.Player == 0 && blk.AI == 0 {
-						continue
-					}
-					var color ui.Color
-					switch {
-					case blk.Player > 0 && blk.AI > 0:
-						density := min(float32(1), float32(blk.Player+blk.AI)/24)
-						color = ui.Hex("#A78BFA").Alpha(0.65 + 0.35*density)
-					case blk.Player > 0:
-						density := min(float32(1), float32(blk.Player)/20)
-						color = ui.Hex("#55B2D6").Alpha(0.65 + 0.35*density)
-					default:
-						density := min(float32(1), float32(blk.AI)/20)
-						color = ui.Hex("#F07AA4").Alpha(0.65 + 0.35*density)
-					}
-					bx := mini.X + float32(bc)*bw
-					by := mini.Y + float32(br)*bh
-					p.Fill(ui.Rect{X: bx, Y: by, W: min(fillW, mini.X+mini.W-bx), H: min(fillH, mini.Y+mini.H-by)}, color, 0)
-				}
-			}
-		}
-		pulsing := g.Status == StatusPlaying
-		pulse := float32(0)
-		if pulsing {
-			ms := float32(p.Now().UnixMilli() % 1200)
-			if ms < 0 {
-				ms += 1200
-			}
-			pulse = ms / 1200.0
-		}
-		hasAI := g.duel != nil && g.duel.LastAI >= 0 && g.duel.LastAI < len(g.Cells)
-		hasPlayer := g.duel != nil && g.duel.LastCell >= 0 && g.duel.LastCell < len(g.Cells)
-		var ax, ay float32
-		if hasAI {
-			ax, ay = minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastAI, 5)
-			if pulsing {
-				ring := clampMinimapRect(mini, ax-(3+pulse*4.5), ay-(3+pulse*4.5), (3+pulse*4.5)*2)
-				p.Stroke(ring, ui.Hex("#F07AA4").Alpha(1-pulse*0.75), 99, 1.5)
-			}
-			p.Fill(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#F07AA4"), 1)
-			p.Stroke(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#FDF2F8"), 1, 1)
-		}
-		if hasPlayer {
-			px, py := minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastCell, 5)
-			if hasAI {
-				px, py = separateMinimapMarker(mini, px, py, ax, ay, 5)
-			}
-			if pulsing {
-				ring := clampMinimapRect(mini, px-(3+pulse*3.5), py-(3+pulse*3.5), (3+pulse*3.5)*2)
-				p.Stroke(ring, ui.Hex("#38BDF8").Alpha(1-pulse*0.75), 99, 1.5)
-			}
-			p.Fill(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#38BDF8"), 99)
-			p.Stroke(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#F4F8FD"), 99, 1)
-		}
-		if pulsing && (hasAI || hasPlayer) {
-			p.AnimationFrame()
-		}
 		view := minimapViewportRect(mini, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
-		p.Stroke(view, ui.Hex("#F4F8FD"), 2, 1.5)
-		p.Stroke(mini, t.Border, 6, 1)
+		if classic {
+			paintClassicMinimap(p, g, mini, view, pal, classicMinimapFor(a.darkMode))
+		} else {
+			paintDuelMinimap(p, g, mini, view, t.Border)
+		}
 		// The caption sits on a scrap of the sheet so it reads over slips.
 		caption := ui.Span{Text: fmt.Sprintf("(%d, %d) · %.0f%% · 拖动平移 / 滚轮缩放", v.HoverRow, v.HoverCol, v.Cell/42*100), Size: 12, Color: t.TextMuted}
 		cw, ch := p.MeasureText(0, caption)
@@ -787,6 +722,143 @@ func (a *minesweeperApp) pruneAndDrawPopups(p *ui.Painter, r ui.Rect, now time.T
 	if len(a.duelPopups) > 0 {
 		p.AnimationFrame()
 	}
+}
+
+type classicMinimapMark uint8
+
+const (
+	classicMarkNone classicMinimapMark = iota
+	classicMarkOpened
+	classicMarkFlag
+	classicMarkBoom
+)
+
+func classicCellMark(cell *Cell) classicMinimapMark {
+	switch {
+	case cell.Exploded || cell.WrongFlag:
+		return classicMarkBoom
+	case cell.Flagged:
+		return classicMarkFlag
+	case cell.Revealed && !cell.IsMine:
+		return classicMarkOpened
+	default:
+		return classicMarkNone
+	}
+}
+
+func (mc *minimapColors) colorFor(mark classicMinimapMark) ui.Color {
+	switch mark {
+	case classicMarkBoom:
+		return mc.Boom
+	case classicMarkFlag:
+		return mc.Flag
+	default:
+		return mc.Opened
+	}
+}
+
+func paintClassicMinimap(p *ui.Painter, g *Game, mini, view ui.Rect, pal *palette, mc *minimapColors) {
+	p.Shadow(mini, 6, 0, 2, 6, 0, pal.SlipShade)
+	p.Clip(mini, 6, func() {
+		p.Fill(mini, mc.Bg, 6)
+		if g.Rows > 0 && g.Cols > 0 {
+			cw := mini.W / float32(g.Cols)
+			ch := mini.H / float32(g.Rows)
+			for row := range g.Rows {
+				y0 := mini.Y + float32(row)*ch
+				y1 := mini.Y + float32(row+1)*ch
+				rowOff := row * g.Cols
+				for col := 0; col < g.Cols; {
+					mark := classicCellMark(&g.Cells[rowOff+col])
+					end := col + 1
+					for end < g.Cols && classicCellMark(&g.Cells[rowOff+end]) == mark {
+						end++
+					}
+					if mark != classicMarkNone {
+						x0 := mini.X + float32(col)*cw
+						x1 := mini.X + float32(end)*cw
+						p.Fill(ui.Rect{X: x0, Y: y0, W: x1 - x0, H: y1 - y0}, mc.colorFor(mark), 0)
+					}
+					col = end
+				}
+			}
+		}
+		p.Stroke(view, mc.Viewport, 2, 1.5)
+	})
+	p.Stroke(mini, mc.Border, 6, 1)
+}
+
+func paintDuelMinimap(p *ui.Painter, g *Game, mini, view ui.Rect, border ui.Color) {
+	p.Fill(mini, ui.Hex("#0B1423").Alpha(0.94), 6)
+	if len(g.duel.Minimap) == minimapGridSize*minimapGridSize {
+		rowMap, colMap := minimapAxisSlots(g)
+		bw := mini.W / float32(minimapGridSize)
+		bh := mini.H / float32(minimapGridSize)
+		fillW := max(1.5, bw)
+		fillH := max(1.5, bh)
+		for br := range minimapGridSize {
+			srcRowOff := rowMap[br] * minimapGridSize
+			for bc := range minimapGridSize {
+				blk := g.duel.Minimap[srcRowOff+colMap[bc]]
+				if blk.Player == 0 && blk.AI == 0 {
+					continue
+				}
+				var color ui.Color
+				switch {
+				case blk.Player > 0 && blk.AI > 0:
+					density := min(float32(1), float32(blk.Player+blk.AI)/24)
+					color = ui.Hex("#A78BFA").Alpha(0.65 + 0.35*density)
+				case blk.Player > 0:
+					density := min(float32(1), float32(blk.Player)/20)
+					color = ui.Hex("#55B2D6").Alpha(0.65 + 0.35*density)
+				default:
+					density := min(float32(1), float32(blk.AI)/20)
+					color = ui.Hex("#F07AA4").Alpha(0.65 + 0.35*density)
+				}
+				bx := mini.X + float32(bc)*bw
+				by := mini.Y + float32(br)*bh
+				p.Fill(ui.Rect{X: bx, Y: by, W: min(fillW, mini.X+mini.W-bx), H: min(fillH, mini.Y+mini.H-by)}, color, 0)
+			}
+		}
+	}
+	pulsing := g.Status == StatusPlaying
+	pulse := float32(0)
+	if pulsing {
+		ms := float32(p.Now().UnixMilli() % 1200)
+		if ms < 0 {
+			ms += 1200
+		}
+		pulse = ms / 1200.0
+	}
+	hasAI := g.duel.LastAI >= 0 && g.duel.LastAI < len(g.Cells)
+	hasPlayer := g.duel.LastCell >= 0 && g.duel.LastCell < len(g.Cells)
+	var ax, ay float32
+	if hasAI {
+		ax, ay = minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastAI, 5)
+		if pulsing {
+			ring := clampMinimapRect(mini, ax-(3+pulse*4.5), ay-(3+pulse*4.5), (3+pulse*4.5)*2)
+			p.Stroke(ring, ui.Hex("#F07AA4").Alpha(1-pulse*0.75), 99, 1.5)
+		}
+		p.Fill(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#F07AA4"), 1)
+		p.Stroke(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#FDF2F8"), 1, 1)
+	}
+	if hasPlayer {
+		px, py := minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastCell, 5)
+		if hasAI {
+			px, py = separateMinimapMarker(mini, px, py, ax, ay, 5)
+		}
+		if pulsing {
+			ring := clampMinimapRect(mini, px-(3+pulse*3.5), py-(3+pulse*3.5), (3+pulse*3.5)*2)
+			p.Stroke(ring, ui.Hex("#38BDF8").Alpha(1-pulse*0.75), 99, 1.5)
+		}
+		p.Fill(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#38BDF8"), 99)
+		p.Stroke(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#F4F8FD"), 99, 1)
+	}
+	if pulsing && (hasAI || hasPlayer) {
+		p.AnimationFrame()
+	}
+	p.Stroke(view, ui.Hex("#F4F8FD"), 2, 1.5)
+	p.Stroke(mini, border, 6, 1)
 }
 
 func minimapAxisSlots(g *Game) (rowMap, colMap [minimapGridSize]int) {

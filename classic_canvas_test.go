@@ -1442,3 +1442,169 @@ func TestClassicCanvasShakeVisualDecayAndHitTestStability(t *testing.T) {
 		})
 	}
 }
+
+func minimapCellCenter(board, mini ui.Rect, rows, cols, row, col int) (float32, float32) {
+	return board.X + mini.X + (float32(col)+0.5)/float32(cols)*mini.W,
+		board.Y + mini.Y + (float32(row)+0.5)/float32(rows)*mini.H
+}
+
+// Classic minimap renders only the player's own progress (opened safe cells,
+// flags, and boom/wrong-flag markers) in the notebook palette across day and
+// night, omits unhit mines revealed on loss and all duel AI colours, and
+// supports clicking any target cell to jump the viewport without leaking edits.
+func TestClassicMinimapShowsOwnProgressOnlyAndClickToJump(t *testing.T) {
+	duelAINavy := ui.Hex("#0B1423")
+	duelAIPink := ui.Hex("#F07AA4")
+	duelContested := ui.Hex("#A78BFA")
+
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			mc := classicMinimapFor(dark)
+			if got := contrast(mc.Viewport, mc.Bg); got < minInkContrast {
+				t.Errorf("viewport contrast on bg = %.2f < %.1f", got, minInkContrast)
+			}
+			if got := contrast(mc.Viewport, mc.Opened); got < 3.5 {
+				t.Errorf("viewport contrast on opened = %.2f < 3.5", got)
+			}
+
+			// Stage a 10x10 classic board with distinct regions for every state so
+			// each cell spans ~14.8px on the minimap and stays cleanly away from
+			// the viewport outline when zoomed in.
+			app := newMinesweeperApp(7)
+			app.darkMode = dark
+			app.memberID = MemberSoyorin
+			app.allowQuestion = true
+			app.game = NewGame(Difficulty{
+				ID:           "classic-minimap-test",
+				Gameplay:     GameplayClassic,
+				Rows:         10,
+				Cols:         10,
+				Mines:        4,
+				SkillCharges: 1,
+			}, true, MemberSoyorin, 7)
+			g := app.game
+			g.FirstClick = true
+			g.Status = StatusPlaying
+			// Mines: (1,7) flagged, (3,7) shielded, (8,8) unhit mine revealed on loss, (5,7) hit mine.
+			g.Cell(1, 7).IsMine = true
+			g.Cell(3, 7).IsMine = true
+			g.Cell(8, 8).IsMine = true
+			g.Cell(5, 7).IsMine = true
+			g.RecomputeAdjacency()
+
+			tt := ui.NewTester(classicCanvasTestView(app), 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+
+			board, ok := tt.Find("经典棋盘")
+			if !ok {
+				t.Fatal("classic canvas board missing")
+			}
+			v := app.board
+			mini := v.minimapBoundsFor(g)
+			miniScreen := ui.Rect{X: board.X + mini.X, Y: board.Y + mini.Y, W: mini.W, H: mini.H}
+			miniInterior := ui.Rect{X: miniScreen.X + 4, Y: miniScreen.Y + 4, W: miniScreen.W - 8, H: miniScreen.H - 8}
+
+			// 1. Fresh board: minimap interior is pure notebook Bg, zero duel colours.
+			img := tt.Image()
+			sampleCell := func(img *image.RGBA, row, col int) ui.Color {
+				cx, cy := minimapCellCenter(board, mini, g.Rows, g.Cols, row, col)
+				return sampleCanvasPixel(img, cx, cy, 2)
+			}
+			assertColorNear(t, "idle minimap cell (2,2)", sampleCell(img, 2, 2), mc.Bg)
+			for name, forbidden := range map[string]ui.Color{
+				"duel navy":      duelAINavy,
+				"duel AI pink":   duelAIPink,
+				"duel contested": duelContested,
+			} {
+				if n := countMatchingPixels(img, miniInterior, 2, forbidden, 12); n != 0 {
+					t.Errorf("idle classic minimap painted %d %s pixels", n, name)
+				}
+			}
+
+			// 2. Live progress: open safe numbered cell (1,6) (no flood-fill),
+			// flag mine (1,7), shield mine (3,7), misflag safe (5,2), mark ?
+			// at (8,2), and leave (8,5) unrevealed.
+			g.Reveal(1, 6)
+			g.ToggleFlag(1, 7, false)
+			g.Reveal(3, 7)
+			g.ToggleFlag(5, 2, false)
+			g.ToggleFlag(8, 2, true)
+			g.ToggleFlag(8, 2, true)
+			tt.Frame()
+			img = tt.Image()
+
+			assertColorNear(t, "live opened safe (1,6)", sampleCell(img, 1, 6), mc.Opened)
+			assertColorNear(t, "live normal flag (1,7)", sampleCell(img, 1, 7), mc.Flag)
+			assertColorNear(t, "live shield flag (3,7)", sampleCell(img, 3, 7), mc.Flag)
+			assertColorNear(t, "live questioned (8,2) stays bg", sampleCell(img, 8, 2), mc.Bg)
+			assertColorNear(t, "live unrevealed (8,5) stays bg", sampleCell(img, 8, 5), mc.Bg)
+			for name, forbidden := range map[string]ui.Color{
+				"duel AI pink":   duelAIPink,
+				"duel contested": duelContested,
+			} {
+				if n := countMatchingPixels(img, miniInterior, 2, forbidden, 12); n != 0 {
+					t.Errorf("live classic minimap painted %d %s pixels", n, name)
+				}
+			}
+
+			// 3. Loss: hit mine (5,7) and wrong flag (5,2) paint Boom, while unhit
+			// mine (8,8) revealed by finalizeLoss stays Bg (not player progress).
+			g.Reveal(5, 7)
+			if g.Status != StatusLost || !g.Cell(8, 8).Revealed || !g.Cell(5, 2).WrongFlag {
+				t.Fatalf("expected StatusLost with revealed unhit mine and wrong flag, status=%v (8,8)=%+v (5,2)=%+v",
+					g.Status, g.Cell(8, 8), g.Cell(5, 2))
+			}
+			tt.Frame()
+			img = tt.Image()
+			assertColorNear(t, "lost exploded mine (5,7)", sampleCell(img, 5, 7), mc.Boom)
+			assertColorNear(t, "lost wrong flag (5,2)", sampleCell(img, 5, 2), mc.Boom)
+			assertColorNear(t, "lost unhit mine (8,8) stays bg", sampleCell(img, 8, 8), mc.Bg)
+			assertColorNear(t, "lost opened safe (1,6) preserved", sampleCell(img, 1, 6), mc.Opened)
+			assertColorNear(t, "lost right flag (1,7) preserved", sampleCell(img, 1, 7), mc.Flag)
+
+			// 4. Click-to-jump on a large 50x50 classic board: clicking interior
+			// coordinates on the minimap centers the viewport on that cell and
+			// moves the rendered viewport outline without mutating game state.
+			bigApp := newMinesweeperApp(42)
+			bigApp.darkMode = dark
+			bigApp.game = NewGame(TrackUtakotoba, true, MemberTomori, 42)
+			bigTT := ui.NewTester(classicCanvasTestView(bigApp), 960, 640)
+			bigTT.SetScale(2)
+			bigTT.Frame()
+			bigBoard, ok := bigTT.Find("经典棋盘")
+			if !ok {
+				t.Fatal("50x50 classic canvas board missing")
+			}
+			bigApp.board.Cell = 36
+			bigApp.board.clamp(bigApp.game)
+			bigTT.Frame()
+
+			bigMini := bigApp.board.minimapBoundsFor(bigApp.game)
+			targets := [][2]int{{12, 38}, {38, 12}, {0, 0}, {49, 49}}
+			for _, tgt := range targets {
+				cx, cy := minimapCellCenter(bigBoard, bigMini, bigApp.game.Rows, bigApp.game.Cols, tgt[0], tgt[1])
+				bigTT.ClickAt(cx, cy)
+				if bigApp.game.FirstClick || bigApp.game.Moves != 0 || bigApp.game.FlagsPlaced != 0 {
+					t.Fatalf("minimap jump to %v leaked board action", tgt)
+				}
+				if tgt[0] > 0 && tgt[0] < bigApp.game.Rows-1 {
+					gotR, gotC, ok := bigApp.board.cellAt(bigApp.game, bigBoard.W/2, bigBoard.H/2)
+					if !ok || absInt(gotR-tgt[0]) > 1 || absInt(gotC-tgt[1]) > 1 {
+						t.Fatalf("minimap interior jump to %v landed at (%d,%d) ok=%v", tgt, gotR, gotC, ok)
+					}
+				}
+				// Verify viewport stroke appears along the computed viewport rect.
+				miniAbs := ui.Rect{X: bigBoard.X + bigMini.X, Y: bigBoard.Y + bigMini.Y, W: bigMini.W, H: bigMini.H}
+				vp := minimapViewportRect(miniAbs, bigApp.game.Rows, bigApp.game.Cols, bigApp.board.X, bigApp.board.Y, bigBoard.W, bigBoard.H, bigApp.board.Cell)
+				probe := ui.Rect{X: vp.X + vp.W/2 - 3, Y: vp.Y - 2, W: 6, H: 5}
+				if vp.Y <= miniAbs.Y+2 {
+					probe.Y = vp.Y + vp.H - 2
+				}
+				if got := countMatchingPixels(bigTT.Image(), probe, 2, mc.Viewport, 28); got < 4 {
+					t.Errorf("minimap viewport frame missing near %+v after jump to %v (matched %d px)", probe, tgt, got)
+				}
+			}
+		})
+	}
+}
