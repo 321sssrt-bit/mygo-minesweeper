@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"image/png"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -320,5 +322,436 @@ func TestDuelFlagsLastAIAndMinimapPaintPaletteColors(t *testing.T) {
 				t.Errorf("duel minimap missing viewport frame %s along %+v (matched %d px)", hexOf(dm.Viewport), vpTop, n)
 			}
 		})
+	}
+}
+
+func findOrPrepareClaimable(g *Game, centerRow, centerCol int) (int, int, bool) {
+	for row := centerRow - 5; row <= centerRow+5; row++ {
+		for col := centerCol - 7; col <= centerCol+7; col++ {
+			if g.InspectNumberHover(row, col, false).Kind == HintClaimable {
+				return row, col, true
+			}
+		}
+	}
+	for row := centerRow - 5; row <= centerRow+5; row++ {
+		for col := centerCol - 7; col <= centerCol+7; col++ {
+			c := g.Cell(row, col)
+			if c == nil || !c.Revealed || c.Exploded || c.Adjacent == 0 {
+				continue
+			}
+			hasUnflaggedMine := false
+			for _, n := range g.Neighbors(row, col) {
+				if n.IsMine && !n.Revealed && !n.Flagged {
+					hasUnflaggedMine = true
+					break
+				}
+			}
+			if !hasUnflaggedMine {
+				continue
+			}
+			for _, n := range g.Neighbors(row, col) {
+				if !n.IsMine && !n.Revealed && !n.Flagged {
+					g.Reveal(n.Row, n.Col)
+				}
+			}
+			if g.InspectNumberHover(row, col, false).Kind == HintClaimable {
+				return row, col, true
+			}
+		}
+	}
+	return -1, -1, false
+}
+
+func findOrPrepareChordable(g *Game, centerRow, centerCol int) (int, int, bool) {
+	for row := centerRow - 5; row <= centerRow+5; row++ {
+		for col := centerCol - 7; col <= centerCol+7; col++ {
+			if g.InspectNumberHover(row, col, false).Kind == HintChordable {
+				return row, col, true
+			}
+		}
+	}
+	for row := centerRow - 5; row <= centerRow+5; row++ {
+		for col := centerCol - 7; col <= centerCol+7; col++ {
+			c := g.Cell(row, col)
+			if c == nil || !c.Revealed || c.Exploded || c.Adjacent == 0 {
+				continue
+			}
+			hasHiddenSafe := false
+			for _, n := range g.Neighbors(row, col) {
+				if !n.IsMine && !n.Revealed && !n.Flagged {
+					hasHiddenSafe = true
+					break
+				}
+			}
+			if !hasHiddenSafe {
+				continue
+			}
+			for _, n := range g.Neighbors(row, col) {
+				if n.IsMine && !n.Revealed && !n.Flagged {
+					g.ToggleFlag(n.Row, n.Col, false)
+				}
+			}
+			if g.InspectNumberHover(row, col, false).Kind == HintChordable {
+				return row, col, true
+			}
+		}
+	}
+	return -1, -1, false
+}
+
+// Duel prompts (gold claim highlighter, leader chord highlighter, 9×9 scan
+// badge, four floating score pills, and milestone chat highlights) stay
+// WCAG-AA readable on both papers and leave no migrated raw hex literals in
+// board.go or main.go.
+func TestDuelPromptsContrastAndScanReport(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		pal, dp := paperFor(dark), duelPromptsFor(dark)
+		if got := contrast(dp.ScanBadgeText, dp.ScanBadgeBg); got < minInkContrast {
+			t.Errorf("dark=%v scan badge text %s on %s: contrast %.2f < %.1f",
+				dark, hexOf(dp.ScanBadgeText), hexOf(dp.ScanBadgeBg), got, minInkContrast)
+		}
+		for kind := duelPopupScore; kind <= duelPopupBoom; kind++ {
+			st := dp.Popups[kind]
+			if got := contrast(st.Text, st.Bg); got < minInkContrast {
+				t.Errorf("dark=%v popup kind=%d text %s on %s: contrast %.2f < %.1f",
+					dark, kind, hexOf(st.Text), hexOf(st.Bg), got, minInkContrast)
+			}
+		}
+		claimFill, claimStroke := hoverHintColors(HintClaimable, MemberTomori, dark)
+		if claimFill != goldHighlighter || claimStroke != pal.InkOf(goldHighlighter) {
+			t.Errorf("dark=%v HintClaimable colors = (%s, %s), want (%s, %s)",
+				dark, hexOf(claimFill), hexOf(claimStroke), hexOf(goldHighlighter), hexOf(pal.InkOf(goldHighlighter)))
+		}
+		for _, m := range Members {
+			base := memberImage(m.ID)
+			fill, stroke := hoverHintColors(HintChordable, m.ID, dark)
+			if fill != base || stroke != pal.InkOf(base) {
+				t.Errorf("dark=%v member=%s HintChordable colors = (%s, %s), want (%s, %s)",
+					dark, m.ID, hexOf(fill), hexOf(stroke), hexOf(base), hexOf(pal.InkOf(base)))
+			}
+		}
+	}
+
+	app := stageDuelScene(false)
+	now := time.Unix(1000, 0)
+	app.spawnDuelPopup(duelStageRow, duelStageCol, ActionResult{Kind: ActionFlagged, ScoreDelta: 75}, now)
+	app.spawnDuelPopup(duelStageRow, duelStageCol, ActionResult{Kind: ActionLost, ScoreDelta: -100}, now)
+	app.game.duel.PlayerCombo = 4
+	app.spawnDuelPopup(duelStageRow, duelStageCol, ActionResult{Kind: ActionRevealed, RevealedCount: 9, ScoreDelta: 12}, now)
+	app.game.duel.PlayerCombo = 1
+	app.spawnDuelPopup(duelStageRow, duelStageCol, ActionResult{Kind: ActionRevealed, RevealedCount: 5, ScoreDelta: 6}, now)
+	wantKinds := []duelPopupKind{duelPopupClaim, duelPopupBoom, duelPopupCombo, duelPopupScore}
+	if len(app.duelPopups) != len(wantKinds) {
+		t.Fatalf("spawnDuelPopup created %d popups, want %d", len(app.duelPopups), len(wantKinds))
+	}
+	for i, want := range wantKinds {
+		if app.duelPopups[i].Kind != want {
+			t.Errorf("popup[%d].Kind = %d, want %d", i, app.duelPopups[i].Kind, want)
+		}
+	}
+
+	// Verify milestone chat notes use palette goldHighlighter instead of a raw literal.
+	tt := ui.NewTester(func(c *ui.Context) {
+		if len(app.unlockedMemes) == 0 {
+			app.unlockMemes(c, []string{MemeForever})
+		}
+		if !app.duelEnded {
+			app.settleDuel(c, c.Now(), "决斗测试结算")
+		}
+	}, 400, 300)
+	tt.Frame()
+	wantGoldHex := hexOf(goldHighlighter)
+	seenUnlock, seenSettle := false, false
+	for _, msg := range app.chatLog {
+		if msg.Speaker == "名场面解锁" && msg.ColorHex == wantGoldHex {
+			seenUnlock = true
+		}
+		if msg.Speaker == "决斗结算" && msg.ColorHex == wantGoldHex {
+			seenSettle = true
+		}
+	}
+	if !seenUnlock || !seenSettle {
+		t.Errorf("expected goldHighlighter (%s) on unlockMemes (%v) and settleDuel (%v) chat logs", wantGoldHex, seenUnlock, seenSettle)
+	}
+
+	rep, err := scanreport.Scan(".")
+	if err != nil {
+		t.Fatalf("scanreport.Scan failed: %v", err)
+	}
+	boardForbidden := []string{"#E8A849", "#3C301D", "#F5D99C", "#070D17"}
+	mainForbidden := []string{"#070D17", "#38BDF8"}
+	for _, f := range rep.Colors {
+		base := filepath.Base(f.Path)
+		upper := strings.ToUpper(f.Text)
+		if base == "board.go" {
+			for _, hex := range boardForbidden {
+				if strings.Contains(upper, hex) {
+					t.Errorf("board.go:%d still defines migrated raw colour %s", f.Line, f.Text)
+				}
+			}
+		}
+		if base == "main.go" {
+			for _, hex := range mainForbidden {
+				if strings.Contains(upper, hex) {
+					t.Errorf("main.go:%d still defines migrated raw colour %s", f.Line, f.Text)
+				}
+			}
+		}
+	}
+}
+
+// Rendered duel hover hints (gold claim highlighter and leader chord
+// highlighter), 9×9 scan frame & corner badge, four floating score popup
+// capsules, and the recent-action pulse frame all paint palette colours in
+// both day and night themes.
+func TestDuelHintsScanAndPopupsPaintPaletteColors(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app := stageDuelScene(dark)
+			g := app.game
+			g.duel.NextAI = 1e9
+			claimRow, claimCol, ok := findOrPrepareClaimable(g, duelStageRow, duelStageCol)
+			if !ok {
+				t.Fatal("failed to stage a HintClaimable duel cell")
+			}
+			g.duel.ScanUntil = g.duel.Elapsed + 6
+
+			tt := ui.NewTester(app.view, 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+			app.board.center(g, claimRow, claimCol)
+			tt.Frame()
+
+			board, ok := tt.Find("决斗棋盘")
+			if !ok {
+				t.Fatal("duel board not found")
+			}
+			v := app.board
+			pal, dp := paperFor(dark), duelPromptsFor(dark)
+
+			// 1. Hover the claimable number with active 9×9 scan.
+			hx := board.X + (float32(claimCol)+0.5)*v.Cell - v.X
+			hy := board.Y + (float32(claimRow)+0.5)*v.Cell - v.Y
+			tt.Move(hx, hy)
+			tt.Frame()
+			if app.board.LastHoverHint.Kind != HintClaimable {
+				t.Fatalf("LastHoverHint.Kind = %v, want HintClaimable", app.board.LastHoverHint.Kind)
+			}
+			if _, ok := g.ScanAt(claimRow, claimCol); !ok {
+				t.Fatalf("ScanAt(%d,%d) = false, want true", claimRow, claimCol)
+			}
+
+			// Trigger recent-action pulse on a nearby open cell outside the 9×9 border.
+			effectRow, effectCol := claimRow-6, claimCol-6
+			app.board.EffectCell = effectRow*g.Cols + effectCol
+			app.board.LastEffect = tt.Now()
+
+			// Spawn all four popup kinds at well-separated cells.
+			popupCells := []struct {
+				kind duelPopupKind
+				row  int
+				col  int
+				res  ActionResult
+				cmb  int
+			}{
+				{duelPopupClaim, claimRow - 5, claimCol - 4, ActionResult{Kind: ActionFlagged, ScoreDelta: 75}, 1},
+				{duelPopupBoom, claimRow - 5, claimCol + 6, ActionResult{Kind: ActionLost, ScoreDelta: -100}, 0},
+				{duelPopupCombo, claimRow + 6, claimCol - 4, ActionResult{Kind: ActionRevealed, RevealedCount: 9, ScoreDelta: 12}, 4},
+				{duelPopupScore, claimRow + 6, claimCol + 6, ActionResult{Kind: ActionRevealed, RevealedCount: 5, ScoreDelta: 6}, 1},
+			}
+			popNow := tt.Now()
+			for _, pc := range popupCells {
+				g.duel.PlayerCombo = pc.cmb
+				app.spawnDuelPopup(pc.row, pc.col, pc.res, popNow)
+			}
+			tt.Frame()
+			img := tt.Image()
+
+			// Verify HintClaimable center & target slip colours.
+			claimFill, claimStroke := hoverHintColors(HintClaimable, app.memberID, dark)
+			claimCell := g.Cell(claimRow, claimCol)
+			wantCenterFill := claimFill.Alpha(0.24).Over(duelCellPaper(pal, claimCell.Owner))
+			centerRect := classicCanvasCellRect(board, v, claimRow, claimCol)
+			if n := countMatchingPixels(img, centerRect, 2, wantCenterFill, 14); n < 16 {
+				t.Errorf("HintClaimable center (%d,%d) had only %d px near %s", claimRow, claimCol, n, hexOf(wantCenterFill))
+			}
+			if n := countMatchingPixels(img, centerRect, 2, claimStroke, 18); n < 12 {
+				t.Errorf("HintClaimable center (%d,%d) stroke had only %d px near %s", claimRow, claimCol, n, hexOf(claimStroke))
+			}
+			if len(app.board.LastHoverHint.Targets) == 0 {
+				t.Fatal("HintClaimable produced no targets")
+			}
+			tIdx := app.board.LastHoverHint.Targets[0]
+			tRow, tCol := tIdx/g.Cols, tIdx%g.Cols
+			wantTargetFill := claimFill.Alpha(0.32).Over(pal.Slip)
+			targetRect := classicCanvasCellRect(board, v, tRow, tCol)
+			if n := countMatchingPixels(img, targetRect, 2, wantTargetFill, 14); n < 16 {
+				t.Errorf("HintClaimable target (%d,%d) fill had only %d px near %s", tRow, tCol, n, hexOf(wantTargetFill))
+			}
+			if n := countMatchingPixels(img, targetRect, 2, claimStroke, 18); n < 12 {
+				t.Errorf("HintClaimable target (%d,%d) outline had only %d px near %s", tRow, tCol, n, hexOf(claimStroke))
+			}
+
+			// Verify 9×9 scan frame uses dp.ScanFrame.
+			scanTop := ui.Rect{
+				X: board.X + float32(claimCol-4)*v.Cell - v.X + 8,
+				Y: board.Y + float32(claimRow-4)*v.Cell - v.Y - 2,
+				W: 9*v.Cell - 16,
+				H: 4,
+			}
+			if n := countMatchingPixels(img, scanTop, 2, dp.ScanFrame, 18); n < 24 {
+				t.Errorf("9×9 scan frame had only %d px near %s", n, hexOf(dp.ScanFrame))
+			}
+
+			// Verify top-left 9×9 scan badge uses palette bg, border, and text.
+			badgeBox := ui.Rect{X: board.X + 12, Y: board.Y + 12, W: 166, H: 34}
+			assertColorNear(t, "scan badge bg", sampleCanvasPixel(img, badgeBox.X+10, badgeBox.Y+17, 2), dp.ScanBadgeBg)
+			badgeTop := ui.Rect{X: badgeBox.X + 8, Y: badgeBox.Y - 1, W: badgeBox.W - 16, H: 3}
+			if n := countMatchingPixels(img, badgeTop, 2, dp.ScanBadgeBorder, 18); n < 16 {
+				t.Errorf("scan badge border had only %d px near %s", n, hexOf(dp.ScanBadgeBorder))
+			}
+			if n := countMatchingPixels(img, badgeBox, 2, dp.ScanBadgeText, 24); n < 24 {
+				t.Errorf("scan badge text had only %d px near %s", n, hexOf(dp.ScanBadgeText))
+			}
+
+			// Verify all four popup capsules paint their palette bg, border, and text.
+			for _, pc := range popupCells {
+				st := dp.Popups[pc.kind]
+				cx := board.X + (float32(pc.col)+0.5)*v.Cell - v.X
+				py := board.Y + float32(pc.row)*v.Cell - v.Y - 16
+				search := ui.Rect{X: cx - 72, Y: py - 4, W: 144, H: 36}
+				if n := countMatchingPixels(img, search, 2, st.Bg, 18); n < 40 {
+					t.Errorf("popup kind=%d missing pill bg %s (matched %d px)", pc.kind, hexOf(st.Bg), n)
+				}
+				if n := countMatchingPixels(img, search, 2, st.Border, 24); n < 16 {
+					t.Errorf("popup kind=%d missing pill border %s (matched %d px)", pc.kind, hexOf(st.Border), n)
+				}
+				if n := countMatchingPixels(img, search, 2, st.Text, 28); n < 16 {
+					t.Errorf("popup kind=%d missing pill text %s (matched %d px)", pc.kind, hexOf(st.Text), n)
+				}
+			}
+
+			// Verify EffectCell pulse uses activeTheme().Accent (from palette.go).
+			wantAccent := app.activeTheme().Accent
+			effectRect := ui.Rect{
+				X: board.X + float32(effectCol)*v.Cell - v.X - 2,
+				Y: board.Y + float32(effectRow)*v.Cell - v.Y - 2,
+				W: v.Cell + 4,
+				H: v.Cell + 4,
+			}
+			if n := countMatchingPixels(img, effectRect, 2, wantAccent, 20); n < 12 {
+				t.Errorf("EffectCell pulse had only %d px near accent %s", n, hexOf(wantAccent))
+			}
+
+			// 2. Switch leader to MemberAnon and verify HintChordable uses her 代表色 highlighter.
+			app.memberID = MemberAnon
+			app.duelPopups = nil
+			g.duel.ScanUntil = 0
+			chordRow, chordCol, ok := findOrPrepareChordable(g, duelStageRow, duelStageCol)
+			if !ok {
+				t.Fatal("failed to stage a HintChordable duel cell")
+			}
+			app.board.center(g, chordRow, chordCol)
+			tt.Frame()
+			chx := board.X + (float32(chordCol)+0.5)*v.Cell - v.X
+			chy := board.Y + (float32(chordRow)+0.5)*v.Cell - v.Y
+			tt.Move(chx, chy)
+			tt.Frame()
+			if app.board.LastHoverHint.Kind != HintChordable {
+				t.Fatalf("LastHoverHint.Kind = %v, want HintChordable", app.board.LastHoverHint.Kind)
+			}
+			img2 := tt.Image()
+			chordFill, chordStroke := hoverHintColors(HintChordable, MemberAnon, dark)
+			chordCell := g.Cell(chordRow, chordCol)
+			wantChordCenter := chordFill.Alpha(0.24).Over(duelCellPaper(pal, chordCell.Owner))
+			chordCenterRect := classicCanvasCellRect(board, v, chordRow, chordCol)
+			if n := countMatchingPixels(img2, chordCenterRect, 2, wantChordCenter, 14); n < 16 {
+				t.Errorf("HintChordable center (%d,%d) had only %d px near %s", chordRow, chordCol, n, hexOf(wantChordCenter))
+			}
+			if n := countMatchingPixels(img2, chordCenterRect, 2, chordStroke, 18); n < 12 {
+				t.Errorf("HintChordable center (%d,%d) stroke had only %d px near %s", chordRow, chordCol, n, hexOf(chordStroke))
+			}
+			if len(app.board.LastHoverHint.Targets) == 0 {
+				t.Fatal("HintChordable produced no targets")
+			}
+			ctIdx := app.board.LastHoverHint.Targets[0]
+			ctRow, ctCol := ctIdx/g.Cols, ctIdx%g.Cols
+			wantChordTarget := chordFill.Alpha(0.32).Over(pal.Slip)
+			chordTargetRect := classicCanvasCellRect(board, v, ctRow, ctCol)
+			if n := countMatchingPixels(img2, chordTargetRect, 2, wantChordTarget, 14); n < 16 {
+				t.Errorf("HintChordable target (%d,%d) fill had only %d px near %s", ctRow, ctCol, n, hexOf(wantChordTarget))
+			}
+			if n := countMatchingPixels(img2, chordTargetRect, 2, chordStroke, 18); n < 12 {
+				t.Errorf("HintChordable target (%d,%d) outline had only %d px near %s", ctRow, ctCol, n, hexOf(chordStroke))
+			}
+		})
+	}
+}
+
+// TestSnapshotDuelPrompts renders day and night snapshots showcasing duel
+// claim gold highlighter, 9×9 scan frame & corner badge, and all four
+// floating score popups when MYGO_SNAPSHOT_DIR is set.
+func TestSnapshotDuelPrompts(t *testing.T) {
+	dir := os.Getenv("MYGO_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set MYGO_SNAPSHOT_DIR to render snapshots")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dark := range []bool{false, true} {
+		suffix := "day"
+		if dark {
+			suffix = "night"
+		}
+		app := stageDuelScene(dark)
+		g := app.game
+		claimRow, claimCol, ok := findOrPrepareClaimable(g, duelStageRow, duelStageCol)
+		if !ok {
+			t.Fatal("failed to stage a HintClaimable duel cell for snapshot")
+		}
+		elapsed := g.duel.Elapsed
+		g.duel.NextAI = 1e9
+		g.duel.ScanUntil = elapsed + 6.4
+
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.SetScale(2)
+		tt.Advance(time.Duration(1200-tt.Now().UnixMilli()%1200) * time.Millisecond)
+		g.duel.Elapsed = elapsed
+		app.elapsed = int(elapsed)
+		app.lastTick = tt.Now()
+		app.board.center(g, claimRow, claimCol)
+		tt.Frame()
+
+		board, ok := tt.Find("决斗棋盘")
+		if !ok {
+			t.Fatal("duel board not found")
+		}
+		v := app.board
+		hx := board.X + (float32(claimCol)+0.5)*v.Cell - v.X
+		hy := board.Y + (float32(claimRow)+0.5)*v.Cell - v.Y
+		tt.Move(hx, hy)
+
+		popNow := tt.Now()
+		app.spawnDuelPopup(claimRow-5, claimCol-5, ActionResult{Kind: ActionFlagged, ScoreDelta: 75}, popNow)
+		app.spawnDuelPopup(claimRow-5, claimCol+6, ActionResult{Kind: ActionLost, ScoreDelta: -100}, popNow)
+		g.duel.PlayerCombo = 4
+		app.spawnDuelPopup(claimRow+6, claimCol-5, ActionResult{Kind: ActionRevealed, RevealedCount: 9, ScoreDelta: 12}, popNow)
+		g.duel.PlayerCombo = 1
+		app.spawnDuelPopup(claimRow+6, claimCol+6, ActionResult{Kind: ActionRevealed, RevealedCount: 5, ScoreDelta: 6}, popNow)
+		tt.Frame()
+
+		path := filepath.Join(dir, fmt.Sprintf("duel-prompts-default-%s.png", suffix))
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := png.Encode(f, tt.Image()); err != nil {
+			f.Close()
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

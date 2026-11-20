@@ -38,11 +38,11 @@ type tileRipple struct {
 }
 
 type duelPopup struct {
-	Row      int
-	Col      int
-	Text     string
-	ColorHex string
-	Start    time.Time
+	Row   int
+	Col   int
+	Text  string
+	Kind  duelPopupKind
+	Start time.Time
 }
 
 type minesweeperApp struct {
@@ -233,20 +233,21 @@ func (a *minesweeperApp) spawnDuelPopup(row, col int, res ActionResult, now time
 	if !shouldShow {
 		return
 	}
-	var text, colorHex string
+	var text string
+	var kind duelPopupKind
 	switch {
 	case res.Kind == ActionFlagged:
 		text = fmt.Sprintf("+%d 收雷!", res.ScoreDelta)
-		colorHex = "#E8A849"
+		kind = duelPopupClaim
 	case res.Kind == ActionLost && res.ScoreDelta < 0:
 		text = fmt.Sprintf("%d 踩雷!", res.ScoreDelta)
-		colorHex = "#FB7185"
+		kind = duelPopupBoom
 	case res.RevealedCount >= 8 || a.game.duel.PlayerCombo >= 3:
 		text = fmt.Sprintf("+%d · 连击×%d", res.ScoreDelta, a.game.duel.PlayerCombo)
-		colorHex = "#38BDF8"
+		kind = duelPopupCombo
 	default:
 		text = fmt.Sprintf("+%d", res.ScoreDelta)
-		colorHex = "#55B2D6"
+		kind = duelPopupScore
 	}
 	kept := a.duelPopups[:0]
 	for _, p := range a.duelPopups {
@@ -254,7 +255,7 @@ func (a *minesweeperApp) spawnDuelPopup(row, col int, res ActionResult, now time
 			kept = append(kept, p)
 		}
 	}
-	kept = append(kept, duelPopup{Row: row, Col: col, Text: text, ColorHex: colorHex, Start: now})
+	kept = append(kept, duelPopup{Row: row, Col: col, Text: text, Kind: kind, Start: now})
 	if len(kept) > maxDuelPopups {
 		kept = kept[len(kept)-maxDuelPopups:]
 	}
@@ -368,7 +369,7 @@ func (a *minesweeperApp) unlockMemes(c *ui.Context, memeIDs []string) {
 		for _, meme := range AllMemes {
 			if meme.ID == memeID {
 				c.Toast("解锁名场面：「" + meme.Title + "」")
-				a.pushChat("名场面解锁", "#E8A849", "★ "+meme.Title+" — "+meme.Desc)
+				a.pushChat("名场面解锁", hexOf(goldHighlighter), "★ "+meme.Title+" — "+meme.Desc)
 				break
 			}
 		}
@@ -413,7 +414,7 @@ func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string)
 	d := a.game.duel
 	a.duelEnded = true
 	a.setlistOpen = false
-	a.pushChat("决斗结算", "#E8A849", result)
+	a.pushChat("决斗结算", hexOf(goldHighlighter), result)
 	a.applyQuote(d.QuoteEvent)
 	a.unlockMemes(c, d.NewMemes)
 	if slices.Contains(d.NewMemes, MemeHaruhikage) {

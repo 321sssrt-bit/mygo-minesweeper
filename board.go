@@ -396,18 +396,13 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	now := p.Now()
 	hoverHint := g.InspectNumberHover(v.HoverRow, v.HoverCol, a.flagMode)
 	v.LastHoverHint = hoverHint
-	var hintColor ui.Color
-	if hoverHint.Kind == HintClaimable {
-		hintColor = ui.Hex("#E8A849")
-	} else if hoverHint.Kind == HintChordable {
-		hintColor = memberImage(a.memberID)
-	}
+	hintFill, hintStroke := hoverHintColors(hoverHint.Kind, a.memberID, a.darkMode)
 	shakeX, shakeY := a.currentShakeOffset(now)
 	if shakeX != 0 || shakeY != 0 {
 		p.AnimationFrame()
 	}
 
-	pal, art, inks := paperFor(a.darkMode), artFor(a.darkMode), duelInksFor(a.darkMode)
+	pal, art, inks, dp := paperFor(a.darkMode), artFor(a.darkMode), duelInksFor(a.darkMode), duelPromptsFor(a.darkMode)
 	classic := g.duel == nil
 	radius := min(4, v.Cell/7)
 	// Numbers, props and slip shadows only once a cell is big enough to
@@ -481,9 +476,9 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						}
 						if isHintTarget {
 							if classic {
-								bg = hintColor.Alpha(0.42).Over(pal.Slip)
+								bg = hintFill.Alpha(0.42).Over(pal.Slip)
 							} else {
-								bg, outline = hintColor.Alpha(0.28).Over(pal.Slip), hintColor
+								bg, outline = hintFill.Alpha(0.32).Over(pal.Slip), hintStroke
 							}
 						} else if hoverHint.Kind == HintNone && isHovered {
 							bg = pal.Slip.Mix(pal.Sheet, 0.45)
@@ -506,7 +501,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						case cell.IsMine:
 						case cell.Adjacent > 0:
 							if isHintCenter {
-								p.Fill(tile, hintColor.Alpha(0.38), radius)
+								p.Fill(tile, hintFill.Alpha(0.38), radius)
 							} else if k, ok := a.rippleAlphaAt(idx, now); ok {
 								p.Fill(tile, bandColor.Alpha(0.22*k), radius)
 							} else if isHovered {
@@ -525,9 +520,9 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 							p.Fill(tile, duelOwnerColor(cell.Owner).Alpha(duelTerritoryWash), radius)
 						}
 						if isHintCenter {
-							p.Fill(tile, hintColor.Alpha(0.22), radius)
+							p.Fill(tile, hintFill.Alpha(0.24), radius)
 							if v.Cell >= 15 {
-								p.Stroke(tile, hintColor, radius, 1)
+								p.Stroke(tile, hintStroke, radius, 1)
 							}
 						}
 						if k, ok := a.rippleAlphaAt(idx, now); ok {
@@ -568,7 +563,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 			if _, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {
 				x := r.X + float32(v.HoverCol-4)*v.Cell - v.X
 				y := r.Y + float32(v.HoverRow-4)*v.Cell - v.Y
-				p.Stroke(ui.Rect{X: x, Y: y, W: 9 * v.Cell, H: 9 * v.Cell}, ui.Hex("#E8A849"), 5, 2)
+				p.Stroke(ui.Rect{X: x, Y: y, W: 9 * v.Cell, H: 9 * v.Cell}, dp.ScanFrame, 5, 2)
 			}
 			if g.duel != nil && g.Cols > 0 && g.duel.LastAI >= 0 {
 				row, col := g.duel.LastAI/g.Cols, g.duel.LastAI%g.Cols
@@ -596,8 +591,13 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 			p.AnimationFrame()
 		}
 		if count, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {
-			p.Fill(ui.Rect{X: r.X + 12, Y: r.Y + 12, W: 166, H: 34}, ui.Hex("#3C301D"), 6)
-			p.Text(r.X+23, r.Y+20, fmt.Sprintf("9×9 扫描：%d 雷", count), 14, ui.Hex("#F5D99C"))
+			badge := ui.Span{Text: fmt.Sprintf("9×9 扫描：%d 雷", count), Size: 14, Weight: 700, Color: dp.ScanBadgeText}
+			bw, bh := p.MeasureText(0, badge)
+			box := ui.Rect{X: r.X + 12, Y: r.Y + 12, W: max(float32(166), bw+24), H: 34}
+			p.Shadow(box, 6, 0, 1, 3, 0, pal.SlipShade)
+			p.Fill(box, dp.ScanBadgeBg, 6)
+			p.Stroke(box, dp.ScanBadgeBorder, 6, 1.2)
+			p.RichText(box.X+(box.W-bw)/2, box.Y+(box.H-bh)/2, 0, badge)
 		}
 		if g.duel != nil && g.Status == StatusPlaying && g.duel.playerStunned() {
 			pulse := 0.45 + 0.55*float32(0.5+0.5*math.Sin(float64(now.UnixMilli())/120.0))
@@ -688,6 +688,7 @@ func (a *minesweeperApp) pruneAndDrawPopups(p *ui.Painter, r ui.Rect, now time.T
 		return
 	}
 	v := a.board
+	pal, dp := paperFor(a.darkMode), duelPromptsFor(a.darkMode)
 	kept := a.duelPopups[:0]
 	for _, pop := range a.duelPopups {
 		elapsed := now.Sub(pop.Start)
@@ -696,16 +697,19 @@ func (a *minesweeperApp) pruneAndDrawPopups(p *ui.Painter, r ui.Rect, now time.T
 		}
 		kept = append(kept, pop)
 		k := float32(elapsed) / float32(duelPopupDuration)
-		px := r.X + (float32(pop.Col)+0.5)*v.Cell - v.X - float32(len([]rune(pop.Text)))*3.5
-		py := r.Y + float32(pop.Row)*v.Cell - v.Y - 16 - k*28
-		px = max(r.X+8, min(r.X+r.W-120, px))
-		py = max(r.Y+8, min(r.Y+r.H-28, py))
 		alpha := 1 - k*0.85
-		col := ui.Hex(pop.ColorHex).Alpha(alpha)
-		pillW := float32(max(44, len([]rune(pop.Text))*9+14))
-		p.Fill(ui.Rect{X: px - 6, Y: py - 3, W: pillW, H: 22}, ui.Hex("#070D17").Alpha(0.75*alpha), 6)
-		p.Stroke(ui.Rect{X: px - 6, Y: py - 3, W: pillW, H: 22}, col.Alpha(0.6*alpha), 6, 1)
-		p.Text(px, py, pop.Text, 13, col)
+		style := dp.Popups[pop.Kind]
+		label := ui.Span{Text: pop.Text, Size: 13, Weight: 700, Color: style.Text.Alpha(alpha)}
+		tw, th := p.MeasureText(0, label)
+		pillW := max(float32(44), tw+16)
+		pillH := max(float32(22), th+8)
+		pillX := max(r.X+8, min(r.X+r.W-pillW-8, r.X+(float32(pop.Col)+0.5)*v.Cell-v.X-pillW/2))
+		pillY := max(r.Y+8, min(r.Y+r.H-pillH-8, r.Y+float32(pop.Row)*v.Cell-v.Y-16-k*28))
+		pill := ui.Rect{X: pillX, Y: pillY, W: pillW, H: pillH}
+		p.Shadow(pill, 6, 0, 1, 2, 0, pal.SlipShade.Alpha(0.5*alpha))
+		p.Fill(pill, style.Bg.Alpha(0.94*alpha), 6)
+		p.Stroke(pill, style.Border.Alpha(0.8*alpha), 6, 1.2)
+		p.RichText(pill.X+(pill.W-tw)/2, pill.Y+(pill.H-th)/2, 0, label)
 	}
 	a.duelPopups = kept
 	if len(a.duelPopups) > 0 {
