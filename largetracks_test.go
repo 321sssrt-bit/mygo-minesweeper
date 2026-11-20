@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// largeTracks are the #29 tracks: two classic large boards defined ahead of
-// the setlist ladder reshuffle, each with its spec target no-skill clear rate.
+// largeTracks are the #29/#39 tracks: two classic large boards on the
+// seven-track ladder, each with its spec target no-skill clear rate.
 var largeTracks = []struct {
 	diff     Difficulty
 	id       string
@@ -23,9 +23,9 @@ var largeTracks = []struct {
 	{TrackMayoiuta, "mayoiuta", 100, 1660, 5, "100×100 · 1660雷", 0.32},
 }
 
-// TestLargeTrackDefinitions pins the #29 acceptance criteria: a 50x50 classic
-// track with 425 mines and 4 charges, and a 100x100 one with 1660 mines and 5
-// charges, both defined but not yet listed in the setlist (Difficulties).
+// TestLargeTrackDefinitions pins the #29/#39 acceptance criteria: a 50x50
+// classic track with 425 mines and 4 charges, and a 100x100 one with 1660 mines
+// and 5 charges, both listed in Difficulties in ascending classic board size.
 func TestLargeTrackDefinitions(t *testing.T) {
 	for _, tc := range largeTracks {
 		d := tc.diff
@@ -41,17 +41,46 @@ func TestLargeTrackDefinitions(t *testing.T) {
 				tc.id, probe.Rows, probe.Cols, probe.Mines, probe.SkillUsesLeft,
 				tc.size, tc.size, tc.mines, tc.charges)
 		}
-		for _, listed := range Difficulties {
-			if listed.ID == d.ID {
-				t.Fatalf("%s must stay off the setlist until its listing ticket", d.ID)
-			}
-		}
 	}
 	if TrackUtakotoba.Label != "一辈子契约" || TrackUtakotoba.Song != "诗超绊" {
 		t.Fatalf("TrackUtakotoba = %+v, want 一辈子契约《诗超绊》", TrackUtakotoba)
 	}
 	if TrackMayoiuta.Label != "迷路日々" || TrackMayoiuta.Song != "迷路日々" {
 		t.Fatalf("TrackMayoiuta = %+v, want 《迷路日々》", TrackMayoiuta)
+	}
+
+	var classics []Difficulty
+	for _, listed := range Difficulties {
+		if listed.ID == "forever" {
+			t.Fatalf("retired 20x20 forever track still listed in Difficulties: %+v", listed)
+		}
+		if listed.Gameplay == GameplayClassic {
+			classics = append(classics, listed)
+		}
+	}
+	wantClassic := []struct {
+		id   string
+		song string
+		size int
+	}{
+		{"easy", "迷星叫", 9},
+		{"normal", "碧天伴走", 16},
+		{"kageiromai", "影色舞", 30},
+		{"utakotoba", "诗超绊", 50},
+		{"mayoiuta", "迷路日々", 100},
+	}
+	if len(classics) != len(wantClassic) {
+		t.Fatalf("classic tracks count = %d, want %d: %+v", len(classics), len(wantClassic), classics)
+	}
+	prevArea := 0
+	for i, want := range wantClassic {
+		got := classics[i]
+		area := got.Rows * got.Cols
+		if got.ID != want.id || got.Song != want.song || got.Rows != want.size || got.Cols != want.size || area <= prevArea {
+			t.Fatalf("classic[%d] = %+v, want id=%s song=%s %dx%d strictly larger than %d",
+				i, got, want.id, want.song, want.size, want.size, prevArea)
+		}
+		prevArea = area
 	}
 }
 
