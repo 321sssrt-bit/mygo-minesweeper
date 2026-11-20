@@ -344,7 +344,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 		if prev, ok := a.bestTimes[diffID]; !ok || a.elapsed < prev {
 			a.bestTimes[diffID] = a.elapsed
 		}
-		c.Toast(fmt.Sprintf("《%s》Live 大成功！用时 %ds", a.game.Difficulty.Song, a.elapsed))
+		c.Toast(fmt.Sprintf("《%s》Live 大成功！用时 %d 秒", a.game.Difficulty.Song, a.elapsed))
 	}
 
 	a.unlockMemes(c, res.NewMemes)
@@ -438,7 +438,7 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 				a.board.EffectCell = tick.AICell
 			}
 			if tick.AITurn.Kind == ActionLost {
-				c.Toast("高松灯 (AI) 踩雷 −100")
+				c.Toast("高松灯踩雷 −100")
 			}
 		}
 		if tick.Finished {
@@ -454,7 +454,7 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 		}
 	}
 	if a.game.Status == StatusWon && !a.duelEnded {
-		result := fmt.Sprintf("清盘决斗结算：你 %d · 灯 (AI) %d", d.PlayerScore, d.AIScore)
+		result := fmt.Sprintf("清盘决斗结算：你 %d · 高松灯 %d", d.PlayerScore, d.AIScore)
 		a.settleDuel(c, now, result)
 	}
 	a.lastTick = now
@@ -736,14 +736,14 @@ func (a *minesweeperApp) duelHUD(c *ui.Context) {
 	ui.Row(c).Grow(0).Padding(8, 10).Gap(12).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Badge(c, fmt.Sprintf("你 %d", d.PlayerScore)).Background(ui.Hex("#173B49")).TextColor(ui.Hex("#55B2D6"))
-			ui.Badge(c, fmt.Sprintf("灯 (AI) %d", d.AIScore)).Background(ui.Hex("#3B2740")).TextColor(ui.Hex("#F07AA4"))
+			ui.Badge(c, fmt.Sprintf("高松灯 %d", d.AIScore)).Background(ui.Hex("#3B2740")).TextColor(ui.Hex("#F07AA4"))
 			ui.Badge(c, "剩余 "+formatClock(int(d.remaining()))).Background(c.Theme().Accent.Alpha(0.18))
 		})
 		ui.Row(c).Gap(6).Children(func() {
-			if ui.Button(c.Key("duel-home"), "回到战场").Clicked() {
+			if ui.Button(c.Key("duel-home"), "回到中心").Clicked() {
 				a.board.centerBoard(a.game)
 			}
-			if ui.Button(c.Key("duel-follow"), "追踪 AI").Clicked() && d.LastAI >= 0 {
+			if ui.Button(c.Key("duel-follow"), "定位高松灯").Clicked() && d.LastAI >= 0 {
 				a.board.center(a.game, d.LastAI/a.game.Cols, d.LastAI%a.game.Cols)
 			}
 			if ui.Button(c.Key("duel-zoom-out"), "−").Label("缩小").Clicked() {
@@ -757,14 +757,14 @@ func (a *minesweeperApp) duelHUD(c *ui.Context) {
 	ui.Row(c).Padding(4, 8).Gap(8).Children(func() {
 		ui.Badge(c, fmt.Sprintf("连击 ×%d", d.PlayerCombo))
 		if d.playerStunned() {
-			ui.Badge(c, fmt.Sprintf("硬直 %.1fs", d.StunnedUntil-d.Elapsed)).Background(ui.Hex("#701F2B"))
+			ui.Badge(c, fmt.Sprintf("硬直 %.1f 秒", d.StunnedUntil-d.Elapsed)).Background(ui.Hex("#701F2B"))
 		} else {
-			ui.Badge(c, "数字全未知时左键收雷 · +75/雷")
+			ui.Badge(c, "确定全雷时左键收雷 · +75/雷")
 		}
 		if d.Elapsed < d.ScanUntil {
-			ui.Badge(c, fmt.Sprintf("扫描 %.1fs", d.ScanUntil-d.Elapsed)).Background(ui.Hex("#3C301D")).TextColor(ui.Hex("#F5D99C"))
+			ui.Badge(c, fmt.Sprintf("扫描 %.1f 秒", d.ScanUntil-d.Elapsed)).Background(ui.Hex("#3C301D")).TextColor(ui.Hex("#F5D99C"))
 		}
-		ui.Badge(c, fmt.Sprintf("旗帜 %d", a.game.FlagsPlaced))
+		ui.Badge(c, fmt.Sprintf("插旗 %d", a.game.FlagsPlaced))
 	})
 	if a.game.Status == StatusWon {
 		label := "平局 · 势均力敌"
@@ -903,8 +903,8 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					a.resetGame(false)
 				}
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Text(c, "夜间").FontSize(12).TextColor(t.TextMuted)
-					ui.Switch(c, &a.darkMode).Label("夜间模式")
+					ui.Text(c, "夜间台灯").FontSize(12).TextColor(t.TextMuted)
+					ui.Switch(c, &a.darkMode).Label("夜间台灯").Tooltip("切换日间方格纸与深夜台灯下的笔记本")
 				})
 			})
 		})
@@ -915,9 +915,9 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			a.setlistControl(c, pal, t)
 
 			ui.ToggleGroup(c, func() {
-				ui.Toggle(c, &a.flagMode, "标旗模式 (F)").Tooltip("开启后左键直接贴创可贴/插旗")
+				ui.Toggle(c, &a.flagMode, "插旗模式 (F)").Tooltip("开启后左键直接贴创可贴插旗")
 				ui.Toggle(c, &a.allowQuestion, "? 标记").Tooltip("右键循环加入「？」不确定标记")
-				ui.Toggle(c, &a.showMemes, "名场面图鉴").Tooltip("展开或收起已解锁的 MyGO!!!!! 梗成就")
+				ui.Toggle(c, &a.showMemes, "名场面图鉴").Tooltip("展开或收起已解锁的 MyGO!!!!! 名场面")
 			}).Label("工具开关")
 		})
 
@@ -926,7 +926,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			// Left Sidebar: Member Roster + Live Meters + Band Group Chat
 			ui.Column(c).Width(272).Padding(10).Gap(10).Radius(12).
 				Background(t.Surface).Border(1, t.Border).Children(func() {
-				ui.Text(c, "乐队成员应援").FontSize(13).Bold().TextColor(t.TextMuted)
+				ui.Text(c, "乐队成员").FontSize(13).Bold().TextColor(t.TextMuted)
 
 				ui.Column(c).Gap(6).Children(func() {
 					for _, m := range Members {
@@ -985,10 +985,10 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						ui.Text(c, "排练完成度").FontSize(12).TextColor(t.TextMuted)
 						ui.Textf(c, "%.0f%%", a.game.Progress()*100).FontSize(12).Bold().TextColor(t.Accent)
 					})
-					hatchMeter(c, "Live 完成度", a.game.Progress(), pal.InkOf(bandColor), pal)
+					hatchMeter(c, "排练完成度", a.game.Progress(), pal.InkOf(bandColor), pal)
 
 					ui.Row(c).Justify(ui.SpaceBetween).Children(func() {
-						ui.Text(c, "乐队重力值 (Gravity)").FontSize(12).TextColor(t.TextMuted)
+						ui.Text(c, "乐队重力值").FontSize(12).TextColor(t.TextMuted)
 						ui.Textf(c, "%d%%", a.game.Gravity).FontSize(12).Bold().TextColor(pal.InkOf(memberImage(MemberSoyorin)))
 					})
 					hatchMeter(c, "乐队重力值", float64(a.game.Gravity)/100, pal.InkOf(memberImage(MemberSoyorin)), pal)
@@ -1036,7 +1036,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									ui.Badge(c, member.Role)
 									skillTip := member.SkillName + " · " + member.SkillDesc
 									if !a.bandMode() {
-										skillTip = "纯正经典模式：仅保留语音应援"
+										skillTip = "纯正经典：关闭技能，仅保留台词应援"
 									}
 									ui.Text(c, skillTip).FontSize(12).TextColor(t.TextMuted).SingleLine()
 								})
@@ -1067,7 +1067,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				if a.showMemes {
 					ui.Column(c).Padding(10, 12).Gap(8).Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-							ui.Text(c, "MyGO!!!!! 名场面梗图鉴").FontSize(13).Bold()
+							ui.Text(c, "MyGO!!!!! 名场面图鉴").FontSize(13).Bold()
 							ui.Badge(c, fmt.Sprintf("已收集 %d / %d", len(a.unlockedMemes), len(AllMemes)))
 						})
 						ui.Grid(c).Columns(3).Gap(8).Children(func() {
@@ -1101,7 +1101,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					ui.Row(c).Padding(8, 12).Radius(9).Background(t.Background.Alpha(0.75)).
 						Border(1, t.Border).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							ui.Badge(c, "MINES "+formatDigits(a.game.RemainingMines())).
+							ui.Badge(c, "剩雷 "+formatDigits(a.game.RemainingMines())).
 								Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
 							ui.Badge(c, a.game.Difficulty.Subtitle)
 						})
@@ -1123,12 +1123,12 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						}
 
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							bestText := "BEST --"
+							bestText := "最快 --"
 							if best, ok := a.bestTimes[a.game.Difficulty.ID]; ok {
-								bestText = fmt.Sprintf("BEST %ds", best)
+								bestText = fmt.Sprintf("最快 %d 秒", best)
 							}
 							ui.Badge(c, bestText)
-							ui.Badge(c, "TIME "+formatDigits(a.elapsed)+"s").
+							ui.Badge(c, "用时 "+formatDigits(a.elapsed)+" 秒").
 								Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
 						})
 					})

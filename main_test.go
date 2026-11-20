@@ -169,8 +169,8 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 	app := newMinesweeperApp(12345)
 	tt := ui.NewTester(app.view, 1120, 820)
 
-	if !tt.HasText("MyGO!!!!! 迷子扫雷") || !tt.HasText("MINES 10") {
-		t.Fatalf("expected title and MINES 010 badge in initial view")
+	if !tt.HasText("MyGO!!!!! 迷子扫雷") || !tt.HasText("剩雷 10") {
+		t.Fatalf("expected title and 剩雷 10 badge in initial view")
 	}
 
 	// Setlist popover switches track to 碧天伴走 (RiNG 排练室)
@@ -180,7 +180,7 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 	if err := tt.Click("碧天伴走"); err != nil {
 		t.Fatalf("failed selecting 碧天伴走 from setlist popover: %v", err)
 	}
-	if app.diffIdx != 1 || app.game.Cols != 16 || !tt.HasText("MINES 40") {
+	if app.diffIdx != 1 || app.game.Cols != 16 || !tt.HasText("剩雷 40") {
 		t.Fatalf("expected 16x16 board after selecting 碧天伴走, got cols=%d", app.game.Cols)
 	}
 
@@ -212,8 +212,8 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 	if err := tt.RightClick("cell-0-0"); err != nil {
 		t.Fatalf("failed right clicking cell-0-0: %v", err)
 	}
-	if app.game.FlagsPlaced != 1 || !tt.HasText("MINES 9") {
-		t.Fatalf("expected 1 flag placed and MINES 009, got %d", app.game.FlagsPlaced)
+	if app.game.FlagsPlaced != 1 || !tt.HasText("剩雷 9") {
+		t.Fatalf("expected 1 flag placed and 剩雷 9, got %d", app.game.FlagsPlaced)
 	}
 
 	// Start game by clicking cell-4-4
@@ -226,8 +226,8 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 
 	// Advance clock past 2 seconds and verify live timer badge
 	tt.Advance(2100 * time.Millisecond)
-	if app.elapsed < 2 || !tt.HasText("TIME 2s") {
-		t.Fatalf("expected TIME 002s, got elapsed=%d", app.elapsed)
+	if app.elapsed < 2 || !tt.HasText("用时 2 秒") {
+		t.Fatalf("expected 用时 2 秒, got elapsed=%d", app.elapsed)
 	}
 
 	// Shortcuts F, E, R
@@ -622,7 +622,7 @@ func TestHaruhikagePresentationFollowsMarkerNotID(t *testing.T) {
 	app4.game.Cell(0, 0).IsMine = true
 	app4.game.RecomputeAdjacency()
 	tt4 := ui.NewTester(app4.view, 1280, 900)
-	if _, ok := tt4.Find("百万格决斗战场"); !ok {
+	if _, ok := tt4.Find("决斗棋盘"); !ok {
 		t.Fatal("duel board missing")
 	}
 	app4.pendingResult = app4.game.Reveal(0, 0)
@@ -1082,6 +1082,126 @@ func TestMemesAndChatCopyContracts(t *testing.T) {
 	lastMsg := app.chatLog[len(app.chatLog)-1]
 	if lastMsg.Speaker != "长崎爽世" || !strings.Contains(lastMsg.Text, "擅自演奏这首曲子") {
 		t.Fatalf("unexpected Soyorin apology reply: %+v", lastMsg)
+	}
+}
+
+func TestUILabelsAndButtonsCopyContract(t *testing.T) {
+	app := newMinesweeperApp(42)
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.UseScreenReader()
+
+	for _, want := range []string{
+		"夜间台灯",
+		"插旗模式 (F)",
+		"? 标记",
+		"名场面图鉴",
+		"乐队成员",
+		"排练完成度",
+		"乐队重力值",
+		"剩雷 10",
+		"最快 --",
+		"用时 0 秒",
+	} {
+		if !tt.HasText(want) {
+			t.Errorf("classic view missing finalized copy %q", want)
+		}
+	}
+	for _, avoid := range []string{
+		"MINES ",
+		"BEST ",
+		"TIME ",
+		"乐队重力值 (Gravity)",
+		"乐队成员应援",
+		"标旗模式",
+	} {
+		if tt.HasText(avoid) {
+			t.Errorf("classic view still contains retired copy %q", avoid)
+		}
+	}
+	if _, ok := tt.AccessByRole(ui.RoleGroup, "排练完成度"); !ok {
+		t.Error("progress meter missing 排练完成度 accessibility label")
+	}
+	if _, ok := tt.Access("Live 完成度"); ok {
+		t.Error("progress meter still uses retired Live 完成度 label")
+	}
+	sw, ok := tt.AccessByRole(ui.RoleSwitch, "夜间台灯")
+	if !ok {
+		t.Fatal("night lamp switch missing 夜间台灯 accessibility label")
+	}
+	wasDark := app.darkMode
+	tt.ClickAt(sw.Bounds.X+sw.Bounds.W/2, sw.Bounds.Y+sw.Bounds.H/2)
+	if app.darkMode == wasDark {
+		t.Fatal("clicking 夜间台灯 switch did not toggle darkMode")
+	}
+
+	if err := tt.Click("名场面图鉴"); err != nil {
+		t.Fatalf("opening memes drawer failed: %v", err)
+	}
+	if !tt.HasText("MyGO!!!!! 名场面图鉴") || tt.HasText("MyGO!!!!! 名场面梗图鉴") {
+		t.Error("memes drawer heading did not use finalized MyGO!!!!! 名场面图鉴")
+	}
+
+	if err := tt.Click("纯正经典"); err != nil {
+		t.Fatalf("switching to 纯正经典 failed: %v", err)
+	}
+	if !tt.HasText("纯正经典：关闭技能，仅保留台词应援") || tt.HasText("语音应援") {
+		t.Error("classic mode skill tip did not drop 语音应援")
+	}
+
+	// Best time badge formats in Chinese seconds once recorded.
+	app.bestTimes[app.game.Difficulty.ID] = 23
+	app.elapsed = 23
+	tt.Frame()
+	if !tt.HasText("最快 23 秒") || !tt.HasText("用时 23 秒") {
+		t.Error("HUD missing formatted 最快 23 秒 / 用时 23 秒 badges")
+	}
+
+	// Duel view: finalized HUD labels, buttons, and board accessibility label.
+	duelApp := newMinesweeperApp(42)
+	duelApp.diffIdx = findDifficultyIdx("duel")
+	duelApp.resetGame(false)
+	dtt := ui.NewTester(duelApp.view, 1280, 900)
+	for _, want := range []string{
+		"你 0",
+		"高松灯 0",
+		"回到中心",
+		"定位高松灯",
+		"确定全雷时左键收雷 · +75/雷",
+		"插旗 0",
+	} {
+		if !dtt.HasText(want) {
+			t.Errorf("duel view missing finalized copy %q", want)
+		}
+	}
+	for _, avoid := range []string{
+		"灯 (AI)",
+		"回到战场",
+		"追踪 AI",
+		"旗帜 ",
+		"数字全未知时",
+	} {
+		if dtt.HasText(avoid) {
+			t.Errorf("duel view still contains retired copy %q", avoid)
+		}
+	}
+	if _, ok := dtt.Find("决斗棋盘"); !ok {
+		t.Error("duel board missing 决斗棋盘 label")
+	}
+	if _, ok := dtt.Find("百万格决斗战场"); ok {
+		t.Error("duel board still uses banned 百万格决斗战场 label")
+	}
+
+	// Clicking 定位高松灯 centers the viewport on Tomori's last move.
+	duelApp.game.duel.LastAI = 120*duelApp.game.Cols + 240
+	duelApp.board.center(duelApp.game, 500, 500)
+	dtt.Frame()
+	if err := dtt.Click("定位高松灯"); err != nil {
+		t.Fatalf("clicking 定位高松灯 failed: %v", err)
+	}
+	r, _ := dtt.Find("决斗棋盘")
+	gotRow, gotCol, ok := duelApp.board.cellAt(duelApp.game, r.W/2, r.H/2)
+	if !ok || gotRow != 120 || gotCol != 240 {
+		t.Fatalf("定位高松灯 centered on (%d,%d) ok=%v, want (120,240)", gotRow, gotCol, ok)
 	}
 }
 

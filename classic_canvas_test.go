@@ -87,7 +87,7 @@ func classicCanvasTestView(a *minesweeperApp) func(c *ui.Context) {
 			ui.Row(c).Padding(8, 12).Radius(10).Background(t.Surface).Border(1, t.Border).
 				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
 				ui.ToggleGroup(c, func() {
-					ui.Toggle(c, &a.flagMode, "标旗模式 (F)")
+					ui.Toggle(c, &a.flagMode, "插旗模式 (F)")
 					ui.Toggle(c, &a.allowQuestion, "? 标记")
 					ui.Toggle(c, &a.showMemes, "名场面图鉴")
 				}).Label("工具开关")
@@ -96,7 +96,7 @@ func classicCanvasTestView(a *minesweeperApp) func(c *ui.Context) {
 			ui.Column(c).Grow(1).Padding(12).Gap(10).Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
 				ui.Row(c).Padding(8, 12).Radius(9).Background(t.Background.Alpha(0.75)).
 					Border(1, t.Border).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Badge(c, "MINES "+formatDigits(a.game.RemainingMines()))
+					ui.Badge(c, "剩雷 "+formatDigits(a.game.RemainingMines()))
 					resetLabel := "迷子出发 (R)"
 					switch a.game.Status {
 					case StatusPlaying:
@@ -110,12 +110,12 @@ func classicCanvasTestView(a *minesweeperApp) func(c *ui.Context) {
 						a.resetGame(false)
 					}
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						bestText := "BEST --"
+						bestText := "最快 --"
 						if best, ok := a.bestTimes[a.game.Difficulty.ID]; ok {
-							bestText = fmt.Sprintf("BEST %ds", best)
+							bestText = fmt.Sprintf("最快 %d 秒", best)
 						}
 						ui.Badge(c, bestText)
-						ui.Badge(c, "TIME "+formatDigits(a.elapsed)+"s")
+						ui.Badge(c, "用时 "+formatDigits(a.elapsed)+" 秒")
 					})
 				})
 
@@ -283,12 +283,12 @@ func (h *classicParityHarness) assertEqualState(step string) {
 			h.t.Fatalf("[%s] cell(%d,%d) mismatch:\n  widget=%+v\n  canvas=%+v", step, wc.Row, wc.Col, wc, cc)
 		}
 	}
-	minesBadge := "MINES " + formatDigits(wg.RemainingMines())
+	minesBadge := "剩雷 " + formatDigits(wg.RemainingMines())
 	if !h.widgetTester.HasText(minesBadge) || !h.canvasTester.HasText(minesBadge) {
 		h.t.Fatalf("[%s] expected %q on both views (widget=%v canvas=%v)",
 			step, minesBadge, h.widgetTester.HasText(minesBadge), h.canvasTester.HasText(minesBadge))
 	}
-	timeBadge := "TIME " + formatDigits(h.widgetApp.elapsed) + "s"
+	timeBadge := "用时 " + formatDigits(h.widgetApp.elapsed) + " 秒"
 	if !h.widgetTester.HasText(timeBadge) || !h.canvasTester.HasText(timeBadge) {
 		h.t.Fatalf("[%s] expected %q on both views (widget=%v canvas=%v)",
 			step, timeBadge, h.widgetTester.HasText(timeBadge), h.canvasTester.HasText(timeBadge))
@@ -391,7 +391,7 @@ func TestClassicCanvasRevealFlagQuestionAndFlagModeParity(t *testing.T) {
 	if h.canvasApp.game.Cell(targetRow, targetCol).Flagged {
 		t.Fatal("expected right-click to unflag while flagMode=true")
 	}
-	h.clickButton("标旗模式 (F)", "flag-mode-off-btn")
+	h.clickButton("插旗模式 (F)", "flag-mode-off-btn")
 }
 
 func TestClassicCanvasChordParity(t *testing.T) {
@@ -561,7 +561,7 @@ func TestClassicCanvasPanZoomMinimapAndBoundsSafety(t *testing.T) {
 	if !ok {
 		t.Fatal("classic canvas board missing")
 	}
-	if _, ok := tt.Find("百万格决斗战场"); ok {
+	if _, ok := tt.Find("决斗棋盘"); ok {
 		t.Fatal("classic canvas must not use duel label")
 	}
 	if tt.HasText("踩雷硬直中") {
@@ -939,7 +939,7 @@ func TestDuelZoomedOutShieldAndWrongFlagStayDotFree(t *testing.T) {
 			app.board.clamp(g)
 			tt.Frame()
 
-			board, ok := tt.Find("百万格决斗战场")
+			board, ok := tt.Find("决斗棋盘")
 			if !ok {
 				t.Fatal("duel board missing")
 			}
@@ -1731,7 +1731,7 @@ func TestClassicBoardSurfaceFollowsThreshold(t *testing.T) {
 			g.RecomputeAdjacency()
 			x, y := classicSurfaceCellAt(t, tt, app, 0, 1)
 			tt.RightClickAt(x, y)
-			wantMines := "MINES " + formatDigits(g.Mines-1)
+			wantMines := "剩雷 " + formatDigits(g.Mines-1)
 			if !g.Cell(0, 1).Flagged || !tt.HasText(wantMines) {
 				t.Fatalf("right-click (0,1): flagged=%v, want flag and %q on screen", g.Cell(0, 1).Flagged, wantMines)
 			}
