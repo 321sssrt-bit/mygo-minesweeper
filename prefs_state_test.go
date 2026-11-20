@@ -116,7 +116,8 @@ func TestDesktopPrefsLoadSaveAndSaveFailureRetention(t *testing.T) {
 	if err := savePrefs(dir, initial); err != nil {
 		t.Fatal(err)
 	}
-	app := newDesktopApp(func() (string, error) { return dir, nil }, savePrefs)
+	desktopSound := &soundRecorder{}
+	app := newDesktopApp(func() (string, error) { return dir, nil }, savePrefs, desktopSound)
 	if got := app.currentPrefs(); got != initial {
 		t.Fatalf("desktop startup loaded %+v, want %+v", got, initial)
 	}
@@ -133,6 +134,11 @@ func TestDesktopPrefsLoadSaveAndSaveFailureRetention(t *testing.T) {
 		t.Fatalf("click ? 标记: %v", err)
 	}
 	tt.Key(0, ui.KeyM)
+	// The desktop app plays through the output it was given: two switch
+	// flips at 80% volume, then the mute itself is silent.
+	if got := desktopSound.take(); len(got) != 2 || got[0].ID != SoundToggle || got[1].ID != SoundToggle || got[0].Gain != 0.8 {
+		t.Fatalf("desktop app sounds = %+v, want two toggles at gain 0.8", got)
+	}
 
 	wantSaved := prefs{
 		DarkMode:      true,
@@ -154,7 +160,10 @@ func TestDesktopPrefsLoadSaveAndSaveFailureRetention(t *testing.T) {
 	}, func(string, prefs) error {
 		t.Fatal("save must not be called when UserConfigDir fails")
 		return nil
-	})
+	}, nil)
+	if _, silent := fallbackApp.sound.(silentSound); !silent {
+		t.Fatalf("desktop app without an output plays into %T, want silentSound", fallbackApp.sound)
+	}
 	if got := fallbackApp.currentPrefs(); got != defaultPrefs() {
 		t.Fatalf("fallback desktop prefs = %+v, want %+v", got, defaultPrefs())
 	}
@@ -172,7 +181,7 @@ func TestDesktopPrefsLoadSaveAndSaveFailureRetention(t *testing.T) {
 		}
 		attempts = append(attempts, p)
 		return saveErr
-	})
+	}, nil)
 	ttFail := ui.NewTester(failApp.view, 1280, 900)
 	ttFail.Key(0, ui.KeyM)
 	failApp.updatePrefs(func(p *prefs) {
@@ -552,7 +561,8 @@ func TestWindowFocusTracking(t *testing.T) {
 }
 
 func TestSharedPopoverMutualExclusionAndEscapeFocusReturn(t *testing.T) {
-	app := newMinesweeperApp(12345)
+	rec := &soundRecorder{}
+	app := newMinesweeperAppWith(appOptions{Seed: 12345, Sound: rec})
 	var boardClicks int
 	var returnEmptyPanel bool
 	// Headless fixture exercising the shared popover entrypoints with two
@@ -620,6 +630,9 @@ func TestSharedPopoverMutualExclusionAndEscapeFocusReturn(t *testing.T) {
 	if !app.popoverOpen(popoverSettings) || app.popoverOpen(popoverSetlist) || app.setlistOpen {
 		t.Fatalf("expected single-click switch from setlist to settings, active=%v setlistOpen=%v", app.activePopover, app.setlistOpen)
 	}
+	// The switching click's press puts the setlist away and its release
+	// opens the settings sheet.
+	assertSoundIDs(t, "open setlist then switch to settings", rec.take(), SoundPopoverOpen, SoundPopoverClose, SoundPopoverOpen)
 
 	// 2. While settings popover is open, Escape closes it and returns focus to its trigger.
 	if !tt.Focused("夹具开关") {
@@ -632,6 +645,7 @@ func TestSharedPopoverMutualExclusionAndEscapeFocusReturn(t *testing.T) {
 	if !tt.Focused("设置夹具") {
 		t.Fatal("Escape from settings fixture popover should return focus to its trigger")
 	}
+	assertSoundIDs(t, "Escape from settings", rec.take(), SoundPopoverClose)
 
 	// 3. Open settings again, then single-click setlist trigger -> mutually switches back in one click.
 	if err := tt.Click("设置夹具"); err != nil {
@@ -668,6 +682,9 @@ func TestSharedPopoverMutualExclusionAndEscapeFocusReturn(t *testing.T) {
 	if boardClicks != 0 {
 		t.Fatalf("outside dismiss click leaked to board: clicks=%d", boardClicks)
 	}
+	// Steps 3-5: open, switch, Escape, open, outside dismiss.
+	assertSoundIDs(t, "steps 3-5", rec.take(),
+		SoundPopoverOpen, SoundPopoverClose, SoundPopoverOpen, SoundPopoverClose, SoundPopoverOpen, SoundPopoverClose)
 
 	// 5b. Programmatic openPopover while focus sits on an unrelated control:
 	// Escape must still close the popover and return focus to its trigger.

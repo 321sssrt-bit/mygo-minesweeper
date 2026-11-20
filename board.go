@@ -218,7 +218,17 @@ func containsIndex(list []int, target int) bool {
 	return false
 }
 
-func (a *minesweeperApp) applyCanvasCellAction(row, col, button int) ActionResult {
+// applyCellAction applies a player's click on a cell, button 0 left and 1
+// right, on either board surface, and plays its stationery foley once.
+func (a *minesweeperApp) applyCellAction(row, col, button int) ActionResult {
+	res := a.resolveCellAction(row, col, button)
+	if id, ok := cellActionSound(res.Kind); ok {
+		a.playSound(id, 1, columnPan(col, a.game.Cols))
+	}
+	return res
+}
+
+func (a *minesweeperApp) resolveCellAction(row, col, button int) ActionResult {
 	if a.game == nil {
 		return ActionResult{Kind: ActionNoop}
 	}
@@ -338,7 +348,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				if !ok {
 					return true
 				}
-				result := a.applyCanvasCellAction(row, col, button)
+				result := a.applyCellAction(row, col, button)
 				if result.Kind != ActionNoop {
 					a.pendingResult = result
 					a.pendingRow = row
