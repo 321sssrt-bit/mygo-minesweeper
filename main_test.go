@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image/png"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -629,7 +630,7 @@ func TestHaruhikagePresentationFollowsMarkerNotID(t *testing.T) {
 	if app4.haruhikageIntro || app4.haruhikageAlert || tt4.HasText("……为什么要演奏春日影？！") {
 		t.Fatalf("expected no Haruhikage presentation on marked duel mine hit, intro=%v alert=%v", app4.haruhikageIntro, app4.haruhikageAlert)
 	}
-	if !tt4.HasText("踩雷 −100 · 硬直 2.4 秒！别把春日影点出来") {
+	if !tt4.HasText("踩雷 −100 · 硬直 2.4 秒！小心被灯拉开比分") {
 		t.Fatalf("expected duel stun toast on marked duel mine hit")
 	}
 }
@@ -954,5 +955,155 @@ func TestHaruhikageMovedToDuelAndKageiromaiLossIsPlain(t *testing.T) {
 	if duelApp.haruhikageIntro || !duelApp.haruhikageAlert || !dtt.HasText("为什么要演奏春日影？！") {
 		t.Fatalf("expected Haruhikage dialog after drama overlay, intro=%v alert=%v",
 			duelApp.haruhikageIntro, duelApp.haruhikageAlert)
+	}
+}
+
+func TestMemesAndChatCopyContracts(t *testing.T) {
+	// Frozen meme count and IDs, updated Haruhikage duel trigger, and glossary checks.
+	wantIDs := []string{MemeForever, MemeHaruhikage, MemeNeverHappy, MemeHuman, MemeMatcha, MemeAnonBest}
+	if len(AllMemes) != len(wantIDs) {
+		t.Fatalf("AllMemes count = %d, want %d", len(AllMemes), len(wantIDs))
+	}
+	for i, meme := range AllMemes {
+		if meme.ID != wantIDs[i] {
+			t.Fatalf("AllMemes[%d].ID = %q, want %q", i, meme.ID, wantIDs[i])
+		}
+		for _, bad := range []string{"难度", "地雷", "春日影 Live"} {
+			if strings.Contains(meme.Desc, bad) {
+				t.Fatalf("AllMemes[%s].Desc %q contains forbidden/outdated phrase %q", meme.ID, meme.Desc, bad)
+			}
+		}
+		if meme.ID == MemeHaruhikage {
+			if !strings.Contains(meme.Desc, "《春日影》") || !strings.Contains(meme.Desc, "决斗") || !strings.Contains(meme.Desc, "高松灯") {
+				t.Fatalf("MemeHaruhikage.Desc = %q, want 《春日影》 duel defeat against 高松灯", meme.Desc)
+			}
+		}
+	}
+
+	// Frozen member taglines must remain untouched.
+	wantTaglines := map[MemberID]string{
+		MemberTomori:  "创可贴与石头收集家",
+		MemberAnon:    "虚荣SNS偶像担当",
+		MemberSoyorin: "重力微笑与拉黑之神",
+		MemberTaki:    "压力怪 & 护灯狂魔",
+		MemberRana:    "野猫 & 抹茶芭菲爱好者",
+	}
+	for _, m := range Members {
+		if wantTaglines[m.ID] != m.Tagline {
+			t.Fatalf("Members[%s].Tagline = %q, want %q", m.ID, m.Tagline, wantTaglines[m.ID])
+		}
+	}
+
+	// Member quotes obey glossary and drop outdated single-cell Haruhikage wording.
+	for memberID, events := range memberQuotes {
+		for event, pool := range events {
+			for _, line := range pool {
+				for _, bad := range []string{"地雷", "难度"} {
+					if strings.Contains(line, bad) {
+						t.Fatalf("memberQuotes[%s][%s] %q contains forbidden word %q", memberID, event, line, bad)
+					}
+				}
+				if event == "haruhikageLost" {
+					for _, outdated := range []string{"盲猜", "点这格", "刚弹一半"} {
+						if strings.Contains(line, outdated) {
+							t.Fatalf("memberQuotes[%s][haruhikageLost] %q keeps outdated premise %q", memberID, line, outdated)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Initial load, track switching (including new tracks), and same-track restart chat entries.
+	app := newMinesweeperApp(42)
+	tt := ui.NewTester(app.view, 1280, 900)
+	if len(app.chatLog) < 2 || app.chatLog[0].Speaker != "MyGO!!!!! 排练室" ||
+		!strings.HasPrefix(app.chatLog[0].Text, "翻开谱本：《"+app.game.Difficulty.Song+"》") {
+		t.Fatalf("unexpected initial chat entry: %+v", app.chatLog)
+	}
+
+	for _, diff := range Difficulties[1:] {
+		if err := tt.Click("歌单"); err != nil {
+			t.Fatalf("open setlist before %s: %v", diff.Song, err)
+		}
+		if err := tt.Click(diff.Song); err != nil {
+			t.Fatalf("pick %s: %v", diff.Song, err)
+		}
+		wantEntry := fmt.Sprintf("翻到新谱：《%s》（%s）", diff.Song, diff.Subtitle)
+		if len(app.chatLog) < 2 || app.chatLog[0].Speaker != "MyGO!!!!! 排练室" || app.chatLog[0].Text != wantEntry {
+			t.Fatalf("switching to %s produced unexpected chatLog[0]: %+v (want %q)", diff.Song, app.chatLog, wantEntry)
+		}
+		if diff.Gameplay == GameplayDuel {
+			if len(app.chatLog) < 3 || app.chatLog[1].Speaker != "MyGO!!!!! 决斗室" ||
+				!strings.Contains(app.chatLog[1].Text, "插旗终局结算对错") {
+				t.Fatalf("duel track %s missing updated duel chat intro: %+v", diff.Song, app.chatLog)
+			}
+		}
+	}
+
+	// Restarting the same track via R uses the restart entry.
+	lastSong := Difficulties[len(Difficulties)-1].Song
+	tt.Key(0, ui.KeyR)
+	if len(app.chatLog) < 2 || app.chatLog[0].Speaker != "排练重开" ||
+		app.chatLog[0].Text != "重新演奏《"+lastSong+"》" {
+		t.Fatalf("same-track restart produced unexpected chatLog[0]: %+v", app.chatLog)
+	}
+
+	// Haruhikage duel defeat overlay, dialog, and Soyorin's apology reply use updated copy.
+	if app.game.Difficulty.Song != "春日影" {
+		if err := tt.Click("歌单"); err != nil {
+			t.Fatalf("open setlist for 春日影: %v", err)
+		}
+		if err := tt.Click("春日影"); err != nil {
+			t.Fatalf("select 春日影: %v", err)
+		}
+	}
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	app.game.duel.PlayerScore = 10
+	app.game.duel.AIScore = 200
+	app.game.duel.NextAI = app.game.duel.Duration + 10
+	app.game.duel.Elapsed = app.game.duel.Duration - 0.5
+	tt.Frame()
+	tt.Advance(600 * time.Millisecond)
+
+	if !tt.HasText("♪ 《春日影》 — 乐声骤停") || tt.HasText("Crychic") {
+		t.Fatal("expected updated Haruhikage drama overlay header without Crychic")
+	}
+	if err := tt.Click("春日影演出遮罩"); err != nil {
+		t.Fatalf("skip Haruhikage overlay: %v", err)
+	}
+	if !tt.HasText("明明说好不再弹这首曲子的") || tt.HasText("不点那一格") {
+		t.Fatal("expected updated Haruhikage dialog body")
+	}
+	if err := tt.Click("对不起，我错了"); err != nil {
+		t.Fatalf("dismiss Haruhikage dialog: %v", err)
+	}
+	lastMsg := app.chatLog[len(app.chatLog)-1]
+	if lastMsg.Speaker != "长崎爽世" || !strings.Contains(lastMsg.Text, "擅自演奏这首曲子") {
+		t.Fatalf("unexpected Soyorin apology reply: %+v", lastMsg)
+	}
+}
+
+func TestSnapshotMemesDialog(t *testing.T) {
+	dir := os.Getenv("MYGO_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set MYGO_SNAPSHOT_DIR to render snapshots")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dark := range []bool{false, true} {
+		suffix := "day"
+		if dark {
+			suffix = "night"
+		}
+		app := stageLiveScene(dark)
+		app.classicHoverRow, app.classicHoverCol = -1, -1
+		app.showMemes = true
+		app.unlockedMemes[MemeForever] = true
+		app.unlockedMemes[MemeHaruhikage] = true
+		name := fmt.Sprintf("memes-dialog-default-%s.png", suffix)
+		writeSnapshot(t, app, false, 1280, 900, filepath.Join(dir, name))
 	}
 }

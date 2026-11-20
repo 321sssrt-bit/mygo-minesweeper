@@ -112,27 +112,27 @@ type MemeAchievement struct {
 }
 
 var AllMemes = []MemeAchievement{
-	{ID: MemeForever, Title: "一辈子！", Desc: "任意难度完成一场排练（通关）"},
-	{ID: MemeHaruhikage, Title: "为什么要演奏春日影！？", Desc: "在「春日影 Live」难度踩雷炸团"},
+	{ID: MemeForever, Title: "一辈子！", Desc: "任意曲目完成排练，或在决斗中胜出"},
+	{ID: MemeHaruhikage, Title: "为什么要演奏春日影！？", Desc: "在《春日影》决斗中比分输给高松灯"},
 	{ID: MemeNeverHappy, Title: "我从来没有觉得扫雷开心过", Desc: "开局前 2 步就踩雷或触发护盾"},
-	{ID: MemeHuman, Title: "好想成为人类啊", Desc: "携带高松灯并发动技能后成功通关"},
+	{ID: MemeHuman, Title: "好想成为人类啊", Desc: "由高松灯领队并发动技能后通关"},
 	{ID: MemeMatcha, Title: "抹茶芭菲好吃喵", Desc: "用要乐奈的技能一口气连开 12 格以上"},
-	{ID: MemeAnonBest, Title: "不愧是爱音大人", Desc: "不使用任何乐队技能完成一场扫雷"},
+	{ID: MemeAnonBest, Title: "不愧是爱音大人", Desc: "不使用任何乐队技能完成一场排练"},
 }
 
 var memberQuotes = map[MemberID]map[string][]string{
 	MemberTomori: {
 		"start": {
 			"「那个……可以和我组一辈子扫雷乐队吗？」",
-			"「就算会迷路，也要一块石头一块石头地排下去……」",
-			"「今天也带了创可贴，随时可以标记危险的格子。」",
+			"「就算会迷路，也要一格一格地排下去……（攥紧小石头）」",
+			"「今天也带了创可贴，遇到雷就先贴上吧。」",
 		},
 		"revealBig": {
 			"「大家……都没有走散呢，前面的路一下子亮起来了。」",
 			"「原来只要看着数字，就不会害怕迷路了。」",
 		},
 		"flag": {
-			"「贴上创可贴标记好……这样就不会踩到了。」",
+			"「贴上创可贴盖好……这样就不会踩到了。」",
 			"「这颗雷，我好好记在笔记本里了。」",
 		},
 		"skill": {
@@ -161,7 +161,7 @@ var memberQuotes = map[MemberID]map[string][]string{
 			"「这波操作简直天才！爱音酱大胜利~」",
 		},
 		"flag": {
-			"「危险地雷已被爱音大人精准锁定！」",
+			"「这颗雷已被爱音大人精准锁定！」",
 			"「标旗完成~ 这种一眼雷完全难不倒我嘛。」",
 		},
 		"skill": {
@@ -176,7 +176,7 @@ var memberQuotes = map[MemberID]map[string][]string{
 			"「不算不算！我还没准备好呢，快重开重开！」",
 		},
 		"haruhikageLost": {
-			"「诶？！怎么这首曲子刚弹一半爽世世就黑脸了啊？！」",
+			"「诶？！怎么弹完《春日影》，爽世世的脸突然黑成这样啊？！」",
 		},
 	},
 	MemberSoyorin: {
@@ -190,7 +190,7 @@ var memberQuotes = map[MemberID]map[string][]string{
 			"「真是让人安心的展开呢。」",
 		},
 		"flag": {
-			"「先把危险标记起来，免得待会儿吵起来呢。」",
+			"「先把这颗雷贴好创可贴，免得待会儿吵起来呢。」",
 			"「这里我就帮你记住啦。」",
 		},
 		"shield": {
@@ -206,7 +206,7 @@ var memberQuotes = map[MemberID]map[string][]string{
 			"「你这个人，满脑子都只想着瞎蒙呢。」",
 		},
 		"haruhikageLost": {
-			"「为什么要演奏春日影？！……我是说，为什么要盲猜那一格？！」",
+			"「为什么要演奏春日影？！……擅自选了这首曲子，结果还输掉了呢。」",
 		},
 	},
 	MemberTaki: {
@@ -235,7 +235,7 @@ var memberQuotes = map[MemberID]map[string][]string{
 			"「哈？！能确定的格子不去开，非要去瞎猜？！」",
 		},
 		"haruhikageLost": {
-			"「喂！都说了别在排练室点这格春日影啊！！你看爽世脸都黑了！！」",
+			"「喂！都说了别乱弹《春日影》啊！！输掉不说，你看爽世脸都黑了！！」",
 		},
 	},
 	MemberRana: {

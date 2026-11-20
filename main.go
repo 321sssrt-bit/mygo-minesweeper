@@ -144,6 +144,10 @@ func (a *minesweeperApp) pushChat(speaker, colorHex, text string) {
 }
 
 func (a *minesweeperApp) resetGame(initial bool) {
+	prevDiffID := ""
+	if a.game != nil {
+		prevDiffID = a.game.Difficulty.ID
+	}
 	a.chatLog = nil
 	if !initial {
 		a.seed = 0
@@ -181,13 +185,16 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.classicHoverHint = HoverHint{}
 	a.quote = PickQuote(a.memberID, "start")
 	m := FindMember(a.memberID)
-	if initial {
-		a.pushChat("MyGO!!!!! 排练室", hexOf(bandColor), fmt.Sprintf("曲目加载：《%s》(%s)", diff.Song, diff.Subtitle))
-	} else {
+	switch {
+	case initial:
+		a.pushChat("MyGO!!!!! 排练室", hexOf(bandColor), fmt.Sprintf("翻开谱本：《%s》（%s）", diff.Song, diff.Subtitle))
+	case prevDiffID != diff.ID:
+		a.pushChat("MyGO!!!!! 排练室", hexOf(bandColor), fmt.Sprintf("翻到新谱：《%s》（%s）", diff.Song, diff.Subtitle))
+	default:
 		a.pushChat("排练重开", hexOf(bandColor), fmt.Sprintf("重新演奏《%s》", diff.Song))
 	}
 	if diff.Gameplay == GameplayDuel {
-		a.pushChat("MyGO!!!!! 决斗室", hexOf(bandColor), "同盘限时抢地：开格 +1，踩雷 −100；旗帜终局按对错计分，不靠比分偷看雷。")
+		a.pushChat("MyGO!!!!! 决斗室", hexOf(bandColor), "同盘限时抢地：开安全格 +1，踩雷 −100；插旗终局结算对错，不提前露底。")
 	}
 	a.pushChat(m.Name, m.ColorHex, a.quote)
 }
@@ -312,7 +319,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 	case ActionLost:
 		a.triggerShake(now, 9.0, 320*time.Millisecond)
 		if a.isDuel() {
-			c.Toast("踩雷 −100 · 硬直 2.4 秒！别把春日影点出来")
+			c.Toast("踩雷 −100 · 硬直 2.4 秒！小心被灯拉开比分")
 			break
 		}
 		if !a.startedAt.IsZero() {
@@ -841,7 +848,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					ui.Column(c).AlignItems(ui.Center).Gap(10).Padding(24).Radius(14).
 						Background(ui.Hex("#140B16").Alpha(0.95)).Border(1, ui.Hex("#E8A849").Alpha(0.8)).
 						Children(func() {
-							ui.Text(c, "♪ 春日影 (Crychic Ver.) — 演奏中断").FontSize(13).Bold().TextColor(ui.Hex("#E8A849"))
+							ui.Text(c, "♪ 《春日影》 — 乐声骤停").FontSize(13).Bold().TextColor(ui.Hex("#E8A849"))
 							ui.Text(c, "「……为什么要演奏春日影？！」").FontSize(22).Bold().TextColor(ui.Hex("#F8FAFC"))
 							ui.Text(c, "（长崎爽世的眼神失去了高光 · 点击任意处继续）").FontSize(12).TextColor(ui.Hex("#CBD5E1"))
 						})
@@ -857,10 +864,10 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	// 春日影名场面弹窗
 	switch ui.AlertDialog(c, &a.haruhikageAlert,
 		"为什么要演奏春日影？！",
-		"「明明都约好了不点那一格的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
+		"「明明说好不再弹这首曲子的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
 		"对不起，我错了", "一辈子重开") {
 	case 0:
-		a.pushChat("长崎爽世", FindMember(MemberSoyorin).ColorHex, "「道歉的话，下次别再盲猜了呢。」")
+		a.pushChat("长崎爽世", FindMember(MemberSoyorin).ColorHex, "「道歉的话，下次别再擅自演奏这首曲子了呢。」")
 	case 1:
 		a.resetGame(false)
 	}
