@@ -32,16 +32,6 @@ func defaultPrefs() prefs {
 	}
 }
 
-func normalizePrefs(p prefs) prefs {
-	switch p.Motion {
-	case motionSystem, motionStandard, motionReduced:
-	default:
-		p.Motion = motionSystem
-	}
-	p.Volume = max(0, min(100, p.Volume))
-	return p
-}
-
 func (m motionMode) reducedMotion(systemReduce bool) bool {
 	switch m {
 	case motionStandard:

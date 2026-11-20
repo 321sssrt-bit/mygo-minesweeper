@@ -127,7 +127,7 @@ func newMinesweeperApp(seed ...uint64) *minesweeperApp {
 func newMinesweeperAppWith(opts appOptions) *minesweeperApp {
 	p := defaultPrefs()
 	if opts.Prefs != nil {
-		p = normalizePrefs(*opts.Prefs)
+		p = *opts.Prefs
 	}
 	app := &minesweeperApp{
 		diffIdx:         0,
@@ -153,14 +153,10 @@ func newMinesweeperAppWith(opts appOptions) *minesweeperApp {
 func newDesktopApp(userConfigDir func() (string, error), save func(string, prefs) error) *minesweeperApp {
 	p := defaultPrefs()
 	var persist func(prefs) error
-	if userConfigDir != nil {
-		if dir, err := userConfigDir(); err == nil && dir != "" {
-			p = loadPrefs(dir)
-			if save != nil {
-				persist = func(next prefs) error {
-					return save(dir, next)
-				}
-			}
+	if dir, err := userConfigDir(); err == nil && dir != "" {
+		p = loadPrefs(dir)
+		persist = func(next prefs) error {
+			return save(dir, next)
 		}
 	}
 	return newMinesweeperAppWith(appOptions{
@@ -170,17 +166,16 @@ func newDesktopApp(userConfigDir func() (string, error), save func(string, prefs
 }
 
 func (a *minesweeperApp) currentPrefs() prefs {
-	return normalizePrefs(prefs{
+	return prefs{
 		DarkMode:      a.darkMode,
 		Motion:        a.motion,
 		SoundEnabled:  a.soundEnabled,
 		Volume:        a.volume,
 		AllowQuestion: a.allowQuestion,
-	})
+	}
 }
 
 func (a *minesweeperApp) applyPrefs(p prefs) {
-	p = normalizePrefs(p)
 	a.darkMode = p.DarkMode
 	a.motion = p.Motion
 	a.soundEnabled = p.SoundEnabled
@@ -194,10 +189,7 @@ func (a *minesweeperApp) applyPrefs(p prefs) {
 func (a *minesweeperApp) updatePrefs(fn func(*prefs)) bool {
 	prev := a.currentPrefs()
 	next := prev
-	if fn != nil {
-		fn(&next)
-	}
-	next = normalizePrefs(next)
+	fn(&next)
 	if next == prev {
 		return false
 	}
@@ -279,14 +271,18 @@ func (a *minesweeperApp) togglePopover(kind appPopover) bool {
 
 func (a *minesweeperApp) closePopover(kind appPopover, restoreFocus bool) {
 	a.syncSetlistPopover()
-	if kind != popoverNone && a.activePopover != kind {
+	if kind == popoverNone {
+		kind = a.activePopover
+	}
+	if kind == popoverNone {
 		return
 	}
-	prev := a.activePopover
-	a.activePopover = popoverNone
-	a.setlistOpen = false
-	if restoreFocus && prev != popoverNone {
-		a.restorePopover = prev
+	if a.activePopover == kind {
+		a.activePopover = popoverNone
+		a.setlistOpen = false
+	}
+	if restoreFocus {
+		a.restorePopover = kind
 	}
 }
 
@@ -316,11 +312,11 @@ func (a *minesweeperApp) bindPopover(
 ) ui.Element {
 	open := a.popoverOpen(kind)
 	wasOpen := open
+	closedByApp := false
 	closeWithFocus := func() {
-		a.activePopover = popoverNone
-		a.setlistOpen = false
-		a.restorePopover = kind
+		a.closePopover(kind, true)
 		open = false
+		closedByApp = true
 	}
 	if open && trigger.Shortcut(0, ui.KeyEscape) {
 		closeWithFocus()
@@ -332,15 +328,12 @@ func (a *minesweeperApp) bindPopover(
 		}
 	}).Background(c.Theme().Surface).KeepFocus()
 
-	if popover.Valid() {
-		if popover.Shortcut(0, ui.KeyEscape) {
-			closeWithFocus()
-		} else if wasOpen && !open {
-			a.closePopover(kind, false)
-		} else if a.popoverOpen(kind) && popover.FocusLeft() {
-			a.closePopover(kind, false)
-		}
-	} else if wasOpen && !open {
+	if !closedByApp && wasOpen && !open {
+		// ui.Popover dismisses on either Escape or outside press;
+		// restore trigger focus only for Escape dismissal.
+		restoreFocus := popover.Valid() && popover.Dismissed() && !popover.PressedOutside()
+		a.closePopover(kind, restoreFocus)
+	} else if popover.Valid() && a.popoverOpen(kind) && popover.FocusLeft() {
 		a.closePopover(kind, false)
 	}
 	if a.consumePopoverFocusRestore(kind) {
@@ -1156,6 +1149,9 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					a.haruhikageIntro = false
 					a.haruhikageAlert = true
 				}
+				if overlay.OverlayShortcut(0, ui.KeyM) && !c.ShortcutRepeated() {
+					a.toggleMute()
+				}
 			})
 		}
 	}
@@ -1175,6 +1171,15 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			a.resetGame(false)
 		}
 	})
+	if a.haruhikageAlert {
+		// Modal dialogs block root shortcuts; keep unmodified M mute active above AlertDialog.
+		ui.Overlay(c, func() {
+			if ui.Box(c.Key("haruhikage-alert-mute")).Size(0, 0).PassThrough().
+				OverlayShortcut(0, ui.KeyM) && !c.ShortcutRepeated() {
+				a.toggleMute()
+			}
+		})
+	}
 
 	root := ui.Column(c).Fill().Padding(14).Gap(10)
 	if pal.Lamp.A > 0 {

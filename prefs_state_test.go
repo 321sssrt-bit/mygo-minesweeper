@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
@@ -304,6 +305,74 @@ func TestMotionThreeStateResolutionBidirectional(t *testing.T) {
 	if sx, sy := app.currentShakeOffset(tt.Now()); sx == 0 && sy == 0 {
 		t.Fatal("expected active canvas shake under motionStandard even with system ReduceMotion=true")
 	}
+
+	// Duel score popup must not drift upward when effective reduced motion is active,
+	// and must still drift upward when motionStandard overrides system ReduceMotion=true.
+	findPopupTop := func(baseImg, curImg *image.RGBA, board ui.Rect) int {
+		b := curImg.Bounds()
+		minX := max(b.Min.X, int(board.X)+20)
+		maxX := min(b.Max.X-1, int(board.X+board.W)-200)
+		minY := max(b.Min.Y, int(board.Y)+20)
+		maxY := min(b.Max.Y-1, int(board.Y+board.H)-60)
+		for y := minY; y <= maxY; y++ {
+			for x := minX; x <= maxX; x++ {
+				if curImg.RGBAAt(x, y) != baseImg.RGBAAt(x, y) {
+					return y
+				}
+			}
+		}
+		return -1
+	}
+	for _, tc := range []struct {
+		name        string
+		mode        motionMode
+		wantDrifted bool
+	}{
+		{"reduced_no_popup_drift", motionSystem, false},
+		{"standard_allows_popup_drift", motionStandard, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := defaultPrefs()
+			p.Motion = tc.mode
+			popApp := newMinesweeperAppWith(appOptions{Seed: 42, Prefs: &p})
+			popApp.diffIdx = findDifficultyIdx("duel")
+			popApp.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 12, Cols: 12, Mines: 1}, true, MemberAnon, 42)
+			popApp.game.FirstClick = true
+			popApp.game.Status = StatusPlaying
+			popApp.game.Cell(11, 11).IsMine = true
+			popApp.game.RecomputeAdjacency()
+			popApp.game.duel.NextAI = 1e9
+
+			ptt := ui.NewTester(popApp.view, 1280, 900)
+			ptt.SetPreferences(ui.Preferences{ReduceMotion: true})
+			popApp.board.center(popApp.game, 5, 5)
+			ptt.Frame()
+			br, ok := ptt.Find("决斗棋盘")
+			if !ok {
+				t.Fatal("duel board missing")
+			}
+			baseCopy := image.NewRGBA(ptt.Image().Bounds())
+			copy(baseCopy.Pix, ptt.Image().Pix)
+			popApp.spawnDuelPopup(5, 5, ActionResult{Kind: ActionFlagged, ScoreDelta: 75}, ptt.Now())
+			ptt.Frame()
+			y0 := findPopupTop(baseCopy, ptt.Image(), br)
+			if y0 < 0 {
+				t.Fatal("expected duel popup pill rendered at t=0")
+			}
+			ptt.Advance(430 * time.Millisecond)
+			y1 := findPopupTop(baseCopy, ptt.Image(), br)
+			if y1 < 0 {
+				t.Fatal("expected duel popup pill still visible at t=430ms")
+			}
+			if tc.wantDrifted {
+				if y1 >= y0-4 {
+					t.Fatalf("expected popup to drift upward under motionStandard: y0=%d y1=%d", y0, y1)
+				}
+			} else if y1 != y0 {
+				t.Fatalf("expected zero vertical popup drift under reduced motion: y0=%d y1=%d", y0, y1)
+			}
+		})
+	}
 }
 
 func TestGlobalMuteShortcutRepeatAndVolumePreservation(t *testing.T) {
@@ -378,7 +447,70 @@ func TestGlobalMuteShortcutRepeatAndVolumePreservation(t *testing.T) {
 	if app.soundEnabled {
 		t.Fatal("auto-repeat M while popover open must be ignored")
 	}
-	t.Logf("verified M mute toggle with auto-repeat suppression across %d persisted transitions, volume retained=%d", len(saved), app.volume)
+	// Unmodified M also works while Haruhikage modal drama overlay and AlertDialog are open.
+	modalApp := newMinesweeperAppWith(appOptions{
+		Seed:  42,
+		Prefs: &initial,
+	})
+	modalApp.game = NewGame(Difficulty{
+		ID:         "marked-classic",
+		Song:       "春日影",
+		Gameplay:   GameplayClassic,
+		Haruhikage: true,
+		Rows:       5,
+		Cols:       5,
+		Mines:      1,
+	}, false, MemberTomori, 7)
+	modalApp.game.FirstClick = true
+	modalApp.game.Status = StatusPlaying
+	modalApp.game.Cell(0, 0).IsMine = true
+	modalApp.game.RecomputeAdjacency()
+	mtt := ui.NewTester(modalApp.view, 1280, 900)
+	if err := mtt.Click("cell-0-0"); err != nil {
+		t.Fatalf("trigger haruhikage loss: %v", err)
+	}
+	if !modalApp.haruhikageIntro || modalApp.haruhikageAlert {
+		t.Fatalf("expected haruhikageIntro active: intro=%v alert=%v", modalApp.haruhikageIntro, modalApp.haruhikageAlert)
+	}
+	mtt.KeyDown(ui.KeyM)
+	if modalApp.soundEnabled || modalApp.volume != 73 {
+		t.Fatalf("M while haruhikageIntro open failed: enabled=%v vol=%d", modalApp.soundEnabled, modalApp.volume)
+	}
+	mtt.KeyRepeat(0, ui.KeyM)
+	if modalApp.soundEnabled {
+		t.Fatal("auto-repeat M while haruhikageIntro open must be ignored")
+	}
+	mtt.KeyUp(ui.KeyM)
+	mtt.Key(ui.Ctrl, ui.KeyM)
+	if modalApp.soundEnabled {
+		t.Fatal("Ctrl+M while haruhikageIntro open must be ignored")
+	}
+	if err := mtt.Click("春日影演出遮罩"); err != nil {
+		t.Fatalf("advance to haruhikageAlert: %v", err)
+	}
+	if modalApp.haruhikageIntro || !modalApp.haruhikageAlert {
+		t.Fatalf("expected haruhikageAlert active: intro=%v alert=%v", modalApp.haruhikageIntro, modalApp.haruhikageAlert)
+	}
+	mtt.KeyDown(ui.KeyM)
+	if !modalApp.soundEnabled || modalApp.volume != 73 {
+		t.Fatalf("M while haruhikageAlert open failed: enabled=%v vol=%d", modalApp.soundEnabled, modalApp.volume)
+	}
+	mtt.KeyRepeat(0, ui.KeyM)
+	if !modalApp.soundEnabled {
+		t.Fatal("auto-repeat M while haruhikageAlert open must be ignored")
+	}
+	mtt.KeyUp(ui.KeyM)
+	mtt.Key(ui.Ctrl, ui.KeyM)
+	if !modalApp.soundEnabled {
+		t.Fatal("Ctrl+M while haruhikageAlert open must be ignored")
+	}
+	if err := mtt.Click("对不起，我错了"); err != nil {
+		t.Fatalf("dismiss haruhikageAlert after M toggle: %v", err)
+	}
+	if modalApp.haruhikageAlert {
+		t.Fatal("expected haruhikageAlert dismissed")
+	}
+	t.Logf("verified M mute toggle with auto-repeat suppression across %d persisted transitions (including modal overlays), volume retained=%d", len(saved), app.volume)
 }
 
 func TestWindowFocusTracking(t *testing.T) {
@@ -422,6 +554,7 @@ func TestWindowFocusTracking(t *testing.T) {
 func TestSharedPopoverMutualExclusionAndEscapeFocusReturn(t *testing.T) {
 	app := newMinesweeperApp(12345)
 	var boardClicks int
+	var returnEmptyPanel bool
 	// Headless fixture exercising the shared popover entrypoints with two
 	// sibling popovers (existing setlist + a second fixture settings popover)
 	// sharing popoverWorkspaceShield, without adding any controls to app.view.
@@ -433,6 +566,8 @@ func TestSharedPopoverMutualExclusionAndEscapeFocusReturn(t *testing.T) {
 
 		ui.Column(c).Fill().Padding(14).Gap(10).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Button(c.Key("fixture-outside-btn"), "外部按钮")
+
 				settingsOpen := app.popoverOpen(popoverSettings)
 				settingsTrigger := ui.Button(c.Key("fixture-settings-trigger"), "设置夹具").
 					HasPopup(ui.PopupDialog).Expanded(settingsOpen)
@@ -451,6 +586,9 @@ func TestSharedPopoverMutualExclusionAndEscapeFocusReturn(t *testing.T) {
 							app.toggleMute()
 						}
 					})
+					if returnEmptyPanel {
+						return ui.Element{}
+					}
 					return panel
 				})
 
@@ -529,6 +667,48 @@ func TestSharedPopoverMutualExclusionAndEscapeFocusReturn(t *testing.T) {
 	}
 	if boardClicks != 0 {
 		t.Fatalf("outside dismiss click leaked to board: clicks=%d", boardClicks)
+	}
+
+	// 5b. Programmatic openPopover while focus sits on an unrelated control:
+	// Escape must still close the popover and return focus to its trigger.
+	if err := tt.Click("外部按钮"); err != nil {
+		t.Fatalf("focus outside button: %v", err)
+	}
+	app.openPopover(popoverSettings)
+	tt.Frame()
+	tt.Key(0, ui.KeyEscape)
+	if app.hasOpenPopover() {
+		t.Fatalf("Escape should close programmatically opened settings popover, active=%v", app.activePopover)
+	}
+	if !tt.Focused("设置夹具") {
+		t.Fatal("Escape on programmatically opened settings popover must return focus to 设置夹具")
+	}
+
+	if err := tt.Click("外部按钮"); err != nil {
+		t.Fatalf("re-focus outside button: %v", err)
+	}
+	app.openPopover(popoverSetlist)
+	tt.Frame()
+	tt.Key(0, ui.KeyEscape)
+	if app.hasOpenPopover() || app.setlistOpen {
+		t.Fatalf("Escape should close programmatically opened setlist popover, active=%v setlistOpen=%v", app.activePopover, app.setlistOpen)
+	}
+	if !tt.Focused("歌单") {
+		t.Fatal("Escape on programmatically opened setlist popover must return focus to 歌单")
+	}
+
+	// 5c. Popover whose body returns an empty ui.Element{} still restores trigger focus on Escape.
+	returnEmptyPanel = true
+	if err := tt.Click("设置夹具"); err != nil {
+		t.Fatalf("open empty-panel settings fixture: %v", err)
+	}
+	tt.Key(0, ui.KeyEscape)
+	returnEmptyPanel = false
+	if app.hasOpenPopover() {
+		t.Fatalf("Escape should close empty-panel settings popover, active=%v", app.activePopover)
+	}
+	if !tt.Focused("设置夹具") {
+		t.Fatal("Escape on empty-panel settings popover must return focus to 设置夹具")
 	}
 
 	// 6. Duel settlement auto-closes whichever popover is open.
