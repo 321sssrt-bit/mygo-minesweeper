@@ -94,7 +94,17 @@ func TestScan(t *testing.T) {
 			"var k = ui.Color{}\n" +
 			"var l = ui.Hex(m.ColorHex)\n" +
 			"func fakes(ui interface{ RGB(int, int, int) int }) { ui.RGB(1, 2, 3) }\n",
-		"aliased.go": "package x\nimport paint \"github.com/egoist/mygo/ui\"\nvar a = paint.RGB(1, 2, 3)\n",
+		"aliased.go": "package x\nimport _ \"github.com/egoist/mygo/ui\"\nimport paint \"github.com/egoist/mygo/ui\"\nvar a = paint.RGB(1, 2, 3)\n",
+		"dot.go": `package x
+import . "github.com/egoist/mygo/ui"
+var a = RGB(1, 2, 3)
+var b = Hex("AABBCC")
+var c = Color{R: 1}
+var d = []*Color{1: {R: 2}}
+var e = map[Color][]Color{{R: 3}: {{R: 4}, {}}}
+var f = []Color{{}}
+func local(RGB func(int, int, int) int) { _ = RGB(1, 2, 3) }
+`,
 		"palette.go": "package x\nimport \"github.com/egoist/mygo/ui\"\nvar p = ui.Hex(\"#AABBCC\")\nvar q = ui.Color{R: 1}\n",
 		// The member table is exempt from the colour report only;
 		// its copy is still scanned.
@@ -145,7 +155,13 @@ func TestScan(t *testing.T) {
 		}
 	}
 	wantColors := []Finding{
-		{filepath.Join(dir, "aliased.go"), 3, []string{RuleRawColor}, "paint.RGB(1, 2, 3)"},
+		{filepath.Join(dir, "aliased.go"), 4, []string{RuleRawColor}, "paint.RGB(1, 2, 3)"},
+		{filepath.Join(dir, "dot.go"), 3, []string{RuleRawColor}, "RGB(1, 2, 3)"},
+		{filepath.Join(dir, "dot.go"), 4, []string{RuleRawColor}, "AABBCC"},
+		{filepath.Join(dir, "dot.go"), 5, []string{RuleRawColor}, "Color{R: 1}"},
+		{filepath.Join(dir, "dot.go"), 6, []string{RuleRawColor}, "{R: 2}"},
+		{filepath.Join(dir, "dot.go"), 7, []string{RuleRawColor}, "{R: 3}"},
+		{filepath.Join(dir, "dot.go"), 7, []string{RuleRawColor}, "{R: 4}"},
 		{game, 5, []string{RuleRawColor}, "#FFF"},
 		{game, 6, []string{RuleRawColor}, `fill="#FF8899"`},
 		{game, 8, []string{RuleRawColor}, "AABBCC"},

@@ -42,7 +42,7 @@ type Report struct {
 	Colors []Finding
 }
 
-const hexPattern = `#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})`
+const hexDigits = `(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})`
 
 var (
 	// Framework (including egoist/mygo's "Native UI"), graphics-API and
@@ -70,8 +70,9 @@ var (
 	// "500×500 · 45,000雷 · 03:00", a bare "500×500"); the constraint
 	// covers prose lines, not spec metadata.
 	trackSpec = regexp.MustCompile(`^(?:\d+\s*[×xX]\s*\d+|[\d,]+\s*雷|\d+:\d{2}|[0-9,一二三四五六七八九十百千万两半]+\s*分钟|·|\s)+$`)
-	hexColor  = regexp.MustCompile("^" + hexPattern + "$")
-	hexInside = regexp.MustCompile(hexPattern + `\b`)
+	hexColor  = regexp.MustCompile("^#" + hexDigits + "$")
+	hexInside = regexp.MustCompile("#" + hexDigits + `\b`)
+	bareHex   = regexp.MustCompile("^" + hexDigits + "$")
 )
 
 // colorFiles may define raw colours: the palette itself, and the member
@@ -170,7 +171,8 @@ func Scan(dir string) (*Report, error) {
 }
 
 func (r *Report) scanFile(positions *token.File, file *ast.File, src []byte, checkColors bool) {
-	uiName := uiImportName(file)
+	uiNames := uiImportNames(file)
+	elidedTypes := make(map[*ast.CompositeLit]ast.Expr)
 	addColor := func(pos token.Pos, value string) {
 		if checkColors {
 			r.Colors = append(r.Colors, Finding{positions.Name(), positions.Line(pos), []string{RuleRawColor}, value})
@@ -184,22 +186,31 @@ func (r *Report) scanFile(positions *token.File, file *ast.File, src []byte, che
 		case *ast.ImportSpec:
 			return false
 		case *ast.CallExpr:
-			switch uiSelector(n.Fun, uiName) {
+			switch uiName(n.Fun, uiNames) {
 			case "Hex":
 				if len(n.Args) == 1 {
 					if arg, ok := ast.Unparen(n.Args[0]).(*ast.BasicLit); ok && arg.Kind == token.STRING {
 						value, _ := strconv.Unquote(arg.Value)
-						addColor(arg.Pos(), value)
-						return false
+						// The literal walk already reports colours with a # prefix.
+						if !hexInside.MatchString(value) {
+							addColor(arg.Pos(), value)
+						}
+						// A bare hex code is colour data, but other text still needs the copy checks.
+						return !bareHex.MatchString(value)
 					}
 				}
 			case "RGB", "RGBA":
 				addColor(n.Pos(), expressionText(n))
 			}
 		case *ast.CompositeLit:
-			if len(n.Elts) > 0 && uiSelector(n.Type, uiName) == "Color" {
+			typ := n.Type
+			if typ == nil {
+				typ = elidedTypes[n]
+			}
+			if len(n.Elts) > 0 && uiName(typ, uiNames) == "Color" {
 				addColor(n.Pos(), expressionText(n))
 			}
+			rememberElidedTypes(elidedTypes, typ, n.Elts)
 		case *ast.BasicLit:
 			if n.Kind == token.STRING {
 				value, _ := strconv.Unquote(n.Value)
@@ -215,27 +226,61 @@ func (r *Report) scanFile(positions *token.File, file *ast.File, src []byte, che
 	})
 }
 
-func uiImportName(file *ast.File) string {
+func uiImportNames(file *ast.File) map[string]bool {
+	names := make(map[string]bool)
 	for _, spec := range file.Imports {
 		path, _ := strconv.Unquote(spec.Path.Value)
 		if path == "github.com/egoist/mygo/ui" {
-			if spec.Name != nil {
-				return spec.Name.Name
+			if spec.Name == nil {
+				names["ui"] = true
+			} else if spec.Name.Name != "_" {
+				names[spec.Name.Name] = true
 			}
-			return "ui"
+		}
+	}
+	return names
+}
+
+func uiName(expr ast.Expr, imports map[string]bool) string {
+	// A locally declared name has an object; an import name does not.
+	switch expr := ast.Unparen(expr).(type) {
+	case *ast.SelectorExpr:
+		if id, ok := expr.X.(*ast.Ident); ok && imports[id.Name] && id.Obj == nil {
+			return expr.Sel.Name
+		}
+	case *ast.Ident:
+		if imports["."] && expr.Obj == nil {
+			return expr.Name
 		}
 	}
 	return ""
 }
 
-func uiSelector(expr ast.Expr, uiName string) string {
-	if selector, ok := ast.Unparen(expr).(*ast.SelectorExpr); ok {
-		// A locally declared name has an object; an import name does not.
-		if id, ok := selector.X.(*ast.Ident); ok && id.Name == uiName && id.Obj == nil {
-			return selector.Sel.Name
+func rememberElidedTypes(types map[*ast.CompositeLit]ast.Expr, typ ast.Expr, elts []ast.Expr) {
+	remember := func(elt, typ ast.Expr) {
+		if lit, ok := elt.(*ast.CompositeLit); ok && lit.Type == nil {
+			if ptr, ok := ast.Unparen(typ).(*ast.StarExpr); ok {
+				typ = ptr.X
+			}
+			types[lit] = typ
 		}
 	}
-	return ""
+	switch typ := ast.Unparen(typ).(type) {
+	case *ast.ArrayType:
+		for _, elt := range elts {
+			if pair, ok := elt.(*ast.KeyValueExpr); ok {
+				elt = pair.Value
+			}
+			remember(elt, typ.Elt)
+		}
+	case *ast.MapType:
+		for _, elt := range elts {
+			if pair, ok := elt.(*ast.KeyValueExpr); ok {
+				remember(pair.Key, typ.Key)
+				remember(pair.Value, typ.Value)
+			}
+		}
+	}
 }
 
 func (r *Report) String() string {
