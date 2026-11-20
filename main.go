@@ -842,17 +842,27 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		} else {
 			remain := haruhikageIntroDuration - elapsedIntro
 			c.After(min(50*time.Millisecond, max(time.Millisecond, remain)))
+			drama := haruhikageFor(pal.Dark)
 			ui.Overlay(c, func() {
 				overlay := ui.Box(c.Key("haruhikage-drama-overlay")).Fill().Modal().
-					Background(ui.Hex("#05070D").Alpha(0.84)).Center().
+					Background(drama.Scrim).Center().
 					Cursor(ui.CursorPointer).Label("春日影演出遮罩")
 				overlay.Children(func() {
-					ui.Column(c).AlignItems(ui.Center).Gap(10).Padding(24).Radius(14).
-						Background(ui.Hex("#140B16").Alpha(0.95)).Border(1, ui.Hex("#E8A849").Alpha(0.8)).
+					ui.Column(c).AlignItems(ui.Center).Gap(10).Padding(26, 32).Radius(6).
+						Background(drama.CardBg).Border(1.5, drama.CardBorder).
+						Shadow(0, 12, 32, 0, drama.CardShadow).
+						Draw(func(p *ui.Painter, r ui.Rect) {
+							p.Clip(r, 6, func() {
+								p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: 3}, drama.AccentBar, 0)
+								for y := r.Y + 24; y < r.Y+r.H-8; y += 22 {
+									p.Line(r.X+14, y, r.X+r.W-14, y, 1, drama.CardRule)
+								}
+							})
+						}).
 						Children(func() {
-							ui.Text(c, "♪ 《春日影》 — 乐声骤停").FontSize(13).Bold().TextColor(ui.Hex("#E8A849"))
-							ui.Text(c, "「……为什么要演奏春日影？！」").FontSize(22).Bold().TextColor(ui.Hex("#F8FAFC"))
-							ui.Text(c, "（长崎爽世的眼神失去了高光 · 点击任意处继续）").FontSize(12).TextColor(ui.Hex("#CBD5E1"))
+							ui.Text(c, "♪ 《春日影》 — 乐声骤停").FontSize(13).Bold().TextColor(drama.Eyebrow)
+							ui.Text(c, "「……为什么要演奏春日影？！」").FontSize(22).Bold().TextColor(drama.Title)
+							ui.Text(c, "（长崎爽世的眼神失去了高光 · 点击任意处继续）").FontSize(12).TextColor(drama.Subtitle)
 						})
 				})
 				if overlay.Clicked() {
@@ -864,6 +874,9 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	}
 
 	// 春日影名场面弹窗
+	if a.haruhikageAlert {
+		c.SetTheme(haruhikageFor(pal.Dark).dialogTheme(baseTheme))
+	}
 	switch ui.AlertDialog(c, &a.haruhikageAlert,
 		"为什么要演奏春日影？！",
 		"「明明说好不再弹这首曲子的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
@@ -873,6 +886,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	case 1:
 		a.resetGame(false)
 	}
+	c.SetTheme(baseTheme)
 
 	root := ui.Column(c).Fill().Padding(14).Gap(10)
 	if pal.Lamp.A > 0 {
@@ -1373,7 +1387,7 @@ func main() {
 			Title:           "MyGO!!!!! 迷子扫雷",
 			Width:           1280,
 			Height:          900,
-			BackgroundColor: "#F3EEE2",
+			BackgroundColor: hexOf(app.paper().Desk),
 			StateKey:        "mygo-minesweeper-v2",
 			Content:         ui.View(app.view),
 		})
