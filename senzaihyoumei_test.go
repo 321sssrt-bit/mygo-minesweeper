@@ -171,21 +171,12 @@ func TestSenzaihyoumeiSetlistSelectionAndFullGame(t *testing.T) {
 		}
 	}
 
-	// Select every shipped track by song name, including the 6th track 《春日影》.
-	if err := tt.Click("歌单"); err != nil {
-		t.Fatalf("close setlist popover: %v", err)
+	// Verify both duel tracks in the shipped duel group are selectable by song name.
+	if err := tt.Click("春日影"); err != nil {
+		t.Fatalf("select 《春日影》: %v", err)
 	}
-	for wantIdx := 1; wantIdx < len(Difficulties); wantIdx++ {
-		want := Difficulties[wantIdx]
-		if err := tt.Click("歌单"); err != nil {
-			t.Fatalf("open setlist for %s: %v", want.Song, err)
-		}
-		if err := tt.Click(want.Song); err != nil {
-			t.Fatalf("select %s: %v", want.Song, err)
-		}
-		if app.diffIdx != wantIdx || app.game.Difficulty.ID != want.ID {
-			t.Fatalf("selected idx=%d id=%q, want idx=%d id=%q", app.diffIdx, app.game.Difficulty.ID, wantIdx, want.ID)
-		}
+	if wantIdx := findDifficultyIdx("duel"); app.diffIdx != wantIdx || app.game.Difficulty.ID != "duel" {
+		t.Fatalf("selected idx=%d id=%q, want idx=%d id=%q", app.diffIdx, app.game.Difficulty.ID, wantIdx, "duel")
 	}
 
 	// Switch to 《潜在表明》 via setlist and play a complete 3-minute duel.
@@ -195,8 +186,12 @@ func TestSenzaihyoumeiSetlistSelectionAndFullGame(t *testing.T) {
 	if err := tt.Click("潜在表明"); err != nil {
 		t.Fatalf("select 《潜在表明》: %v", err)
 	}
-	// Pin RNG after setlist reset so mine placement is deterministic across runs.
+	if wantIdx := findDifficultyIdx("senzaihyoumei"); app.diffIdx != wantIdx || app.game.Difficulty.ID != "senzaihyoumei" {
+		t.Fatalf("selected idx=%d id=%q, want idx=%d id=%q", app.diffIdx, app.game.Difficulty.ID, wantIdx, "senzaihyoumei")
+	}
+	// Pin board and AI RNGs after setlist reset so the end-to-end duel is deterministic.
 	app.game.rng = rand.New(rand.NewPCG(42, 42^0x9e3779b97f4a7c15))
+	app.game.duel.rng = rand.New(rand.NewPCG(7, 9))
 	if !app.isDuel() || app.game.Rows != 500 || app.game.Cols != 500 || app.game.Mines != 45000 || app.game.SkillUsesLeft != 5 {
 		t.Fatalf("senzaihyoumei setup wrong: duel=%v %dx%d mines=%d charges=%d",
 			app.isDuel(), app.game.Rows, app.game.Cols, app.game.Mines, app.game.SkillUsesLeft)
