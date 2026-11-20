@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"math"
 
@@ -244,27 +245,15 @@ func memberAvatar(c *ui.Context, m Member, size float32, pal *palette) {
 // iconOrder is the band order the icon's five exclamation marks follow.
 var iconOrder = []MemberID{MemberTomori, MemberAnon, MemberRana, MemberSoyorin, MemberTaki}
 
-// bandMark is the small app icon: graph paper with a !!!!! in the five
-// members' inks. It is the same on both papers.
+//go:embed resources/icon.svg
+var appIconSVGSource []byte
+
+var appIconSVG = ui.MustParseSVG(appIconSVGSource)
+
+// bandMark is the small app icon, rendered from the same SVG source as the
+// shipped application icon. It stays on the day paper in both themes.
 func bandMark(c *ui.Context, size float32) {
-	paper := ui.Hex("#FBF8F1")
-	ui.Box(c).Size(size, size).Radius(size*0.26).Background(paper).
-		Shadow(0, 1, 3, 0, dayPaper.SlipShade).Center().Clip().
-		Draw(func(p *ui.Painter, r ui.Rect) {
-			step := size / 5
-			for x := r.X + step; x < r.X+r.W; x += step {
-				p.Line(x, r.Y, x, r.Y+r.H, 1, bandColor.Alpha(0.2))
-			}
-			for y := r.Y + step; y < r.Y+r.H; y += step {
-				p.Line(r.X, y, r.X+r.W, y, 1, bandColor.Alpha(0.2))
-			}
-		}).Children(func() {
-		ui.Row(c).Gap(0).PassThrough().Children(func() {
-			for _, id := range iconOrder {
-				ui.Text(c, "!").FontSize(size * 0.42).Bold().TextColor(dayPaper.InkOf(memberImage(id))).PassThrough()
-			}
-		})
-	})
+	ui.Image(c, appIconSVG).Size(size, size)
 }
 
 // hatchMeter is a pencil-hatched bar filled to frac.
