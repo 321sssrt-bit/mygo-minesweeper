@@ -1,18 +1,20 @@
-// Package scanreport audits Go source literals for the notebook art
+// Package scanreport audits Go source for the notebook art
 // direction's copy and colour constraints (issue #5): banned wording,
 // technical terms, duel lines hardcoding board size or duration, and raw
-// colour values outside the palette. The source test fails on copy
-// violations. Raw colours remain report-only until issue #24.
+// colour values outside the palette. The source test fails on both copy
+// and raw colour violations.
 package scanreport
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"strconv"
 	"strings"
-
-	"mygo-minesweeper/internal/glyphset"
 )
 
 const bannedTerm = "百万格决斗"
@@ -25,7 +27,7 @@ const (
 	RuleRawColor  = "调色板之外的裸色值"
 )
 
-// Finding is one literal that breaks a rule.
+// Finding is one source occurrence that breaks a rule.
 type Finding struct {
 	Path  string
 	Line  int
@@ -68,9 +70,6 @@ var (
 	// "500×500 · 45,000雷 · 03:00", a bare "500×500"); the constraint
 	// covers prose lines, not spec metadata.
 	trackSpec = regexp.MustCompile(`^(?:\d+\s*[×xX]\s*\d+|[\d,]+\s*雷|\d+:\d{2}|[0-9,一二三四五六七八九十百千万两半]+\s*分钟|·|\s)+$`)
-	// shortcut: only #-prefixed hex literals are caught; bare ui.Hex args
-	// and ui.RGB/ui.Color forms need call-site analysis — upgrade when the
-	// gate ticket (#24) turns this scan into fail-mode.
 	hexColor  = regexp.MustCompile("^" + hexPattern + "$")
 	hexInside = regexp.MustCompile(hexPattern + `\b`)
 )
@@ -145,31 +144,98 @@ func copyRules(text string) []string {
 
 // Scan audits the non-test Go files directly inside dir.
 func Scan(dir string) (*Report, error) {
-	lits, err := glyphset.Literals(dir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 	rep := &Report{}
-	for _, lit := range lits {
-		if lit.IsChar {
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		if !colorFiles[filepath.Base(lit.Path)] && hexInside.MatchString(lit.Text) {
-			rep.Colors = append(rep.Colors, Finding{lit.Path, lit.Line, []string{RuleRawColor}, lit.Text})
+		path := filepath.Join(dir, name)
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
 		}
-		if rules := copyRules(lit.Text); len(rules) > 0 {
-			rep.Copy = append(rep.Copy, Finding{lit.Path, lit.Line, rules, lit.Text})
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, src, 0)
+		if err != nil {
+			return nil, err
 		}
-	}
-	for _, list := range [][]Finding{rep.Copy, rep.Colors} {
-		sort.Slice(list, func(i, j int) bool {
-			if list[i].Path != list[j].Path {
-				return list[i].Path < list[j].Path
-			}
-			return list[i].Line < list[j].Line
-		})
+		rep.scanFile(fset.File(file.Pos()), file, src, !colorFiles[name])
 	}
 	return rep, nil
+}
+
+func (r *Report) scanFile(positions *token.File, file *ast.File, src []byte, checkColors bool) {
+	uiName := uiImportName(file)
+	addColor := func(pos token.Pos, value string) {
+		if checkColors {
+			r.Colors = append(r.Colors, Finding{positions.Name(), positions.Line(pos), []string{RuleRawColor}, value})
+		}
+	}
+	expressionText := func(expr ast.Expr) string {
+		return string(src[positions.Offset(expr.Pos()):positions.Offset(expr.End())])
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.ImportSpec:
+			return false
+		case *ast.CallExpr:
+			switch uiSelector(n.Fun, uiName) {
+			case "Hex":
+				if len(n.Args) == 1 {
+					if arg, ok := ast.Unparen(n.Args[0]).(*ast.BasicLit); ok && arg.Kind == token.STRING {
+						value, _ := strconv.Unquote(arg.Value)
+						addColor(arg.Pos(), value)
+						return false
+					}
+				}
+			case "RGB", "RGBA":
+				addColor(n.Pos(), expressionText(n))
+			}
+		case *ast.CompositeLit:
+			if len(n.Elts) > 0 && uiSelector(n.Type, uiName) == "Color" {
+				addColor(n.Pos(), expressionText(n))
+			}
+		case *ast.BasicLit:
+			if n.Kind == token.STRING {
+				value, _ := strconv.Unquote(n.Value)
+				if hexInside.MatchString(value) {
+					addColor(n.Pos(), value)
+				}
+				if rules := copyRules(value); len(rules) > 0 {
+					r.Copy = append(r.Copy, Finding{positions.Name(), positions.Line(n.Pos()), rules, value})
+				}
+			}
+		}
+		return true
+	})
+}
+
+func uiImportName(file *ast.File) string {
+	for _, spec := range file.Imports {
+		path, _ := strconv.Unquote(spec.Path.Value)
+		if path == "github.com/egoist/mygo/ui" {
+			if spec.Name != nil {
+				return spec.Name.Name
+			}
+			return "ui"
+		}
+	}
+	return ""
+}
+
+func uiSelector(expr ast.Expr, uiName string) string {
+	if selector, ok := ast.Unparen(expr).(*ast.SelectorExpr); ok {
+		// A locally declared name has an object; an import name does not.
+		if id, ok := selector.X.(*ast.Ident); ok && id.Name == uiName && id.Obj == nil {
+			return selector.Sel.Name
+		}
+	}
+	return ""
 }
 
 func (r *Report) String() string {
