@@ -759,7 +759,7 @@ func (a *minesweeperApp) duelHUD(c *ui.Context) {
 		if d.playerStunned() {
 			ui.Badge(c, fmt.Sprintf("硬直 %.1f 秒", d.StunnedUntil-d.Elapsed)).Background(ui.Hex("#701F2B"))
 		} else {
-			ui.Badge(c, "确定全雷时左键收雷 · +75/雷")
+			ui.Badge(c, "确定全雷时左键点数字收雷 · +75/雷")
 		}
 		if d.Elapsed < d.ScanUntil {
 			ui.Badge(c, fmt.Sprintf("扫描 %.1f 秒", d.ScanUntil-d.Elapsed)).Background(ui.Hex("#3C301D")).TextColor(ui.Hex("#F5D99C"))
@@ -903,8 +903,8 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					a.resetGame(false)
 				}
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Text(c, "夜间台灯").FontSize(12).TextColor(t.TextMuted)
-					ui.Switch(c, &a.darkMode).Label("夜间台灯").Tooltip("切换日间方格纸与深夜台灯下的笔记本")
+					lamp := ui.Text(c, "夜间台灯").FontSize(12).TextColor(t.TextMuted)
+					ui.Switch(c, &a.darkMode).LabelledBy(lamp).Tooltip("切换日间方格纸与深夜台灯下的笔记本")
 				})
 			})
 		})

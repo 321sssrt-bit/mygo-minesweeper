@@ -1166,7 +1166,7 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 		"高松灯 0",
 		"回到中心",
 		"定位高松灯",
-		"确定全雷时左键收雷 · +75/雷",
+		"确定全雷时左键点数字收雷 · +75/雷",
 		"插旗 0",
 	} {
 		if !dtt.HasText(want) {
