@@ -88,6 +88,87 @@ func newMinimapColors(p *palette) *minimapColors {
 	}
 }
 
+// duelColors are the high-contrast player-blue and AI-pink colours used for
+// duel territory washes, flag outlines, reveal ripples, and the latest AI
+// move frame.
+type duelColors struct {
+	Player, AI ui.Color
+}
+
+var duelPalette = duelColors{
+	Player: ui.Hex("#55B2D6"),
+	AI:     ui.Hex("#F07AA4"),
+}
+
+// duelMinimapColors holds the dark navy duel minimap backdrop, territory
+// block colours, live markers, and viewport frame.
+type duelMinimapColors struct {
+	Bg, Contested, Player, AI  ui.Color
+	PlayerMarker, PlayerStroke ui.Color
+	AIMarker, AIStroke         ui.Color
+	Viewport                   ui.Color
+}
+
+var duelMinimapPalette = duelMinimapColors{
+	Bg:           ui.Hex("#0B1423"),
+	Contested:    ui.Hex("#A78BFA"),
+	Player:       duelPalette.Player,
+	AI:           duelPalette.AI,
+	PlayerMarker: ui.Hex("#38BDF8"),
+	PlayerStroke: ui.Hex("#F4F8FD"),
+	AIMarker:     duelPalette.AI,
+	AIStroke:     ui.Hex("#FDF2F8"),
+	Viewport:     ui.Hex("#F4F8FD"),
+}
+
+// duelTerritoryWash is how strongly a side's colour washes over the paper
+// it has opened: enough to read as territory, light enough to stay paper.
+const duelTerritoryWash = 0.16
+
+// duelOwnerColor marks a side on the duel paper: its territory, its flags'
+// outline and its reveal ripples.
+func duelOwnerColor(owner DuelOwner) ui.Color {
+	if owner == DuelAI {
+		return duelPalette.AI
+	}
+	return duelPalette.Player
+}
+
+// duelCellPaper is what a revealed cell's number is written on: the bare
+// board, or the board under a side's territory wash.
+func duelCellPaper(p *palette, owner DuelOwner) ui.Color {
+	if owner == DuelNobody {
+		return p.Board
+	}
+	return duelOwnerColor(owner).Alpha(duelTerritoryWash).Over(p.Board)
+}
+
+// duelInks are the number inks per owner: numberInk, deepened (or lit,
+// at night) where a territory wash would leave it under minInkContrast.
+type duelInks [DuelAI + 1][len(cellDigits)]ui.Color
+
+var dayDuelInks, nightDuelInks = newDuelInks(dayPaper), newDuelInks(nightPaper)
+
+func duelInksFor(dark bool) *duelInks {
+	if dark {
+		return nightDuelInks
+	}
+	return dayDuelInks
+}
+
+func newDuelInks(p *palette) *duelInks {
+	var inks duelInks
+	for owner := DuelNobody; owner <= DuelAI; owner++ {
+		under := *p
+		under.Board = duelCellPaper(p, owner)
+		under.Sheet = under.Board
+		for n := 1; n < len(cellDigits); n++ {
+			inks[owner][n] = under.InkOf(numberInk(n, p.Dark))
+		}
+	}
+	return &inks
+}
+
 // minInkContrast is the WCAG AA ratio every ink keeps against the paper.
 const minInkContrast = 4.5
 
