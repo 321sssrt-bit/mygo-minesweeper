@@ -559,7 +559,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 				row, col := g.duel.LastAI/g.Cols, g.duel.LastAI%g.Cols
 				x := r.X + float32(col)*v.Cell - v.X
 				y := r.Y + float32(row)*v.Cell - v.Y
-				p.Stroke(ui.Rect{X: x, Y: y, W: v.Cell, H: v.Cell}, ui.Hex("#F07AA4"), 4, 2)
+				p.Stroke(ui.Rect{X: x, Y: y, W: v.Cell, H: v.Cell}, duelPalette.AI, 4, 2)
 			}
 			if v.EffectCell >= 0 && g.Cols > 0 {
 				elapsed := now.Sub(v.LastEffect)
@@ -622,54 +622,6 @@ func (a *minesweeperApp) rippleAlphaAt(idx int, now time.Time) (float32, bool) {
 
 // cellDigits are the numbers a revealed cell can show, by count.
 var cellDigits = [...]string{"", "1", "2", "3", "4", "5", "6", "7", "8"}
-
-// duelTerritoryWash is how strongly a side's colour washes over the paper
-// it has opened: enough to read as territory, light enough to stay paper.
-const duelTerritoryWash = 0.16
-
-// duelOwnerColor marks a side on the duel paper: its territory, its flags'
-// outline and its reveal ripples.
-func duelOwnerColor(owner DuelOwner) ui.Color {
-	if owner == DuelAI {
-		return ui.Hex("#F07AA4")
-	}
-	return ui.Hex("#55B2D6")
-}
-
-// duelCellPaper is what a revealed cell's number is written on: the bare
-// board, or the board under a side's territory wash.
-func duelCellPaper(p *palette, owner DuelOwner) ui.Color {
-	if owner == DuelNobody {
-		return p.Board
-	}
-	return duelOwnerColor(owner).Alpha(duelTerritoryWash).Over(p.Board)
-}
-
-// duelInks are the number inks per owner: numberInk, deepened (or lit,
-// at night) where a territory wash would leave it under minInkContrast.
-type duelInks [DuelAI + 1][len(cellDigits)]ui.Color
-
-var dayDuelInks, nightDuelInks = newDuelInks(dayPaper), newDuelInks(nightPaper)
-
-func duelInksFor(dark bool) *duelInks {
-	if dark {
-		return nightDuelInks
-	}
-	return dayDuelInks
-}
-
-func newDuelInks(p *palette) *duelInks {
-	var inks duelInks
-	for owner := DuelNobody; owner <= DuelAI; owner++ {
-		under := *p
-		under.Board = duelCellPaper(p, owner)
-		under.Sheet = under.Board
-		for n := 1; n < len(cellDigits); n++ {
-			inks[owner][n] = under.InkOf(numberInk(n, p.Dark))
-		}
-	}
-	return &inks
-}
 
 // propRect is where a knot or band-aid sits in a cell.
 func propRect(tile ui.Rect) ui.Rect {
@@ -817,7 +769,8 @@ func paintClassicMinimap(p *ui.Painter, g *Game, mini, plot, view ui.Rect, pal *
 }
 
 func paintDuelMinimap(p *ui.Painter, g *Game, mini, view ui.Rect, border ui.Color) {
-	p.Fill(mini, ui.Hex("#0B1423").Alpha(0.94), 6)
+	dm := duelMinimapPalette
+	p.Fill(mini, dm.Bg.Alpha(0.94), 6)
 	if len(g.duel.Minimap) == minimapGridSize*minimapGridSize {
 		rowMap, colMap := minimapAxisSlots(g)
 		bw := mini.W / float32(minimapGridSize)
@@ -835,13 +788,13 @@ func paintDuelMinimap(p *ui.Painter, g *Game, mini, view ui.Rect, border ui.Colo
 				switch {
 				case blk.Player > 0 && blk.AI > 0:
 					density := min(float32(1), float32(blk.Player+blk.AI)/24)
-					color = ui.Hex("#A78BFA").Alpha(0.65 + 0.35*density)
+					color = dm.Contested.Alpha(0.65 + 0.35*density)
 				case blk.Player > 0:
 					density := min(float32(1), float32(blk.Player)/20)
-					color = ui.Hex("#55B2D6").Alpha(0.65 + 0.35*density)
+					color = dm.Player.Alpha(0.65 + 0.35*density)
 				default:
 					density := min(float32(1), float32(blk.AI)/20)
-					color = ui.Hex("#F07AA4").Alpha(0.65 + 0.35*density)
+					color = dm.AI.Alpha(0.65 + 0.35*density)
 				}
 				bx := mini.X + float32(bc)*bw
 				by := mini.Y + float32(br)*bh
@@ -865,10 +818,10 @@ func paintDuelMinimap(p *ui.Painter, g *Game, mini, view ui.Rect, border ui.Colo
 		ax, ay = minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastAI, 5)
 		if pulsing {
 			ring := clampMinimapRect(mini, ax-(3+pulse*4.5), ay-(3+pulse*4.5), (3+pulse*4.5)*2)
-			p.Stroke(ring, ui.Hex("#F07AA4").Alpha(1-pulse*0.75), 99, 1.5)
+			p.Stroke(ring, dm.AIMarker.Alpha(1-pulse*0.75), 99, 1.5)
 		}
-		p.Fill(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#F07AA4"), 1)
-		p.Stroke(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, ui.Hex("#FDF2F8"), 1, 1)
+		p.Fill(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, dm.AIMarker, 1)
+		p.Stroke(ui.Rect{X: ax - 2.5, Y: ay - 2.5, W: 5, H: 5}, dm.AIStroke, 1, 1)
 	}
 	if hasPlayer {
 		px, py := minimapMarkerPos(mini, g.Rows, g.Cols, g.duel.LastCell, 5)
@@ -877,15 +830,15 @@ func paintDuelMinimap(p *ui.Painter, g *Game, mini, view ui.Rect, border ui.Colo
 		}
 		if pulsing {
 			ring := clampMinimapRect(mini, px-(3+pulse*3.5), py-(3+pulse*3.5), (3+pulse*3.5)*2)
-			p.Stroke(ring, ui.Hex("#38BDF8").Alpha(1-pulse*0.75), 99, 1.5)
+			p.Stroke(ring, dm.PlayerMarker.Alpha(1-pulse*0.75), 99, 1.5)
 		}
-		p.Fill(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#38BDF8"), 99)
-		p.Stroke(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, ui.Hex("#F4F8FD"), 99, 1)
+		p.Fill(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, dm.PlayerMarker, 99)
+		p.Stroke(ui.Rect{X: px - 2.5, Y: py - 2.5, W: 5, H: 5}, dm.PlayerStroke, 99, 1)
 	}
 	if pulsing && (hasAI || hasPlayer) {
 		p.AnimationFrame()
 	}
-	p.Stroke(view, ui.Hex("#F4F8FD"), 2, 1.5)
+	p.Stroke(view, dm.Viewport, 2, 1.5)
 	p.Stroke(mini, border, 6, 1)
 }
 
