@@ -591,13 +591,11 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 			p.AnimationFrame()
 		}
 		if count, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {
-			badge := ui.Span{Text: fmt.Sprintf("9×9 扫描：%d 雷", count), Size: 14, Weight: 700, Color: dp.ScanBadgeText}
-			bw, bh := p.MeasureText(0, badge)
-			box := ui.Rect{X: r.X + 12, Y: r.Y + 12, W: max(float32(166), bw+24), H: 34}
+			box := ui.Rect{X: r.X + 12, Y: r.Y + 12, W: 166, H: 34}
 			p.Shadow(box, 6, 0, 1, 3, 0, pal.SlipShade)
 			p.Fill(box, dp.ScanBadgeBg, 6)
 			p.Stroke(box, dp.ScanBadgeBorder, 6, 1.2)
-			p.RichText(box.X+(box.W-bw)/2, box.Y+(box.H-bh)/2, 0, badge)
+			p.Text(r.X+23, r.Y+20, fmt.Sprintf("9×9 扫描：%d 雷", count), 14, dp.ScanBadgeText)
 		}
 		if g.duel != nil && g.Status == StatusPlaying && g.duel.playerStunned() {
 			pulse := 0.45 + 0.55*float32(0.5+0.5*math.Sin(float64(now.UnixMilli())/120.0))
@@ -697,19 +695,18 @@ func (a *minesweeperApp) pruneAndDrawPopups(p *ui.Painter, r ui.Rect, now time.T
 		}
 		kept = append(kept, pop)
 		k := float32(elapsed) / float32(duelPopupDuration)
+		px := r.X + (float32(pop.Col)+0.5)*v.Cell - v.X - float32(len([]rune(pop.Text)))*3.5
+		py := r.Y + float32(pop.Row)*v.Cell - v.Y - 16 - k*28
+		px = max(r.X+8, min(r.X+r.W-120, px))
+		py = max(r.Y+8, min(r.Y+r.H-28, py))
 		alpha := 1 - k*0.85
 		style := dp.Popups[pop.Kind]
-		label := ui.Span{Text: pop.Text, Size: 13, Weight: 700, Color: style.Text.Alpha(alpha)}
-		tw, th := p.MeasureText(0, label)
-		pillW := max(float32(44), tw+16)
-		pillH := max(float32(22), th+8)
-		pillX := max(r.X+8, min(r.X+r.W-pillW-8, r.X+(float32(pop.Col)+0.5)*v.Cell-v.X-pillW/2))
-		pillY := max(r.Y+8, min(r.Y+r.H-pillH-8, r.Y+float32(pop.Row)*v.Cell-v.Y-16-k*28))
-		pill := ui.Rect{X: pillX, Y: pillY, W: pillW, H: pillH}
+		pillW := float32(max(44, len([]rune(pop.Text))*9+14))
+		pill := ui.Rect{X: px - 6, Y: py - 3, W: pillW, H: 22}
 		p.Shadow(pill, 6, 0, 1, 2, 0, pal.SlipShade.Alpha(0.5*alpha))
 		p.Fill(pill, style.Bg.Alpha(0.94*alpha), 6)
 		p.Stroke(pill, style.Border.Alpha(0.8*alpha), 6, 1.2)
-		p.RichText(pill.X+(pill.W-tw)/2, pill.Y+(pill.H-th)/2, 0, label)
+		p.Text(px, py, pop.Text, 13, style.Text.Alpha(alpha))
 	}
 	a.duelPopups = kept
 	if len(a.duelPopups) > 0 {

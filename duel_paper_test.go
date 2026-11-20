@@ -479,7 +479,7 @@ func TestDuelPromptsContrastAndScanReport(t *testing.T) {
 		t.Fatalf("scanreport.Scan failed: %v", err)
 	}
 	boardForbidden := []string{"#E8A849", "#3C301D", "#F5D99C", "#070D17"}
-	mainForbidden := []string{"#070D17", "#38BDF8"}
+	mainForbidden := []string{"#070D17", "#38BDF8", "#FB7185"}
 	for _, f := range rep.Colors {
 		base := filepath.Base(f.Path)
 		upper := strings.ToUpper(f.Text)
@@ -610,23 +610,31 @@ func TestDuelHintsScanAndPopupsPaintPaletteColors(t *testing.T) {
 			if n := countMatchingPixels(img, badgeTop, 2, dp.ScanBadgeBorder, 18); n < 16 {
 				t.Errorf("scan badge border had only %d px near %s", n, hexOf(dp.ScanBadgeBorder))
 			}
-			if n := countMatchingPixels(img, badgeBox, 2, dp.ScanBadgeText, 24); n < 24 {
+			badgeInner := ui.Rect{X: badgeBox.X + 4, Y: badgeBox.Y + 4, W: badgeBox.W - 8, H: badgeBox.H - 8}
+			if n := countMatchingPixels(img, badgeInner, 2, dp.ScanBadgeText, 24); n < 24 {
 				t.Errorf("scan badge text had only %d px near %s", n, hexOf(dp.ScanBadgeText))
 			}
 
 			// Verify all four popup capsules paint their palette bg, border, and text.
-			for _, pc := range popupCells {
+			for i, pc := range popupCells {
 				st := dp.Popups[pc.kind]
-				cx := board.X + (float32(pc.col)+0.5)*v.Cell - v.X
-				py := board.Y + float32(pc.row)*v.Cell - v.Y - 16
-				search := ui.Rect{X: cx - 72, Y: py - 4, W: 144, H: 36}
-				if n := countMatchingPixels(img, search, 2, st.Bg, 18); n < 40 {
+				pop := app.duelPopups[i]
+				px := board.X + (float32(pop.Col)+0.5)*v.Cell - v.X - float32(len([]rune(pop.Text)))*3.5
+				py := board.Y + float32(pop.Row)*v.Cell - v.Y - 16
+				px = max(board.X+8, min(board.X+board.W-120, px))
+				py = max(board.Y+8, min(board.Y+board.H-28, py))
+				pillW := float32(max(44, len([]rune(pop.Text))*9+14))
+				pill := ui.Rect{X: px - 6, Y: py - 3, W: pillW, H: 22}
+				pillTop := ui.Rect{X: pill.X + 6, Y: pill.Y - 1, W: pill.W - 12, H: 3}
+				pillInner := ui.Rect{X: pill.X + 3, Y: pill.Y + 3, W: pill.W - 6, H: pill.H - 6}
+				if n := countMatchingPixels(img, pillInner, 2, st.Bg, 18); n < 40 {
 					t.Errorf("popup kind=%d missing pill bg %s (matched %d px)", pc.kind, hexOf(st.Bg), n)
 				}
-				if n := countMatchingPixels(img, search, 2, st.Border, 24); n < 16 {
-					t.Errorf("popup kind=%d missing pill border %s (matched %d px)", pc.kind, hexOf(st.Border), n)
+				wantBorder := st.Border.Alpha(0.8).Over(st.Bg)
+				if n := countMatchingPixels(img, pillTop, 2, wantBorder, 28); n < 16 {
+					t.Errorf("popup kind=%d missing pill border %s (matched %d px)", pc.kind, hexOf(wantBorder), n)
 				}
-				if n := countMatchingPixels(img, search, 2, st.Text, 28); n < 16 {
+				if n := countMatchingPixels(img, pillInner, 2, st.Text, 28); n < 16 {
 					t.Errorf("popup kind=%d missing pill text %s (matched %d px)", pc.kind, hexOf(st.Text), n)
 				}
 			}
