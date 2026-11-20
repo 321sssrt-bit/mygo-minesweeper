@@ -22,7 +22,10 @@ func TestKageiromaiDefinition(t *testing.T) {
 	if d.Gameplay != GameplayClassic || d.Song != "影色舞" || d.Haruhikage {
 		t.Fatalf("TrackKageiromai = %+v, want unmarked classic 《影色舞》", d)
 	}
-	if len(Difficulties) < 3 || Difficulties[2] != d {
+	if len(Difficulties) < 3 {
+		t.Fatalf("len(Difficulties) = %d, want at least 3", len(Difficulties))
+	}
+	if Difficulties[2] != d {
 		t.Fatalf("Difficulties[2] = %+v, want TrackKageiromai %+v", Difficulties[2], d)
 	}
 	g := NewGame(d, true, MemberTomori, 1)
