@@ -200,7 +200,7 @@ func TestSenzaihyoumeiSetlistSelectionAndFullGame(t *testing.T) {
 		t.Fatal("senzaihyoumei duel HUD missing expected title, subtitle, or 03:00 timer")
 	}
 
-	boardRect, ok := tt.Find("百万格决斗战场")
+	boardRect, ok := tt.Find("决斗棋盘")
 	if !ok {
 		t.Fatal("duel board missing on 《潜在表明》")
 	}

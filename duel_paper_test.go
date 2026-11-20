@@ -47,7 +47,7 @@ func TestDuelCanvasPaintsPaperDayAndNight(t *testing.T) {
 			tt.Frame()
 			app.board.center(g, duelStageRow, duelStageCol)
 			tt.Frame()
-			board, ok := tt.Find("百万格决斗战场")
+			board, ok := tt.Find("决斗棋盘")
 			if !ok {
 				t.Fatal("duel board not found")
 			}
@@ -131,7 +131,7 @@ func TestDuelHitMineReadsZoomedOut(t *testing.T) {
 			app.board.Cell = 10
 			app.board.center(g, hit.Row, hit.Col)
 			tt.Frame()
-			board, ok := tt.Find("百万格决斗战场")
+			board, ok := tt.Find("决斗棋盘")
 			if !ok {
 				t.Fatal("duel board not found")
 			}
@@ -237,7 +237,7 @@ func TestDuelFlagsLastAIAndMinimapPaintPaletteColors(t *testing.T) {
 			tt.Advance(time.Duration(1200-tt.Now().UnixMilli()%1200) * time.Millisecond)
 			tt.Frame()
 
-			board, ok := tt.Find("百万格决斗战场")
+			board, ok := tt.Find("决斗棋盘")
 			if !ok {
 				t.Fatal("duel board not found")
 			}

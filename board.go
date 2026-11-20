@@ -265,7 +265,7 @@ func (a *minesweeperApp) classicBoard(c *ui.Context) {
 }
 
 func (a *minesweeperApp) duelBoard(c *ui.Context) {
-	a.canvasBoard(c, "duel-stage", "duel-board", "百万格决斗战场")
+	a.canvasBoard(c, "duel-stage", "duel-board", "决斗棋盘")
 }
 
 func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label string) {
@@ -381,7 +381,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				ui.Column(c).Padding(10, 18).Gap(3).Radius(10).AlignItems(ui.Center).
 					Background(ui.Hex("#450A18").Alpha(0.88)).Border(1.5, ui.Hex("#FB7185")).
 					PassThrough().Children(func() {
-					ui.Textf(c, "踩雷硬直中 · %.1fs", max(0, d.StunnedUntil-d.Elapsed)).
+					ui.Textf(c, "踩雷硬直中 · %.1f 秒", max(0, d.StunnedUntil-d.Elapsed)).
 						FontSize(15).Bold().TextColor(ui.Hex("#FFE4E6"))
 					ui.Text(c, hint).FontSize(12).TextColor(ui.Hex("#FDA4AF"))
 				})
@@ -616,7 +616,11 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 			paintDuelMinimap(p, g, mini, view, t.Border)
 		}
 		// The caption sits on a scrap of the sheet so it reads over slips.
-		caption := ui.Span{Text: fmt.Sprintf("(%d, %d) · %.0f%% · 拖动平移 / 滚轮缩放", v.HoverRow, v.HoverCol, v.Cell/42*100), Size: 12, Color: t.TextMuted}
+		captionText := fmt.Sprintf("%.0f%% · 拖动平移 / 滚轮缩放", v.Cell/42*100)
+		if v.HoverRow >= 0 && v.HoverCol >= 0 {
+			captionText = fmt.Sprintf("(%d, %d) · %s", v.HoverRow, v.HoverCol, captionText)
+		}
+		caption := ui.Span{Text: captionText, Size: 12, Color: t.TextMuted}
 		cw, ch := p.MeasureText(0, caption)
 		p.Fill(ui.Rect{X: r.X + 8, Y: r.Y + r.H - 36, W: cw + 12, H: ch + 8}, pal.Sheet.Alpha(0.92), 6)
 		p.RichText(r.X+14, r.Y+r.H-32, 0, caption)

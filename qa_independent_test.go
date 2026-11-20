@@ -16,7 +16,7 @@ func qaApp(t *testing.T) (*minesweeperApp, *ui.Tester, ui.Rect) {
 	a.diffIdx = findDifficultyIdx("duel")
 	a.resetGame(false)
 	tt := ui.NewTester(a.view, 1280, 900)
-	r, ok := tt.Find("百万格决斗战场")
+	r, ok := tt.Find("决斗棋盘")
 	if !ok {
 		t.Fatal("board missing")
 	}

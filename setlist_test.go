@@ -139,7 +139,7 @@ func TestSetlistPopoverOutsideClickDoesNotHitBoard(t *testing.T) {
 	duelApp.resetGame(false)
 	dtt := ui.NewTester(duelApp.view, 1280, 900)
 	dtt.Frame()
-	boardRect, ok := dtt.Find("百万格决斗战场")
+	boardRect, ok := dtt.Find("决斗棋盘")
 	if !ok {
 		t.Fatal("duel board not found")
 	}

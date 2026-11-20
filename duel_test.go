@@ -104,14 +104,14 @@ func TestDuelNativeCanvasInput(t *testing.T) {
 	app.diffIdx = findDifficultyIdx("duel")
 	app.resetGame(false)
 	tt := ui.NewTester(app.view, 1280, 900)
-	if !tt.HasText("解不完的心结") || !tt.HasText("《春日影》") || !tt.HasText("灯 (AI) 0") {
+	if !tt.HasText("解不完的心结") || !tt.HasText("《春日影》") || !tt.HasText("高松灯 0") {
 		t.Fatal("duel HUD not present")
 	}
 	tt.Advance(100 * time.Millisecond)
 	if app.game.duel == nil || app.board.Width < 100 {
 		t.Fatal("duel canvas not laid out")
 	}
-	r, found := tt.Find("百万格决斗战场")
+	r, found := tt.Find("决斗棋盘")
 	if !found {
 		t.Fatal("duel board not found")
 	}
@@ -262,7 +262,7 @@ func TestDuelMinimapLiveMarkersAndReset(t *testing.T) {
 		t.Fatalf("adjacent markers collapsed together: player=(%v,%v) ai=(%v,%v)", px, py, ax, ay)
 	}
 
-	r, ok := tt.Find("百万格决斗战场")
+	r, ok := tt.Find("决斗棋盘")
 	if !ok {
 		t.Fatal("duel board missing")
 	}
@@ -558,7 +558,7 @@ func TestDuelHoverHintsPriorityPublicOnlyAndStun(t *testing.T) {
 	tt := ui.NewTester(app.view, 1280, 900)
 	app.board.center(app.game, 1, 1)
 	tt.Frame()
-	r, ok := tt.Find("百万格决斗战场")
+	r, ok := tt.Find("决斗棋盘")
 	if !ok {
 		t.Fatal("duel board missing")
 	}
@@ -602,7 +602,7 @@ func TestDuelHoverSyncsAfterZoomAndDrag(t *testing.T) {
 	tt := ui.NewTester(app.view, 1280, 900)
 	app.board.center(app.game, 25, 25)
 	tt.Frame()
-	r, ok := tt.Find("百万格决斗战场")
+	r, ok := tt.Find("决斗棋盘")
 	if !ok {
 		t.Fatal("duel board missing")
 	}
@@ -656,7 +656,7 @@ func TestDuelHoverSyncsAfterZoomAndDrag(t *testing.T) {
 	}
 
 	// Moving pointer off board onto HUD clears hover hint cleanly.
-	hudR, ok := tt.Find("回到战场")
+	hudR, ok := tt.Find("回到中心")
 	if !ok {
 		t.Fatal("HUD button missing")
 	}
@@ -679,7 +679,7 @@ func TestDuelFloatingScorePopupsAndRippleLifecycle(t *testing.T) {
 	tt := ui.NewTester(app.view, 1280, 900)
 	app.board.center(app.game, 5, 5)
 	tt.Frame()
-	r, _ := tt.Find("百万格决斗战场")
+	r, _ := tt.Find("决斗棋盘")
 
 	// Normal flag placement has ScoreDelta==0 -> must NOT spawn a "+0" popup.
 	tt.Key(0, ui.KeyF)
@@ -759,11 +759,11 @@ func TestDuelShakeBoundsAndStunWarningHUD(t *testing.T) {
 	tt := ui.NewTester(app.view, 1280, 900)
 	app.board.center(app.game, 3, 3)
 	tt.Frame()
-	boardBefore, ok := tt.Find("百万格决斗战场")
+	boardBefore, ok := tt.Find("决斗棋盘")
 	if !ok {
 		t.Fatal("duel board not found")
 	}
-	hudBefore, ok := tt.Find("回到战场")
+	hudBefore, ok := tt.Find("回到中心")
 	if !ok {
 		t.Fatal("duel HUD button not found")
 	}
@@ -785,8 +785,8 @@ func TestDuelShakeBoundsAndStunWarningHUD(t *testing.T) {
 	if sx == 0 && sy == 0 {
 		t.Fatal("expected active duel shake at 30ms")
 	}
-	boardDuring, _ := tt.Find("百万格决斗战场")
-	hudDuring, _ := tt.Find("回到战场")
+	boardDuring, _ := tt.Find("决斗棋盘")
+	hudDuring, _ := tt.Find("回到中心")
 	if boardDuring != boardBefore || hudDuring != hudBefore {
 		t.Fatalf("duel stage or HUD bounds moved during shake: board=%+v/%+v hud=%+v/%+v", boardBefore, boardDuring, hudBefore, hudDuring)
 	}
@@ -874,18 +874,18 @@ func TestDuelRecenterUsesBoardCenter(t *testing.T) {
 			tt := ui.NewTester(app.view, 1280, 900)
 			tt.Frame()
 
-			r, ok := tt.Find("百万格决斗战场")
+			r, ok := tt.Find("决斗棋盘")
 			if !ok {
 				t.Fatal("duel board missing")
 			}
 
 			wantRow, wantCol := tc.rows/2, tc.cols/2
 
-			// Pan to top-left corner, then click "回到战场".
+			// Pan to top-left corner, then click "回到中心".
 			app.board.center(app.game, 0, 0)
 			tt.Frame()
-			if err := tt.Click("回到战场"); err != nil {
-				t.Fatalf("failed clicking 回到战场: %v", err)
+			if err := tt.Click("回到中心"); err != nil {
+				t.Fatalf("failed clicking 回到中心: %v", err)
 			}
 			row, col, ok := app.board.cellAt(app.game, r.W/2, r.H/2)
 			if !ok || row != wantRow || col != wantCol {
@@ -952,7 +952,7 @@ func TestDuelUIUsesGameplayNotTrackID(t *testing.T) {
 
 	tt := ui.NewTester(app.view, 1280, 900)
 	tt.Frame()
-	if _, ok := tt.Find("百万格决斗战场"); !ok || !tt.HasText("灯 (AI) 0") {
+	if _, ok := tt.Find("决斗棋盘"); !ok || !tt.HasText("高松灯 0") {
 		t.Fatal("expected duel HUD and board for GameplayDuel track")
 	}
 	beforeGame := app.game
@@ -974,7 +974,7 @@ func TestDuelUIUsesGameplayNotTrackID(t *testing.T) {
 	app2.game = NewGame(Difficulty{ID: "encore", Gameplay: GameplayDuel, Rows: 12, Cols: 12, Mines: 5}, true, MemberAnon, 42)
 	tt2 := ui.NewTester(app2.view, 1280, 900)
 	tt2.Frame()
-	if _, ok := tt2.Find("百万格决斗战场"); !ok {
+	if _, ok := tt2.Find("决斗棋盘"); !ok {
 		t.Fatal("expected duel board when game has GameplayDuel")
 	}
 	beforeGame2 := app2.game
@@ -1013,7 +1013,7 @@ func TestDuelUIUsesGameplayNotTrackID(t *testing.T) {
 	if _, ok := tt3.Find("cell-0-0"); !ok {
 		t.Fatal("expected classic board for GameplayClassic track even with ID 'duel'")
 	}
-	if _, ok := tt3.Find("百万格决斗战场"); ok || tt3.HasText("灯 (AI) 0") {
+	if _, ok := tt3.Find("决斗棋盘"); ok || tt3.HasText("高松灯 0") {
 		t.Fatal("track ID 'duel' with GameplayClassic must not render duel HUD/board")
 	}
 	if err := tt3.Click("乐队 Live"); err != nil {
@@ -1051,7 +1051,7 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 			tt := ui.NewTester(app.view, 960, 640)
 			tt.Frame()
 
-			r, ok := tt.Find("百万格决斗战场")
+			r, ok := tt.Find("决斗棋盘")
 			if !ok {
 				t.Fatal("duel board missing")
 			}
