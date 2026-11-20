@@ -10,8 +10,7 @@ import (
 	"mygo-minesweeper/internal/scanreport"
 )
 
-// TestSourceScanReport fails on copy violations. Raw colours remain
-// report-only until issue #24.
+// TestSourceScanReport fails on copy and raw colour violations.
 func TestSourceScanReport(t *testing.T) {
 	rep, err := scanreport.Scan(".")
 	if err != nil {
@@ -21,6 +20,9 @@ func TestSourceScanReport(t *testing.T) {
 	for _, f := range rep.Copy {
 		t.Errorf("copy violation at %s:%d [%s] %q", f.Path, f.Line, strings.Join(f.Rules, "、"), f.Text)
 	}
+	for _, f := range rep.Colors {
+		t.Errorf("raw colour violation at %s:%d %q", f.Path, f.Line, f.Text)
+	}
 }
 
 func TestSourceScanReportGate(t *testing.T) {
@@ -29,41 +31,46 @@ func TestSourceScanReportGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name     string
-		extra    string
-		wantCopy string
+		name string
+		file string
+		decl string
+		want string
 	}{
-		{name: "raw colour only"},
-		{
-			name:     "banned wording",
-			extra:    "var label = \"百万格决斗\"\n",
-			wantCopy: `copy violation at game.go:3 [禁用语「百万格决斗」] "百万格决斗"`,
-		},
+		{"banned wording", "game.go", `var label = "百万格决斗"`, `copy violation at game.go:3 [禁用语「百万格决斗」] "百万格决斗"`},
+		{"hash hex", "game.go", `var colour = "#FFF"`, `raw colour violation at game.go:3 "#FFF"`},
+		{"bare Hex argument", "game.go", `var colour = ui.Hex("AABBCC")`, `raw colour violation at game.go:3 "AABBCC"`},
+		{"RGB call", "game.go", `var colour = ui.RGB(1, 2, 3)`, `raw colour violation at game.go:3 "ui.RGB(1, 2, 3)"`},
+		{"RGBA call", "game.go", `var colour = ui.RGBA(1, 2, 3, 0.5)`, `raw colour violation at game.go:3 "ui.RGBA(1, 2, 3, 0.5)"`},
+		{"nonempty Color", "game.go", `var colour = ui.Color{R: 1}`, `raw colour violation at game.go:3 "ui.Color{R: 1}"`},
+		{"elided Color type", "game.go", `var colours = []ui.Color{{R: 1}}`, `raw colour violation at game.go:3 "{R: 1}"`},
+		{"palette", "palette.go", `var colour = ui.Hex("AABBCC")`, ""},
+		{"palette banned wording", "palette.go", `var colour = ui.Hex("百万格决斗")`, `copy violation at palette.go:3 [禁用语「百万格决斗」] "百万格决斗"`},
+		{"member table", "memes.go", `var colour = ui.RGB(1, 2, 3)`, ""},
+		{"test file", "game_test.go", `var colour = ui.Color{R: 1}`, ""},
+		{"empty Color", "game.go", `var colour = ui.Color{}`, ""},
+		{"Hex from member", "game.go", `var colour = ui.Hex(m.ColorHex)`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := "package main\nvar colour = \"#FFF\"\n" + tc.extra
-			if err := os.WriteFile(filepath.Join(dir, "game.go"), []byte(src), 0o600); err != nil {
+			src := "package main\nimport \"github.com/egoist/mygo/ui\"\n" + tc.decl + "\n"
+			if err := os.WriteFile(filepath.Join(dir, tc.file), []byte(src), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			cmd := exec.Command(binary, "-test.run=^TestSourceScanReport$", "-test.v")
 			cmd.Dir = dir
 			out, err := cmd.CombinedOutput()
 			t.Logf("\n%s", out)
-			if !strings.Contains(string(out), "调色板之外的裸色值（1 条）") {
-				t.Error("expected one raw colour finding")
-			}
-			if tc.wantCopy == "" {
+			if tc.want == "" {
 				if err != nil {
-					t.Fatalf("raw colour alone should pass the gate: %v", err)
+					t.Fatalf("expected the gate to pass, got %v", err)
 				}
 				return
 			}
 			if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
-				t.Fatalf("expected the copy gate to exit with status 1, got %v", err)
+				t.Fatalf("expected the gate to exit with status 1, got %v", err)
 			}
-			if !strings.Contains(string(out), tc.wantCopy) {
-				t.Errorf("missing copy diagnostic %q", tc.wantCopy)
+			if !strings.Contains(string(out), tc.want) {
+				t.Errorf("missing diagnostic %q", tc.want)
 			}
 		})
 	}
@@ -71,7 +78,7 @@ func TestSourceScanReportGate(t *testing.T) {
 
 // TestSourceScanWellFormed checks the scan of the real tree stays wired:
 // every finding cites a shipped source file, a line and the offending
-// literal. Detection itself is covered by scanreport's fixture test.
+// source text. Detection itself is covered by scanreport's fixture test.
 func TestSourceScanWellFormed(t *testing.T) {
 	rep, err := scanreport.Scan(".")
 	if err != nil {

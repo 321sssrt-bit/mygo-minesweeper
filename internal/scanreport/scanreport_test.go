@@ -85,12 +85,31 @@ func TestScan(t *testing.T) {
 			"var b = \"9×9 扫描：%d 雷\"\n" + // scan reach, clean
 			"var c = \"#FFF\"\n" + // short raw colour, line 5
 			"var d = \"fill=\\\"#FF8899\\\"\"\n" + // embedded colour, line 6
-			"var e = \"「这片 9×9 的格子归我了」\"\n", // hardcoded size, line 7
-		"palette.go": "package x\nvar p = \"#AABBCC\"\n", // palette itself
+			"var e = \"「这片 9×9 的格子归我了」\"\n" + // hardcoded size, line 7
+			"var f = ui.Hex(\"AABBCC\")\n" +
+			"var g = ui.RGB(1, 2, 3)\n" +
+			"var h = ui.RGBA(1, 2, 3, 0.5)\n" +
+			"var i = ui.Color{R: 1}\n" +
+			"var j = ui.Hex(\"#FFF\")\n" +
+			"var k = ui.Color{}\n" +
+			"var l = ui.Hex(m.ColorHex)\n" +
+			"func fakes(ui interface{ RGB(int, int, int) int }) { ui.RGB(1, 2, 3) }\n",
+		"aliased.go": "package x\nimport _ \"github.com/egoist/mygo/ui\"\nimport paint \"github.com/egoist/mygo/ui\"\nvar a = paint.RGB(1, 2, 3)\n",
+		"dot.go": `package x
+import . "github.com/egoist/mygo/ui"
+var a = RGB(1, 2, 3)
+var b = Hex("AABBCC")
+var c = Color{R: 1}
+var d = []*Color{1: {R: 2}}
+var e = map[Color][]Color{{R: 3}: {{R: 4}, {}}}
+var f = []Color{{}}
+func local(RGB func(int, int, int) int) { _ = RGB(1, 2, 3) }
+`,
+		"palette.go": "package x\nimport \"github.com/egoist/mygo/ui\"\nvar p = ui.Hex(\"#AABBCC\")\nvar q = ui.Color{R: 1}\n",
 		// The member table is exempt from the colour report only;
 		// its copy is still scanned.
 		"memes.go":     "package x\nvar m = \"#77BBDD\"\nvar q = \"「百万格超大舞台」\"\n",
-		"game_test.go": "package x\nvar t = \"百万格决斗\"\n", // never scanned
+		"game_test.go": "package x\nimport \"github.com/egoist/mygo/ui\"\nvar t = ui.Hex(\"#FFF\")\nvar u = \"百万格决斗\"\n",
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
@@ -135,16 +154,26 @@ func TestScan(t *testing.T) {
 			}
 		}
 	}
-	colorLines := map[int]bool{}
-	for _, f := range rep.Colors {
-		if f.Path != game {
-			t.Errorf("colour finding from allowlisted or test file %s", f.Path)
-			continue
-		}
-		colorLines[f.Line] = true
+	wantColors := []Finding{
+		{filepath.Join(dir, "aliased.go"), 4, []string{RuleRawColor}, "paint.RGB(1, 2, 3)"},
+		{filepath.Join(dir, "dot.go"), 3, []string{RuleRawColor}, "RGB(1, 2, 3)"},
+		{filepath.Join(dir, "dot.go"), 4, []string{RuleRawColor}, "AABBCC"},
+		{filepath.Join(dir, "dot.go"), 5, []string{RuleRawColor}, "Color{R: 1}"},
+		{filepath.Join(dir, "dot.go"), 6, []string{RuleRawColor}, "{R: 2}"},
+		{filepath.Join(dir, "dot.go"), 7, []string{RuleRawColor}, "{R: 3}"},
+		{filepath.Join(dir, "dot.go"), 7, []string{RuleRawColor}, "{R: 4}"},
+		{game, 5, []string{RuleRawColor}, "#FFF"},
+		{game, 6, []string{RuleRawColor}, `fill="#FF8899"`},
+		{game, 8, []string{RuleRawColor}, "AABBCC"},
+		{game, 9, []string{RuleRawColor}, "ui.RGB(1, 2, 3)"},
+		{game, 10, []string{RuleRawColor}, "ui.RGBA(1, 2, 3, 0.5)"},
+		{game, 11, []string{RuleRawColor}, "ui.Color{R: 1}"},
+		{game, 12, []string{RuleRawColor}, "#FFF"},
 	}
-	if !colorLines[5] || !colorLines[6] || len(colorLines) != 2 {
-		t.Errorf("colour lines = %v, want {5,6}", colorLines)
+	if !slices.EqualFunc(rep.Colors, wantColors, func(got, want Finding) bool {
+		return got.Path == want.Path && got.Line == want.Line && got.Text == want.Text && slices.Equal(got.Rules, want.Rules)
+	}) {
+		t.Errorf("colour findings = %+v, want %+v", rep.Colors, wantColors)
 	}
 	if s := rep.String(); !strings.Contains(s, "game.go:3") || !strings.Contains(s, "文案违规") {
 		t.Errorf("report text missing findings:\n%s", s)

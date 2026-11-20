@@ -1,18 +1,20 @@
-// Package scanreport audits Go source literals for the notebook art
+// Package scanreport audits Go source for the notebook art
 // direction's copy and colour constraints (issue #5): banned wording,
 // technical terms, duel lines hardcoding board size or duration, and raw
-// colour values outside the palette. The source test fails on copy
-// violations. Raw colours remain report-only until issue #24.
+// colour values outside the palette. The source test fails on both copy
+// and raw colour violations.
 package scanreport
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"strconv"
 	"strings"
-
-	"mygo-minesweeper/internal/glyphset"
 )
 
 const bannedTerm = "百万格决斗"
@@ -25,7 +27,7 @@ const (
 	RuleRawColor  = "调色板之外的裸色值"
 )
 
-// Finding is one literal that breaks a rule.
+// Finding is one source occurrence that breaks a rule.
 type Finding struct {
 	Path  string
 	Line  int
@@ -40,7 +42,7 @@ type Report struct {
 	Colors []Finding
 }
 
-const hexPattern = `#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})`
+const hexDigits = `(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})`
 
 var (
 	// Framework (including egoist/mygo's "Native UI"), graphics-API and
@@ -68,11 +70,9 @@ var (
 	// "500×500 · 45,000雷 · 03:00", a bare "500×500"); the constraint
 	// covers prose lines, not spec metadata.
 	trackSpec = regexp.MustCompile(`^(?:\d+\s*[×xX]\s*\d+|[\d,]+\s*雷|\d+:\d{2}|[0-9,一二三四五六七八九十百千万两半]+\s*分钟|·|\s)+$`)
-	// shortcut: only #-prefixed hex literals are caught; bare ui.Hex args
-	// and ui.RGB/ui.Color forms need call-site analysis — upgrade when the
-	// gate ticket (#24) turns this scan into fail-mode.
-	hexColor  = regexp.MustCompile("^" + hexPattern + "$")
-	hexInside = regexp.MustCompile(hexPattern + `\b`)
+	hexColor  = regexp.MustCompile("^#" + hexDigits + "$")
+	hexInside = regexp.MustCompile("#" + hexDigits + `\b`)
+	bareHex   = regexp.MustCompile("^" + hexDigits + "$")
 )
 
 // colorFiles may define raw colours: the palette itself, and the member
@@ -145,31 +145,142 @@ func copyRules(text string) []string {
 
 // Scan audits the non-test Go files directly inside dir.
 func Scan(dir string) (*Report, error) {
-	lits, err := glyphset.Literals(dir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 	rep := &Report{}
-	for _, lit := range lits {
-		if lit.IsChar {
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		if !colorFiles[filepath.Base(lit.Path)] && hexInside.MatchString(lit.Text) {
-			rep.Colors = append(rep.Colors, Finding{lit.Path, lit.Line, []string{RuleRawColor}, lit.Text})
+		path := filepath.Join(dir, name)
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
 		}
-		if rules := copyRules(lit.Text); len(rules) > 0 {
-			rep.Copy = append(rep.Copy, Finding{lit.Path, lit.Line, rules, lit.Text})
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, src, 0)
+		if err != nil {
+			return nil, err
 		}
-	}
-	for _, list := range [][]Finding{rep.Copy, rep.Colors} {
-		sort.Slice(list, func(i, j int) bool {
-			if list[i].Path != list[j].Path {
-				return list[i].Path < list[j].Path
-			}
-			return list[i].Line < list[j].Line
-		})
+		rep.scanFile(fset.File(file.Pos()), file, src, !colorFiles[name])
 	}
 	return rep, nil
+}
+
+func (r *Report) scanFile(positions *token.File, file *ast.File, src []byte, checkColors bool) {
+	uiNames := uiImportNames(file)
+	elidedTypes := make(map[*ast.CompositeLit]ast.Expr)
+	addColor := func(pos token.Pos, value string) {
+		if checkColors {
+			r.Colors = append(r.Colors, Finding{positions.Name(), positions.Line(pos), []string{RuleRawColor}, value})
+		}
+	}
+	expressionText := func(expr ast.Expr) string {
+		return string(src[positions.Offset(expr.Pos()):positions.Offset(expr.End())])
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.ImportSpec:
+			return false
+		case *ast.CallExpr:
+			switch uiName(n.Fun, uiNames) {
+			case "Hex":
+				if len(n.Args) == 1 {
+					if arg, ok := ast.Unparen(n.Args[0]).(*ast.BasicLit); ok && arg.Kind == token.STRING {
+						value, _ := strconv.Unquote(arg.Value)
+						// The literal walk already reports colours with a # prefix.
+						if !hexInside.MatchString(value) {
+							addColor(arg.Pos(), value)
+						}
+						// A bare hex code is colour data, but other text still needs the copy checks.
+						return !bareHex.MatchString(value)
+					}
+				}
+			case "RGB", "RGBA":
+				addColor(n.Pos(), expressionText(n))
+			}
+		case *ast.CompositeLit:
+			typ := n.Type
+			if typ == nil {
+				typ = elidedTypes[n]
+			}
+			if len(n.Elts) > 0 && uiName(typ, uiNames) == "Color" {
+				addColor(n.Pos(), expressionText(n))
+			}
+			rememberElidedTypes(elidedTypes, typ, n.Elts)
+		case *ast.BasicLit:
+			if n.Kind == token.STRING {
+				value, _ := strconv.Unquote(n.Value)
+				if hexInside.MatchString(value) {
+					addColor(n.Pos(), value)
+				}
+				if rules := copyRules(value); len(rules) > 0 {
+					r.Copy = append(r.Copy, Finding{positions.Name(), positions.Line(n.Pos()), rules, value})
+				}
+			}
+		}
+		return true
+	})
+}
+
+func uiImportNames(file *ast.File) map[string]bool {
+	names := make(map[string]bool)
+	for _, spec := range file.Imports {
+		path, _ := strconv.Unquote(spec.Path.Value)
+		if path == "github.com/egoist/mygo/ui" {
+			if spec.Name == nil {
+				names["ui"] = true
+			} else if spec.Name.Name != "_" {
+				names[spec.Name.Name] = true
+			}
+		}
+	}
+	return names
+}
+
+func uiName(expr ast.Expr, imports map[string]bool) string {
+	// A locally declared name has an object; an import name does not.
+	switch expr := ast.Unparen(expr).(type) {
+	case *ast.SelectorExpr:
+		if id, ok := expr.X.(*ast.Ident); ok && imports[id.Name] && id.Obj == nil {
+			return expr.Sel.Name
+		}
+	case *ast.Ident:
+		if imports["."] && expr.Obj == nil {
+			return expr.Name
+		}
+	}
+	return ""
+}
+
+func rememberElidedTypes(types map[*ast.CompositeLit]ast.Expr, typ ast.Expr, elts []ast.Expr) {
+	remember := func(elt, typ ast.Expr) {
+		if lit, ok := elt.(*ast.CompositeLit); ok && lit.Type == nil {
+			if ptr, ok := ast.Unparen(typ).(*ast.StarExpr); ok {
+				typ = ptr.X
+			}
+			types[lit] = typ
+		}
+	}
+	switch typ := ast.Unparen(typ).(type) {
+	case *ast.ArrayType:
+		for _, elt := range elts {
+			if pair, ok := elt.(*ast.KeyValueExpr); ok {
+				elt = pair.Value
+			}
+			remember(elt, typ.Elt)
+		}
+	case *ast.MapType:
+		for _, elt := range elts {
+			if pair, ok := elt.(*ast.KeyValueExpr); ok {
+				remember(pair.Key, typ.Key)
+				remember(pair.Value, typ.Value)
+			}
+		}
+	}
 }
 
 func (r *Report) String() string {
