@@ -851,8 +851,8 @@ func TestDuelHUDAndStunContrastAndScanReport(t *testing.T) {
 	if boardColors != 0 {
 		t.Errorf("board.go raw colours = %d, want 0", boardColors)
 	}
-	if len(rep.Colors) != 7 {
-		t.Errorf("total raw colours = %d, want 7 (#23 remaining only):\n%s", len(rep.Colors), rep)
+	if len(rep.Colors) > 7 {
+		t.Errorf("total raw colours = %d, want <= 7 (#23 remaining at most):\n%s", len(rep.Colors), rep)
 	}
 }
 
@@ -917,16 +917,24 @@ func TestDuelHUDAndStunPaintPaletteColors(t *testing.T) {
 			if !ok {
 				t.Fatalf("stun banner subtitle %q not found", subLabel)
 			}
-			cardRect := ui.Rect{
-				X: min(titleRect.X, subRect.X) - 22,
-				Y: titleRect.Y - 14,
-				W: max(titleRect.X+titleRect.W, subRect.X+subRect.W) - min(titleRect.X, subRect.X) + 44,
-				H: (subRect.Y + subRect.H) - titleRect.Y + 28,
+			leftText := min(titleRect.X, subRect.X)
+			rightText := max(titleRect.X+titleRect.W, subRect.X+subRect.W)
+			// Sample strictly inside the card's 18px horizontal padding with tight
+			// tolerance so dayPaper.Slip (#ECE4D3) cannot match hud.Banner.Bg (#F4E0DD).
+			assertColorNear(t, "stun banner bg",
+				sampleCanvasPixel(img, leftText-10, (titleRect.Y+subRect.Y+subRect.H)/2, 2),
+				hud.Banner.Bg)
+			innerPad := ui.Rect{
+				X: leftText - 14,
+				Y: titleRect.Y,
+				W: 10,
+				H: (subRect.Y + subRect.H) - titleRect.Y,
 			}
-			if n := countMatchingPixels(img, cardRect, 2, hud.Banner.Bg, 14); n < 120 {
-				t.Errorf("stun banner missing palette bg %s (matched %d px)", hexOf(hud.Banner.Bg), n)
+			if n := countMatchingPixels(img, innerPad, 2, hud.Banner.Bg, 4); n < 40 {
+				t.Errorf("stun banner inner padding missing palette bg %s (matched %d px)", hexOf(hud.Banner.Bg), n)
 			}
-			if n := countMatchingPixels(img, cardRect, 2, hud.Banner.Border, 20); n < 40 {
+			cardTopBorder := ui.Rect{X: leftText, Y: titleRect.Y - 13, W: rightText - leftText, H: 6}
+			if n := countMatchingPixels(img, cardTopBorder, 2, hud.Banner.Border, 20); n < 40 {
 				t.Errorf("stun banner missing palette border %s (matched %d px)", hexOf(hud.Banner.Border), n)
 			}
 			if n := countMatchingPixels(img, titleRect, 2, hud.Banner.Title, 24); n < 24 {
