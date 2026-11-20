@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// TestKageiromaiDefinition pins the #27 acceptance criteria: a 30x30 classic
-// track with 150 mines and 3 skill charges, defined but not yet listed in the
-// setlist (Difficulties).
+// TestKageiromaiDefinition pins TrackKageiromai's 30x30 classic definition
+// (150 mines, 3 skill charges, no Haruhikage marker) and verifies it is listed
+// as the third classic track in Difficulties (#37).
 func TestKageiromaiDefinition(t *testing.T) {
 	d := TrackKageiromai
 	if d.ID != "kageiromai" || d.Subtitle != "30×30 · 150雷" {
@@ -19,13 +19,14 @@ func TestKageiromaiDefinition(t *testing.T) {
 	if d.Rows != 30 || d.Cols != 30 || d.Mines != 150 || d.SkillCharges != 3 {
 		t.Fatalf("TrackKageiromai = %+v, want 30x30, 150 mines, 3 charges", d)
 	}
-	if d.Gameplay != GameplayClassic || d.Song != "影色舞" {
-		t.Fatalf("TrackKageiromai = %+v, want classic 《影色舞》", d)
+	if d.Gameplay != GameplayClassic || d.Song != "影色舞" || d.Haruhikage {
+		t.Fatalf("TrackKageiromai = %+v, want unmarked classic 《影色舞》", d)
 	}
-	for _, listed := range Difficulties {
-		if listed.ID == d.ID {
-			t.Fatalf("%s must stay off the setlist until its listing ticket", d.ID)
-		}
+	if len(Difficulties) < 3 {
+		t.Fatalf("len(Difficulties) = %d, want at least 3", len(Difficulties))
+	}
+	if Difficulties[2] != d {
+		t.Fatalf("Difficulties[2] = %+v, want TrackKageiromai %+v", Difficulties[2], d)
 	}
 	g := NewGame(d, true, MemberTomori, 1)
 	if g.Rows != 30 || g.Cols != 30 || g.Mines != 150 || g.SkillUsesLeft != 3 {

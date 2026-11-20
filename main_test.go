@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,8 +60,17 @@ func TestWinAndMemeAchievements(t *testing.T) {
 }
 
 func TestHaruhikageLossTriggersMemeAndAlert(t *testing.T) {
-	hard := Difficulties[2] // 春日影 Live
-	g := NewGame(hard, false, MemberSoyorin, 7)
+	marked := Difficulty{
+		ID:         "marked-classic",
+		Label:      "春日影 Live",
+		Song:       "春日影",
+		Gameplay:   GameplayClassic,
+		Haruhikage: true,
+		Rows:       16,
+		Cols:       30,
+		Mines:      99,
+	}
+	g := NewGame(marked, false, MemberSoyorin, 7)
 	g.FirstClick = true
 	g.Status = StatusPlaying
 	g.Cell(0, 0).IsMine = true
@@ -244,16 +254,27 @@ func TestClassicBoardUsesWideWindowSpace(t *testing.T) {
 }
 
 func TestClassicBoardFitsEveryDifficulty(t *testing.T) {
-	for i := 0; i < 4; i++ {
+	for i, diff := range Difficulties {
+		if diff.Gameplay != GameplayClassic {
+			continue
+		}
 		app := newMinesweeperApp(12345)
 		app.diffIdx = i
 		app.resetGame(false)
 		tt := ui.NewTester(app.view, 1280, 900)
 		tt.Frame()
+		if diff.Rows > 20 {
+			// Classic boards taller than 20 rows keep the 22px cell floor and scroll inside ScrollBoth.
+			r, ok := tt.Find("cell-0-0")
+			if !ok || r.W < 22 || r.H < 22 {
+				t.Fatalf("difficulty %d (%s) top-left cell invalid: %+v found=%v", i, diff.ID, r, ok)
+			}
+			continue
+		}
 		label := fmt.Sprintf("cell-%d-%d", app.game.Rows-1, app.game.Cols-1)
 		r, ok := tt.Find(label)
 		if !ok || r.Y+r.H > 900 {
-			t.Fatalf("difficulty %d bottom cell clipped: %+v", i, r)
+			t.Fatalf("difficulty %d (%s) bottom cell clipped: %+v", i, diff.ID, r)
 		}
 	}
 }
@@ -430,8 +451,17 @@ func TestClassicDampedShakeHitTestStabilityAndDecay(t *testing.T) {
 func TestHaruhikageLossDramaOverlaySkipTimedAndReset(t *testing.T) {
 	setupHaruhikageLoss := func() (*minesweeperApp, *ui.Tester) {
 		app := newMinesweeperApp(42)
-		app.diffIdx = 2 // 春日影 Live
-		app.game = NewGame(Difficulties[2], true, MemberTomori, 7)
+		app.game = NewGame(Difficulty{
+			ID:           "marked-classic",
+			Label:        "春日影 Live",
+			Song:         "春日影",
+			Gameplay:     GameplayClassic,
+			Haruhikage:   true,
+			Rows:         9,
+			Cols:         9,
+			Mines:        1,
+			SkillCharges: 3,
+		}, true, MemberTomori, 7)
 		app.game.FirstClick = true
 		app.game.Status = StatusPlaying
 		app.game.Cell(0, 0).IsMine = true
@@ -800,5 +830,117 @@ func TestAppIconAndBundleConfig(t *testing.T) {
 	}
 	if cfg.Icon != "resources/icon.png" || cfg.License != "MIT" {
 		t.Fatalf("unexpected mygo.json icon/license config: %+v", cfg)
+	}
+}
+
+func TestHaruhikageMovedToDuelAndKageiromaiLossIsPlain(t *testing.T) {
+	// AC 1: Setlist has exactly one 春日影 (the 1000x1000 duel) and classic slot #3 is 《影色舞》.
+	haruhikageCount := 0
+	markedCount := 0
+	for i, d := range Difficulties {
+		if d.ID == "hard" || strings.Contains(d.Song, "Crychic") {
+			t.Fatalf("retired classic Haruhikage track still listed at %d: %+v", i, d)
+		}
+		if strings.Contains(d.Song, "春日影") || strings.Contains(d.Label, "春日影") {
+			haruhikageCount++
+		}
+		if d.Haruhikage {
+			markedCount++
+		}
+	}
+	if haruhikageCount != 1 || markedCount != 1 {
+		t.Fatalf("expected exactly 1 春日影 track and 1 Haruhikage marker, got name=%d marked=%d", haruhikageCount, markedCount)
+	}
+	if Difficulties[2] != TrackKageiromai || Difficulties[2].Haruhikage {
+		t.Fatalf("Difficulties[2] = %+v, want unmarked TrackKageiromai", Difficulties[2])
+	}
+	duelDiff := Difficulties[len(Difficulties)-1]
+	if duelDiff.Gameplay != GameplayDuel || duelDiff.Rows != 1000 || duelDiff.Cols != 1000 ||
+		duelDiff.Label != "春日影 Live" || duelDiff.Song != "春日影" || !duelDiff.Haruhikage {
+		t.Fatalf("1000x1000 duel = %+v, want 春日影 Live《春日影》 with Haruhikage=true", duelDiff)
+	}
+
+	// Open the live setlist popover and verify track titles.
+	app := newMinesweeperApp(42)
+	tt := ui.NewTester(app.view, 1280, 900)
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("open setlist popover: %v", err)
+	}
+	if _, ok := tt.Find("影色舞"); !ok {
+		t.Fatal("expected 《影色舞》 in setlist popover")
+	}
+	if _, ok := tt.Find("春日影"); !ok {
+		t.Fatal("expected 《春日影》 in setlist popover")
+	}
+	if _, ok := tt.Find("春日影 (Crychic Ver.)"); ok {
+		t.Fatal("retired 《春日影 (Crychic Ver.)》 must not appear in setlist popover")
+	}
+
+	// AC 2: Losing on 《影色舞》 (Difficulties[2]) shows only the plain defeat toast, no Haruhikage drama.
+	if err := tt.Click("影色舞"); err != nil {
+		t.Fatalf("select 《影色舞》: %v", err)
+	}
+	if app.diffIdx != 2 || app.game.Difficulty.ID != "kageiromai" {
+		t.Fatalf("selected diffIdx=%d id=%q, want 2 / kageiromai", app.diffIdx, app.game.Difficulty.ID)
+	}
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	app.game.Cell(0, 0).IsMine = true
+	app.game.RecomputeAdjacency()
+	cell0, ok := tt.Find("cell-0-0")
+	if !ok {
+		t.Fatal("cell-0-0 not found on 《影色舞》")
+	}
+	tt.ClickAt(cell0.X+cell0.W/2, cell0.Y+cell0.H/2)
+	if app.game.Status != StatusLost {
+		t.Fatalf("expected StatusLost on 《影色舞》 mine hit, got %v", app.game.Status)
+	}
+	if app.haruhikageIntro || app.haruhikageAlert || app.unlockedMemes[MemeHaruhikage] ||
+		tt.HasText("……为什么要演奏春日影？！") || tt.HasText("为什么要演奏春日影？！") {
+		t.Fatalf("《影色舞》 loss must not trigger Haruhikage drama or meme: intro=%v alert=%v memes=%v",
+			app.haruhikageIntro, app.haruhikageAlert, app.unlockedMemes)
+	}
+	if !tt.HasText("炸团危机！……要假装无事发生重开吗？") {
+		t.Fatal("expected plain defeat toast on 《影色舞》 loss")
+	}
+	tt.Advance(haruhikageIntroDuration + 50*time.Millisecond)
+	if app.haruhikageIntro || app.haruhikageAlert || tt.HasText("为什么要演奏春日影？！") {
+		t.Fatal("《影色舞》 loss must not open delayed Haruhikage dialog")
+	}
+
+	// AC 3: Losing the shipped 《春日影》 1000x1000 duel to Tomori AI triggers drama overlay, dialog, and meme.
+	duelApp := newMinesweeperApp(42)
+	duelApp.memberID = MemberTomori
+	dtt := ui.NewTester(duelApp.view, 1280, 900)
+	if err := dtt.Click("歌单"); err != nil {
+		t.Fatalf("open setlist popover for duel: %v", err)
+	}
+	if err := dtt.Click("春日影"); err != nil {
+		t.Fatalf("select 《春日影》 duel: %v", err)
+	}
+	if !duelApp.isDuel() || duelApp.game.Difficulty.Song != "春日影" || !duelApp.game.Difficulty.Haruhikage {
+		t.Fatalf("expected shipped 春日影 duel active, got %+v", duelApp.game.Difficulty)
+	}
+	duelApp.game.FirstClick = true
+	duelApp.game.Status = StatusPlaying
+	duelApp.game.duel.PlayerScore = 20
+	duelApp.game.duel.AIScore = 120
+	duelApp.game.duel.NextAI = duelApp.game.duel.Duration + 10
+	duelApp.game.duel.Elapsed = duelApp.game.duel.Duration - 0.5
+	dtt.Advance(600 * time.Millisecond)
+	if !duelApp.duelEnded || !duelApp.haruhikageIntro || duelApp.haruhikageAlert || !dtt.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage drama overlay on 《春日影》 duel loss, ended=%v intro=%v alert=%v",
+			duelApp.duelEnded, duelApp.haruhikageIntro, duelApp.haruhikageAlert)
+	}
+	if !duelApp.unlockedMemes[MemeHaruhikage] {
+		t.Fatal("expected MemeHaruhikage unlocked on 《春日影》 duel loss")
+	}
+	if wantQuote := memberQuotes[MemberTomori]["haruhikageLost"][0]; duelApp.quote != wantQuote {
+		t.Fatalf("expected haruhikageLost quote %q, got %q", wantQuote, duelApp.quote)
+	}
+	dtt.Advance(haruhikageIntroDuration + 50*time.Millisecond)
+	if duelApp.haruhikageIntro || !duelApp.haruhikageAlert || !dtt.HasText("为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage dialog after drama overlay, intro=%v alert=%v",
+			duelApp.haruhikageIntro, duelApp.haruhikageAlert)
 	}
 }
