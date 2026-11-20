@@ -176,14 +176,19 @@ func TestSetlistAccentContrastMeetsWCAGAA(t *testing.T) {
 		cases := []struct {
 			name string
 			bg   ui.Color
+			base ui.Color
 		}{
-			{"trigger-idle", pal.Slip.Alpha(0.45).Over(theme.Surface)},
-			{"trigger-hover", pal.Slip.Alpha(0.85).Over(theme.Surface)},
-			{"trigger-open", theme.Accent.Alpha(0.14).Over(theme.Surface)},
-			{"popover-selected", theme.Accent.Alpha(0.14).Over(theme.Surface)},
+			{"trigger-idle", pal.Slip.Alpha(0.45).Over(theme.Surface), bandColor},
+			{"trigger-hover", pal.Slip.Alpha(0.85).Over(theme.Surface), bandColor},
+			{"trigger-open", theme.Accent.Alpha(0.14).Over(theme.Surface), bandColor},
+			{"popover-selected", theme.Accent.Alpha(0.14).Over(theme.Surface), bandColor},
+			{"popover-group-header", theme.Surface, bandColor},
+			{"popover-item-idle-muted", theme.Surface, theme.TextMuted},
+			{"popover-item-hover-muted", pal.Slip.Alpha(0.6).Over(theme.Surface), theme.TextMuted},
+			{"popover-item-selected-muted", theme.Accent.Alpha(0.14).Over(theme.Surface), theme.TextMuted},
 		}
 		for _, tc := range cases {
-			ink := setlistAccentInk(pal, tc.bg)
+			ink := setlistInk(pal, tc.bg, tc.base)
 			ratio := contrast(ink, tc.bg)
 			if ratio < minInkContrast {
 				t.Errorf("dark=%v %s: contrast %.2f < %.1f", dark, tc.name, ratio, minInkContrast)
@@ -220,9 +225,26 @@ func TestSetlistPopoverSevenTracksFitDefaultWindow(t *testing.T) {
 		t.Fatalf("toolbar wrapped onto two lines at 1280 width: trigger=%+v toggle=%+v", triggerRect, toggleRect)
 	}
 
-	// Expanded state: all 7 tracks render inside the 1280×900 viewport without clipping.
+	// Expanded state: classic & duel group headers, specs, and all 7 tracks
+	// render inside the 1280×900 viewport without clipping.
 	if err := tt.Click("歌单"); err != nil {
 		t.Fatalf("open 7-track setlist: %v", err)
+	}
+	classicHdr, ok := tt.Find("经典")
+	if !ok {
+		t.Fatal("classic group header 「经典」 missing from open popover")
+	}
+	duelHdr, ok := tt.Find("决斗")
+	if !ok {
+		t.Fatal("duel group header 「决斗」 missing from open popover")
+	}
+	for name, r := range map[string]ui.Rect{"经典": classicHdr, "决斗": duelHdr} {
+		if r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 || r.X+r.W > winW || r.Y+r.H > winH {
+			t.Fatalf("group header %q overflows %dx%d viewport: %+v", name, winW, winH, r)
+		}
+	}
+	if classicHdr.Y >= duelHdr.Y {
+		t.Fatalf("expected classic group header above duel group header: classic=%+v duel=%+v", classicHdr, duelHdr)
 	}
 	for i, d := range Difficulties {
 		r, ok := tt.Find(d.Song)
@@ -231,6 +253,23 @@ func TestSetlistPopoverSevenTracksFitDefaultWindow(t *testing.T) {
 		}
 		if r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 || r.X+r.W > winW || r.Y+r.H > winH {
 			t.Fatalf("track %d (%q) overflows %dx%d viewport: %+v", i, d.Song, winW, winH, r)
+		}
+		if d.Gameplay == GameplayDuel {
+			if r.Y <= duelHdr.Y {
+				t.Fatalf("duel track %q should appear below duel header: track=%+v duelHdr=%+v", d.Song, r, duelHdr)
+			}
+		} else {
+			if r.Y <= classicHdr.Y || r.Y >= duelHdr.Y {
+				t.Fatalf("classic track %q should appear between classic and duel headers: track=%+v classicHdr=%+v duelHdr=%+v", d.Song, r, classicHdr, duelHdr)
+			}
+		}
+		wantSpec := setlistTrackSpec(d)
+		specRect, ok := tt.Find(wantSpec)
+		if !ok {
+			t.Fatalf("track %d (%q) missing spec text %q in open popover", i, d.Song, wantSpec)
+		}
+		if specRect.X < r.X || specRect.Y < r.Y || specRect.X+specRect.W > r.X+r.W || specRect.Y+specRect.H > r.Y+r.H {
+			t.Fatalf("track %d (%q) spec %q rect %+v lies outside track row %+v", i, d.Song, wantSpec, specRect, r)
 		}
 	}
 
@@ -248,6 +287,111 @@ func TestSetlistPopoverSevenTracksFitDefaultWindow(t *testing.T) {
 		if app.diffIdx != i || app.game.Difficulty.ID != want.ID {
 			t.Fatalf("after clicking %q got idx=%d id=%q, want idx=%d id=%q", want.Song, app.diffIdx, app.game.Difficulty.ID, i, want.ID)
 		}
+	}
+}
+
+func TestSetlistGroupsFromGameplayFieldAndDisplaysSpecs(t *testing.T) {
+	// Misleading IDs, labels, songs, and interleaved order prove grouping
+	// follows Difficulty.Gameplay rather than track IDs, names, or positions,
+	// and specs come from Cols/Rows/Mines even when Subtitle is empty.
+	interleaved := []Difficulty{
+		{ID: "easy", Label: "伪装经典", Song: "曲目一", Gameplay: GameplayDuel, Rows: 500, Cols: 500, Mines: 45000, DuelDuration: 180, AIInterval: 1.0},
+		{ID: "duel", Label: "伪装决斗", Song: "曲目二", Gameplay: GameplayClassic, Rows: 16, Cols: 30, Mines: 99},
+		{ID: "normal", Label: "第二决斗", Song: "曲目三", Gameplay: GameplayDuel, Rows: 1000, Cols: 1000, Mines: 180000, DuelDuration: 300, AIInterval: 0.72},
+		{ID: "hard", Label: "默认玩法", Song: "曲目四", Rows: 9, Cols: 9, Mines: 10},
+	}
+
+	groups := groupSetlistTracks(interleaved)
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+	if groups[0].Gameplay != GameplayClassic || groups[0].Title != "经典" || len(groups[0].Entries) != 2 {
+		t.Fatalf("unexpected classic group: %+v", groups[0])
+	}
+	if groups[0].Entries[0].Index != 1 || groups[0].Entries[1].Index != 3 {
+		t.Fatalf("classic entries lost original indices: %+v", groups[0].Entries)
+	}
+	if groups[1].Gameplay != GameplayDuel || groups[1].Title != "决斗" || len(groups[1].Entries) != 2 {
+		t.Fatalf("unexpected duel group: %+v", groups[1])
+	}
+	if groups[1].Entries[0].Index != 0 || groups[1].Entries[1].Index != 2 {
+		t.Fatalf("duel entries lost original indices: %+v", groups[1].Entries)
+	}
+
+	// Single-gameplay slice omits the empty group.
+	onlyClassic := groupSetlistTracks([]Difficulty{interleaved[1]})
+	if len(onlyClassic) != 1 || onlyClassic[0].Gameplay != GameplayClassic {
+		t.Fatalf("expected only classic group, got %+v", onlyClassic)
+	}
+	onlyDuel := groupSetlistTracks([]Difficulty{interleaved[0]})
+	if len(onlyDuel) != 1 || onlyDuel[0].Gameplay != GameplayDuel {
+		t.Fatalf("expected only duel group, got %+v", onlyDuel)
+	}
+
+	// Verify headless UI renders tracks under their Gameplay group, shows
+	// Cols×Rows and grouped Mines, and maps clicks back to original indices.
+	orig := Difficulties
+	Difficulties = interleaved
+	defer func() { Difficulties = orig }()
+
+	app := newMinesweeperApp(12345)
+	tt := ui.NewTester(app.view, 1280, 900)
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("open interleaved setlist: %v", err)
+	}
+	classicHdr, ok := tt.Find("经典")
+	if !ok {
+		t.Fatal("classic header missing")
+	}
+	duelHdr, ok := tt.Find("决斗")
+	if !ok {
+		t.Fatal("duel header missing")
+	}
+	wantSpecs := map[string]string{
+		"曲目一": "500×500 · 45,000 雷",
+		"曲目二": "30×16 · 99 雷",
+		"曲目三": "1000×1000 · 180,000 雷",
+		"曲目四": "9×9 · 10 雷",
+	}
+	for _, d := range interleaved {
+		r, ok := tt.Find(d.Song)
+		if !ok {
+			t.Fatalf("track %q not found in popover", d.Song)
+		}
+		if d.Gameplay == GameplayDuel {
+			if r.Y <= duelHdr.Y {
+				t.Fatalf("duel track %q rendered above duel header: track=%+v duelHdr=%+v", d.Song, r, duelHdr)
+			}
+		} else {
+			if r.Y <= classicHdr.Y || r.Y >= duelHdr.Y {
+				t.Fatalf("classic track %q rendered outside classic group: track=%+v classicHdr=%+v duelHdr=%+v", d.Song, r, classicHdr, duelHdr)
+			}
+		}
+		specRect, ok := tt.Find(wantSpecs[d.Song])
+		if !ok {
+			t.Fatalf("missing spec %q for %q", wantSpecs[d.Song], d.Song)
+		}
+		if specRect.X < r.X || specRect.Y < r.Y || specRect.X+specRect.W > r.X+r.W || specRect.Y+specRect.H > r.Y+r.H {
+			t.Fatalf("spec %q rect %+v lies outside track row %q %+v", wantSpecs[d.Song], specRect, d.Song, r)
+		}
+	}
+
+	// Clicking reordered classic track "曲目二" must select original index 1.
+	if err := tt.Click("曲目二"); err != nil {
+		t.Fatalf("click 曲目二: %v", err)
+	}
+	if app.diffIdx != 1 || app.game.Difficulty.Song != "曲目二" {
+		t.Fatalf("after clicking 曲目二 got idx=%d song=%q, want idx=1", app.diffIdx, app.game.Difficulty.Song)
+	}
+	// Clicking reordered duel track "曲目三" must select original index 2.
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("reopen setlist: %v", err)
+	}
+	if err := tt.Click("曲目三"); err != nil {
+		t.Fatalf("click 曲目三: %v", err)
+	}
+	if app.diffIdx != 2 || app.game.Difficulty.Song != "曲目三" {
+		t.Fatalf("after clicking 曲目三 got idx=%d song=%q, want idx=2", app.diffIdx, app.game.Difficulty.Song)
 	}
 }
 

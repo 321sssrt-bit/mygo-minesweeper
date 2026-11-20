@@ -6,6 +6,8 @@ import (
 	"log"
 	"math"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -462,13 +464,82 @@ var (
 	setlistCheckIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3 8.5L6.5 12L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 )
 
-// setlistAccentInk derives a WCAG-AA (4.5:1+) ink from the 乐队色 against
-// the exact composited background a setlist control paints beneath its text.
-func setlistAccentInk(pal *palette, bg ui.Color) ui.Color {
+// setlistInk derives a WCAG-AA (4.5:1+) ink from base against the exact
+// composited background a setlist control paints beneath its text.
+func setlistInk(pal *palette, bg, base ui.Color) ui.Color {
 	under := *pal
 	under.Board = bg
 	under.Sheet = bg
-	return under.InkOf(bandColor)
+	return under.InkOf(base)
+}
+
+// setlistAccentInk derives a WCAG-AA (4.5:1+) ink from the 乐队色 against
+// the exact composited background a setlist control paints beneath its text.
+func setlistAccentInk(pal *palette, bg ui.Color) ui.Color {
+	return setlistInk(pal, bg, bandColor)
+}
+
+type setlistEntry struct {
+	Index int
+	Diff  Difficulty
+}
+
+type setlistGroup struct {
+	Gameplay Gameplay
+	Title    string
+	Entries  []setlistEntry
+}
+
+func groupSetlistTracks(tracks []Difficulty) []setlistGroup {
+	var classic, duel []setlistEntry
+	for i, d := range tracks {
+		entry := setlistEntry{Index: i, Diff: d}
+		if d.Gameplay == GameplayDuel {
+			duel = append(duel, entry)
+		} else {
+			classic = append(classic, entry)
+		}
+	}
+	var groups []setlistGroup
+	if len(classic) > 0 {
+		groups = append(groups, setlistGroup{
+			Gameplay: GameplayClassic,
+			Title:    "经典",
+			Entries:  classic,
+		})
+	}
+	if len(duel) > 0 {
+		groups = append(groups, setlistGroup{
+			Gameplay: GameplayDuel,
+			Title:    "决斗",
+			Entries:  duel,
+		})
+	}
+	return groups
+}
+
+func formatGroupedInt(n int) string {
+	s := strconv.Itoa(n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	rem := len(s) % 3
+	if rem > 0 {
+		b.WriteString(s[:rem])
+		b.WriteByte(',')
+	}
+	for i := rem; i < len(s); i += 3 {
+		if i > rem {
+			b.WriteByte(',')
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
+}
+
+func setlistTrackSpec(d Difficulty) string {
+	return fmt.Sprintf("%d×%d · %s 雷", d.Cols, d.Rows, formatGroupedInt(d.Mines))
 }
 
 func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme) {
@@ -515,11 +586,13 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 		a.setlistOpen = !a.setlistOpen
 	}
 
-	selectedBg := t.Accent.Alpha(0.14).Over(t.Surface)
-	selectedInk := setlistAccentInk(pal, selectedBg)
-
 	ui.Popover(c.Key("setlist-popover"), trigger, &a.setlistOpen, func() {
-		ui.Column(c).Width(316).Gap(4).Children(func() {
+		selectedBg := t.Accent.Alpha(0.14).Over(t.Surface)
+		selectedInk := setlistAccentInk(pal, selectedBg)
+		groupInk := setlistAccentInk(pal, t.Surface)
+		groups := groupSetlistTracks(Difficulties)
+
+		ui.Column(c).Width(332).Gap(4).Children(func() {
 			ui.Row(c).FillWidth().Padding(2, 6, 6, 6).AlignItems(ui.Center).Justify(ui.SpaceBetween).
 				Draw(func(p *ui.Painter, r ui.Rect) {
 					p.Line(r.X, r.Y+r.H-0.5, r.X+r.W, r.Y+r.H-0.5, 1, pal.Rule)
@@ -528,50 +601,79 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 				ui.Textf(c, "%d 首", len(Difficulties)).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum")
 			})
 
-			ui.Column(c).FillWidth().Gap(2).Children(func() {
-				for i, d := range Difficulties {
-					selected := i == a.diffIdx
-					item := ui.ButtonBase(c.Key(i)).FillWidth().Padding(7, 10).Radius(6).
-						Cursor(ui.CursorPointer).Label(d.Song).Checked(selected)
-
-					if selected {
-						item.Background(selectedBg)
-					} else if item.Hovered() {
-						item.Background(pal.Slip.Alpha(0.6).Over(t.Surface))
-					}
-
-					if i < len(Difficulties)-1 {
-						item.Draw(func(p *ui.Painter, r ui.Rect) {
-							p.Line(r.X+6, r.Y+r.H-0.5, r.X+r.W-6, r.Y+r.H-0.5, 1, pal.Grid)
+			ui.Column(c).FillWidth().Gap(6).Children(func() {
+				trackNo := 0
+				for gIdx, group := range groups {
+					section := ui.Column(c.Key(string(group.Gameplay))).FillWidth().Gap(2)
+					if gIdx > 0 {
+						section.Padding(6, 0, 0, 0).Draw(func(p *ui.Painter, r ui.Rect) {
+							p.Line(r.X+4, r.Y+0.5, r.X+r.W-4, r.Y+0.5, 1, pal.Rule)
 						})
 					}
-
-					item.Children(func() {
-						ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).PassThrough().Children(func() {
-							ui.Textf(c, "%02d", i+1).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum").PassThrough()
-							songEl := ui.Text(c, d.Song).FontSize(13).PassThrough()
-							if selected {
-								songEl.Bold().TextColor(selectedInk)
-							} else {
-								songEl.TextColor(t.Text)
-							}
-							if d.Label != "" && d.Label != d.Song {
-								ui.Text(c, d.Label).FontSize(11).TextColor(t.TextMuted).PassThrough()
-							}
-							ui.Spacer(c)
-							if selected {
-								ui.Icon(c, setlistCheckIcon).Size(13, 13).TextColor(selectedInk).PassThrough()
-							}
+					section.Children(func() {
+						ui.Row(c).FillWidth().Padding(2, 6, 2, 6).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+								ui.Box(c).Size(3, 11).Radius(1.5).Background(groupInk)
+								ui.Text(c, group.Title).FontSize(11).Bold().TextColor(groupInk)
+							})
+							ui.Textf(c, "%d 首", len(group.Entries)).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum")
 						})
-					})
 
-					if item.Clicked() {
-						a.setlistOpen = false
-						if i != a.diffIdx {
-							a.diffIdx = i
-							a.resetGame(false)
+						for j, entry := range group.Entries {
+							trackNo++
+							d := entry.Diff
+							selected := entry.Index == a.diffIdx
+							item := ui.ButtonBase(c.Key(entry.Index)).FillWidth().Padding(6, 10).Radius(6).
+								Cursor(ui.CursorPointer).Label(d.Song).Checked(selected)
+
+							itemBg := t.Surface
+							if selected {
+								itemBg = selectedBg
+								item.Background(selectedBg)
+							} else if item.Hovered() {
+								itemBg = pal.Slip.Alpha(0.6).Over(t.Surface)
+								item.Background(itemBg)
+							}
+							itemMutedInk := setlistInk(pal, itemBg, t.TextMuted)
+
+							if j < len(group.Entries)-1 {
+								item.Draw(func(p *ui.Painter, r ui.Rect) {
+									p.Line(r.X+6, r.Y+r.H-0.5, r.X+r.W-6, r.Y+r.H-0.5, 1, pal.Grid)
+								})
+							}
+
+							item.Children(func() {
+								ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).PassThrough().Children(func() {
+									ui.Textf(c, "%02d", trackNo).Width(18).FontSize(11).TextColor(itemMutedInk).FontFeatures("tnum").PassThrough()
+									ui.Column(c).Grow(1).Gap(2).PassThrough().Children(func() {
+										ui.Row(c).FillWidth().AlignItems(ui.Baseline).Gap(6).PassThrough().Children(func() {
+											songEl := ui.Text(c, d.Song).FontSize(13).PassThrough()
+											if selected {
+												songEl.Bold().TextColor(selectedInk)
+											} else {
+												songEl.TextColor(t.Text)
+											}
+											if d.Label != "" && d.Label != d.Song {
+												ui.Text(c, d.Label).FontSize(11).TextColor(itemMutedInk).PassThrough()
+											}
+										})
+										ui.Text(c, setlistTrackSpec(d)).FontSize(11).TextColor(itemMutedInk).FontFeatures("tnum").PassThrough()
+									})
+									if selected {
+										ui.Icon(c, setlistCheckIcon).Size(13, 13).TextColor(selectedInk).PassThrough()
+									}
+								})
+							})
+
+							if item.Clicked() {
+								a.setlistOpen = false
+								if entry.Index != a.diffIdx {
+									a.diffIdx = entry.Index
+									a.resetGame(false)
+								}
+							}
 						}
-					}
+					})
 				}
 			})
 		})
