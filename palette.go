@@ -635,10 +635,11 @@ func drawHatchOverlay(p *ui.Painter, r ui.Rect, frac float64, col ui.Color, pal 
 // hatchProgress renders a ui.Progress bar with notebook pencil hatching
 // overlaid on its native fill so assistive technology reads its progress role
 // and value.
-func hatchProgress(c *ui.Context, labelEl ui.Element, frac float64, col ui.Color, pal *palette) {
+func hatchProgress(c *ui.Context, label string, frac float64, col ui.Color, pal *palette) {
 	ui.Progress(c, frac).Height(10).FillWidth().Radius(5).
+		ClipInset(0, 0, 0, 0, 5).
 		Background(ui.Transparent).TextColor(col.Alpha(0.22)).
-		LabelledBy(labelEl).
+		Label(label).
 		DrawOver(func(p *ui.Painter, r ui.Rect) {
 			drawHatchOverlay(p, r, frac, col, pal)
 		})
@@ -647,11 +648,12 @@ func hatchProgress(c *ui.Context, labelEl ui.Element, frac float64, col ui.Color
 // hatchMeter renders a ui.Meter bar in [0, 100] with notebook pencil hatching
 // overlaid on its native fill so assistive technology reads its meter role
 // and value.
-func hatchMeter(c *ui.Context, labelEl ui.Element, value float64, col ui.Color, pal *palette) {
+func hatchMeter(c *ui.Context, label string, value float64, col ui.Color, pal *palette) {
 	ui.Meter(c, value, 0, 100, &ui.MeterLevels{NormalColor: col.Alpha(0.22)}).
 		Height(10).FillWidth().Radius(5).
+		ClipInset(0, 0, 0, 0, 5).
 		Background(ui.Transparent).
-		LabelledBy(labelEl).
+		Label(label).
 		DrawOver(func(p *ui.Painter, r ui.Rect) {
 			drawHatchOverlay(p, r, value/100, col, pal)
 		})
