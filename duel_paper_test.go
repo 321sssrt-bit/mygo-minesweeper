@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
-	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,8 +185,14 @@ func TestDuelPaletteUsesPinkAndBlueFromPalette(t *testing.T) {
 	}
 	migrated := []string{"#0B1423", "#A78BFA", "#55B2D6", "#F07AA4", "#38BDF8", "#F4F8FD", "#FDF2F8"}
 	for _, f := range rep.Colors {
-		if filepath.Base(f.Path) == "board.go" && slices.Contains(migrated, f.Text) {
-			t.Errorf("board.go:%d still defines migrated duel raw colour %s", f.Line, f.Text)
+		if filepath.Base(f.Path) != "board.go" {
+			continue
+		}
+		upper := strings.ToUpper(f.Text)
+		for _, hex := range migrated {
+			if strings.Contains(upper, hex) {
+				t.Errorf("board.go:%d still defines migrated duel raw colour %s", f.Line, f.Text)
+			}
 		}
 	}
 }
@@ -305,8 +311,13 @@ func TestDuelFlagsLastAIAndMinimapPaintPaletteColors(t *testing.T) {
 			if n := countMatchingPixels(img, miniAbs, 2, dm.AIMarker, 16); n < 4 {
 				t.Errorf("duel minimap missing AI marker %s (matched %d px)", hexOf(dm.AIMarker), n)
 			}
-			if n := countMatchingPixels(img, miniAbs, 2, dm.Viewport, 16); n < 4 {
-				t.Errorf("duel minimap missing viewport frame %s (matched %d px)", hexOf(dm.Viewport), n)
+			// Pan away from the center markers so only the viewport frame sits along vpTop.
+			app.board.center(g, 300, 300)
+			tt.Frame()
+			vp := minimapViewportRect(miniAbs, g.Rows, g.Cols, v.X, v.Y, board.W, board.H, v.Cell)
+			vpTop := ui.Rect{X: vp.X, Y: vp.Y - 1, W: vp.W, H: 3}
+			if n := countMatchingPixels(tt.Image(), vpTop, 2, dm.Viewport, 16); n < 4 {
+				t.Errorf("duel minimap missing viewport frame %s along %+v (matched %d px)", hexOf(dm.Viewport), vpTop, n)
 			}
 		})
 	}
