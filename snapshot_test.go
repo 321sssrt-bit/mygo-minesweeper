@@ -158,6 +158,7 @@ func stageSenzaihyoumeiScene(dark bool) *minesweeperApp {
 // popover expanded, showing the real Difficulties groups and duel entries.
 func stageShippedSetlistScene(dark bool) *minesweeperApp {
 	app := stageLiveScene(dark)
+	app.classicHoverRow, app.classicHoverCol = -1, -1
 	app.setlistOpen = true
 	return app
 }

@@ -195,6 +195,8 @@ func TestSenzaihyoumeiSetlistSelectionAndFullGame(t *testing.T) {
 	if err := tt.Click("潜在表明"); err != nil {
 		t.Fatalf("select 《潜在表明》: %v", err)
 	}
+	// Pin RNG after setlist reset so mine placement is deterministic across runs.
+	app.game.rng = rand.New(rand.NewPCG(42, 42^0x9e3779b97f4a7c15))
 	if !app.isDuel() || app.game.Rows != 500 || app.game.Cols != 500 || app.game.Mines != 45000 || app.game.SkillUsesLeft != 5 {
 		t.Fatalf("senzaihyoumei setup wrong: duel=%v %dx%d mines=%d charges=%d",
 			app.isDuel(), app.game.Rows, app.game.Cols, app.game.Mines, app.game.SkillUsesLeft)
