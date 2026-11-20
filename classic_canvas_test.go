@@ -60,7 +60,7 @@ func classicCanvasTestView(a *minesweeperApp) func(c *ui.Context) {
 					overlay.Children(func() {
 						ui.Column(c).AlignItems(ui.Center).Gap(10).Padding(24).Radius(14).
 							Children(func() {
-								ui.Text(c, "♪ 春日影 (Crychic Ver.) — 演奏中断").FontSize(13).Bold()
+								ui.Text(c, "♪ 《春日影》 — 乐声骤停").FontSize(13).Bold()
 								ui.Text(c, "「……为什么要演奏春日影？！」").FontSize(22).Bold()
 								ui.Text(c, "（长崎爽世的眼神失去了高光 · 点击任意处继续）").FontSize(12)
 							})
@@ -75,10 +75,10 @@ func classicCanvasTestView(a *minesweeperApp) func(c *ui.Context) {
 
 		switch ui.AlertDialog(c, &a.haruhikageAlert,
 			"为什么要演奏春日影？！",
-			"「明明都约好了不点那一格的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
+			"「明明说好不再弹这首曲子的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
 			"对不起，我错了", "一辈子重开") {
 		case 0:
-			a.pushChat("长崎爽世", FindMember(MemberSoyorin).ColorHex, "「道歉的话，下次别再盲猜了呢。」")
+			a.pushChat("长崎爽世", FindMember(MemberSoyorin).ColorHex, "「道歉的话，下次别再擅自演奏这首曲子了呢。」")
 		case 1:
 			a.resetGame(false)
 		}
