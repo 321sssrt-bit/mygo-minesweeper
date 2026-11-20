@@ -9,12 +9,6 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// sevenTrackSetlist returns a copy of the shipped seven-track Difficulties
-// ladder for tests that need an isolated slice.
-func sevenTrackSetlist() []Difficulty {
-	return append([]Difficulty(nil), Difficulties...)
-}
-
 func TestSetlistPopoverSelectBySongName(t *testing.T) {
 	app := newMinesweeperApp(12345)
 	tt := ui.NewTester(app.view, 1280, 900)
@@ -691,8 +685,9 @@ func TestSetlistScreenReaderSemantics(t *testing.T) {
 
 // TestSetlistLargeTracksPlayOnCanvas selects 50x50 《诗超绊》 and 100x100
 // 《迷路日々》 from the shipped setlist popover, verifies both route onto the
-// shared classic canvas, and plays each through opening, flagging, winning,
-// losing, and resetting via headless UI input.
+// shared classic canvas, drags the bottom-right corner clear of the minimap,
+// and plays each through opening, flagging, winning, losing, and resetting via
+// headless UI input.
 func TestSetlistLargeTracksPlayOnCanvas(t *testing.T) {
 	for _, want := range []Difficulty{TrackUtakotoba, TrackMayoiuta} {
 		t.Run(want.ID, func(t *testing.T) {
@@ -708,6 +703,10 @@ func TestSetlistLargeTracksPlayOnCanvas(t *testing.T) {
 			if app.game.Difficulty != want || app.isDuel() {
 				t.Fatalf("active track = %+v duel=%v, want classic %+v", app.game.Difficulty, app.isDuel(), want)
 			}
+			// Re-pin deterministic seed after setlist selection (selectDifficulty calls resetGame(false)).
+			app.seed = 12345
+			app.resetGame(true)
+			tt.Frame()
 
 			boardRect, ok := tt.Find("经典棋盘")
 			if !ok || boardRect.W <= 0 || boardRect.H <= 0 {
@@ -730,33 +729,37 @@ func TestSetlistLargeTracksPlayOnCanvas(t *testing.T) {
 					want.ID, app.game.FirstClick, app.game.Status, app.game.RevealedSafe)
 			}
 
-			// Right-click a hidden cell on the canvas to place and remove a flag.
-			flagRow, flagCol := -1, -1
-			for i := range app.game.Cells {
-				if c := &app.game.Cells[i]; !c.Revealed && !c.Flagged {
-					flagRow, flagCol = c.Row, c.Col
+			// Drag the canvas to its bottom-right limit so the corner cell clears the minimap.
+			mini := app.board.minimapBoundsFor(app.game)
+			maxX, maxY := app.board.panLimit(app.game)
+			for range 12 {
+				if app.board.X >= maxX-0.5 && app.board.Y >= maxY-0.5 {
 					break
 				}
+				sx, sy := boardRect.X+mini.X-20, boardRect.Y+mini.Y-20
+				tt.Press(sx, sy)
+				tt.Move(boardRect.X+20, boardRect.Y+20)
+				tt.Release(boardRect.X+20, boardRect.Y+20)
 			}
-			if flagRow < 0 {
-				t.Fatalf("%s: no hidden cell left to flag", want.ID)
+			cornerRow, cornerCol := want.Rows-1, want.Cols-1
+			fx, fy := cellPoint(cornerRow, cornerCol)
+			if app.board.minimapFor(app.game, fx-boardRect.X, fy-boardRect.Y) {
+				t.Fatalf("%s: dragged bottom-right corner (%d,%d) still occluded by minimap", want.ID, cornerRow, cornerCol)
 			}
-			app.board.center(app.game, flagRow, flagCol)
-			tt.Frame()
-			fx, fy := cellPoint(flagRow, flagCol)
+			// Right-click the bottom-right corner on the canvas to place and remove a flag.
 			tt.RightClickAt(fx, fy)
-			if !app.game.Cell(flagRow, flagCol).Flagged || app.game.FlagsPlaced != 1 {
+			if !app.game.Cell(cornerRow, cornerCol).Flagged || app.game.FlagsPlaced != 1 {
 				t.Fatalf("%s: right-click on canvas failed to flag (%d,%d): flagged=%v total=%d",
-					want.ID, flagRow, flagCol, app.game.Cell(flagRow, flagCol).Flagged, app.game.FlagsPlaced)
+					want.ID, cornerRow, cornerCol, app.game.Cell(cornerRow, cornerCol).Flagged, app.game.FlagsPlaced)
 			}
 			tt.RightClickAt(fx, fy)
-			if app.game.Cell(flagRow, flagCol).Flagged || app.game.FlagsPlaced != 0 {
-				t.Fatalf("%s: second right-click on canvas failed to unflag (%d,%d)", want.ID, flagRow, flagCol)
+			if app.game.Cell(cornerRow, cornerCol).Flagged || app.game.FlagsPlaced != 0 {
+				t.Fatalf("%s: second right-click on canvas failed to unflag (%d,%d)", want.ID, cornerRow, cornerCol)
 			}
 
 			// Clear all zero-adjacent regions first, then all remaining numbered
-			// safe cells except one (numbered cells do not flood-fill), and click
-			// that final safe cell on the canvas to win.
+			// safe cells except the bottom-rightmost one (numbered cells do not
+			// flood-fill), and click that final safe cell on the canvas to win.
 			for i := range app.game.Cells {
 				if c := &app.game.Cells[i]; !c.IsMine && !c.Revealed && c.Adjacent == 0 {
 					app.game.Reveal(c.Row, c.Col)
@@ -786,15 +789,18 @@ func TestSetlistLargeTracksPlayOnCanvas(t *testing.T) {
 			wx, wy := cellPoint(last.Row, last.Col)
 			tt.ClickAt(wx, wy)
 			if app.game.Status != StatusWon || app.game.FlagsPlaced != want.Mines {
-				t.Fatalf("%s: clicking final safe cell on canvas did not win: status=%v flags=%d/%d",
-					want.ID, app.game.Status, app.game.FlagsPlaced, want.Mines)
+				t.Fatalf("%s: clicking final safe cell (%d,%d) on canvas did not win: status=%v flags=%d/%d",
+					want.ID, last.Row, last.Col, app.game.Status, app.game.FlagsPlaced, want.Mines)
 			}
 
-			// Reset with R, reopen via canvas, then hit a mine on the canvas to verify ordinary loss.
+			// Reset with R, re-pin seed, reopen via canvas, then hit a mine on the canvas to verify ordinary loss.
 			tt.Key(0, ui.KeyR)
 			if app.game.Status != StatusIdle || app.game.Difficulty != want {
 				t.Fatalf("%s: KeyR failed to reset track: status=%v diff=%+v", want.ID, app.game.Status, app.game.Difficulty)
 			}
+			app.seed = 12345
+			app.resetGame(true)
+			tt.Frame()
 			tt.ClickAt(boardRect.X+boardRect.W/2, boardRect.Y+boardRect.H/2)
 			mineRow, mineCol := -1, -1
 			for i := range app.game.Cells {
