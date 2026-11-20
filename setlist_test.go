@@ -395,6 +395,296 @@ func TestSetlistGroupsFromGameplayFieldAndDisplaysSpecs(t *testing.T) {
 	}
 }
 
+func focusSetlistTriggerByTab(t *testing.T, tt *ui.Tester) {
+	t.Helper()
+	for range 20 {
+		if tt.Focused("歌单") {
+			return
+		}
+		tt.Key(0, ui.KeyTab)
+	}
+	t.Fatal("failed to reach setlist trigger via Tab")
+}
+
+func TestSetlistKeyboardNavigationAndSelection(t *testing.T) {
+	app := newMinesweeperApp(12345)
+	tt := ui.NewTester(app.view, 1280, 900)
+
+	// Reach trigger via Tab and open with Enter; focus lands on active track.
+	focusSetlistTriggerByTab(t, tt)
+	tt.Key(0, ui.KeyEnter)
+	if !app.setlistOpen {
+		t.Fatal("Enter on focused setlist trigger should open popover")
+	}
+	if !tt.Focused("迷星叫") {
+		t.Fatal("opening setlist with Enter should focus the active track 迷星叫")
+	}
+
+	// ArrowDown traverses all tracks in display order across groups and wraps around.
+	wantDown := []string{"碧天伴走", "影色舞", "诗超绊", "春日影", "迷星叫"}
+	for _, want := range wantDown {
+		tt.Key(0, ui.KeyDown)
+		if !tt.Focused(want) {
+			t.Fatalf("ArrowDown did not focus %q", want)
+		}
+	}
+
+	// ArrowUp wraps backwards from first to last, then steps up.
+	tt.Key(0, ui.KeyUp)
+	if !tt.Focused("春日影") {
+		t.Fatal("ArrowUp from first track should wrap to 春日影")
+	}
+	tt.Key(0, ui.KeyUp)
+	if !tt.Focused("诗超绊") {
+		t.Fatal("ArrowUp from 春日影 should focus 诗超绊")
+	}
+
+	// Home and End jump to first and last track.
+	tt.Key(0, ui.KeyHome)
+	if !tt.Focused("迷星叫") {
+		t.Fatal("Home should focus first track 迷星叫")
+	}
+	tt.Key(0, ui.KeyEnd)
+	if !tt.Focused("春日影") {
+		t.Fatal("End should focus last track 春日影")
+	}
+
+	// Move to 碧天伴走 and confirm with Enter; closes popover and returns focus to trigger.
+	tt.Key(0, ui.KeyHome)
+	tt.Key(0, ui.KeyDown)
+	if !tt.Focused("碧天伴走") {
+		t.Fatal("expected focus on 碧天伴走 before Enter")
+	}
+	tt.Key(0, ui.KeyEnter)
+	if app.setlistOpen {
+		t.Fatal("Enter on option should close setlist popover")
+	}
+	if app.diffIdx != 1 || app.game.Difficulty.Song != "碧天伴走" {
+		t.Fatalf("Enter selected idx=%d song=%q, want 1 / 碧天伴走", app.diffIdx, app.game.Difficulty.Song)
+	}
+	if !tt.Focused("歌单") {
+		t.Fatal("selecting a track via Enter should return focus to setlist trigger")
+	}
+
+	// Space opens popover on the newly active track, and Space selects another track.
+	tt.Key(0, ui.KeySpace)
+	if !app.setlistOpen || !tt.Focused("碧天伴走") {
+		t.Fatalf("Space should open setlist focused on active 碧天伴走: open=%v focused=%v", app.setlistOpen, tt.Focused("碧天伴走"))
+	}
+	tt.Key(0, ui.KeyEnd)
+	tt.Key(0, ui.KeySpace)
+	if app.setlistOpen {
+		t.Fatal("Space on option should close setlist popover")
+	}
+	if !app.isDuel() || app.game.Difficulty.Song != "春日影" {
+		t.Fatalf("Space failed to select 春日影 duel: duel=%v song=%q", app.isDuel(), app.game.Difficulty.Song)
+	}
+	if !tt.Focused("歌单") {
+		t.Fatal("selecting a track via Space should return focus to setlist trigger")
+	}
+
+	// ArrowDown and ArrowUp on the closed trigger open the popover on the active track,
+	// and Escape dismisses it without changing track while returning focus to trigger.
+	for _, key := range []ui.Key{ui.KeyDown, ui.KeyUp} {
+		tt.Key(0, key)
+		if !app.setlistOpen || !tt.Focused("春日影") {
+			t.Fatalf("key %v on closed trigger did not open focused on 春日影: open=%v focused=%v", key, app.setlistOpen, tt.Focused("春日影"))
+		}
+		tt.Key(0, ui.KeyUp)
+		if !tt.Focused("诗超绊") {
+			t.Fatalf("expected focus on 诗超绊 before Escape")
+		}
+		tt.Key(0, ui.KeyEscape)
+		if app.setlistOpen {
+			t.Fatal("Escape should close setlist popover")
+		}
+		if app.game.Difficulty.Song != "春日影" {
+			t.Fatalf("Escape changed active track to %q", app.game.Difficulty.Song)
+		}
+		if !tt.Focused("歌单") {
+			t.Fatal("Escape should return focus to setlist trigger")
+		}
+	}
+
+	// Re-selecting the active track via Enter during active play does not reset the game.
+	tt.Key(0, ui.KeyDown)
+	tt.Key(0, ui.KeyHome)
+	tt.Key(0, ui.KeyEnter)
+	if app.diffIdx != 0 {
+		t.Fatalf("expected reset to track 0, got %d", app.diffIdx)
+	}
+	if err := tt.Click("cell-4-4"); err != nil {
+		t.Fatalf("start classic game: %v", err)
+	}
+	beforeGame := app.game
+	focusSetlistTriggerByTab(t, tt)
+	tt.Key(0, ui.KeyEnter)
+	tt.Key(0, ui.KeyEnter)
+	if app.setlistOpen || app.game != beforeGame || app.game.Status != StatusPlaying {
+		t.Fatalf("re-selecting active track via Enter reset game: open=%v sameGame=%v status=%v", app.setlistOpen, app.game == beforeGame, app.game.Status)
+	}
+	if !tt.Focused("歌单") {
+		t.Fatal("re-selecting active track via Enter should return focus to trigger")
+	}
+
+	// Pressing Tab inside the open popover moves focus out and unmounts the popover.
+	tt.Key(0, ui.KeyEnter)
+	if !app.setlistOpen {
+		t.Fatal("expected setlist open before Tab")
+	}
+	tt.Key(0, ui.KeyTab)
+	if app.setlistOpen {
+		t.Fatal("Tab leaving setlist popover should close it")
+	}
+	if _, ok := tt.Find("碧天伴走"); ok {
+		t.Fatal("popover options should be unmounted immediately after Tab closes popover")
+	}
+	if app.game != beforeGame || app.game.Status != StatusPlaying {
+		t.Fatal("Tab closing setlist should preserve active game")
+	}
+
+	// Opening with mouse click still allows immediate keyboard navigation and selection,
+	// and clicking non-button headers/whitespace inside the popover keeps it open.
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("open setlist with click: %v", err)
+	}
+	for _, header := range []string{"排练歌单", "决斗", "经典"} {
+		info, ok := tt.AccessByRole(ui.RoleText, header)
+		if !ok {
+			t.Fatalf("popover header text %q not found", header)
+		}
+		r := info.Bounds
+		tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+		if !app.setlistOpen {
+			t.Fatalf("clicking internal popover header %q (rect %+v) should keep setlist open", header, r)
+		}
+	}
+	// Clicking internal whitespace beside the header also keeps the popover open.
+	if hdr, ok := tt.AccessByRole(ui.RoleText, "排练歌单"); ok {
+		r := hdr.Bounds
+		tt.ClickAt(r.X+r.W+40, r.Y+r.H/2)
+		if !app.setlistOpen {
+			t.Fatal("clicking internal popover whitespace should keep setlist open")
+		}
+	}
+	// Arrow navigation still works after clicking non-button areas inside the popover.
+	if !tt.Focused("迷星叫") {
+		t.Fatal("expected focus on 迷星叫 after clicking 经典 header and whitespace")
+	}
+	tt.Key(0, ui.KeyDown)
+	tt.Key(0, ui.KeyEnter)
+	if app.setlistOpen || app.diffIdx != 1 || app.game.Difficulty.Song != "碧天伴走" {
+		t.Fatalf("mouse-open + header clicks + ArrowDown + Enter failed: open=%v idx=%d song=%q", app.setlistOpen, app.diffIdx, app.game.Difficulty.Song)
+	}
+
+	// Interleaved Gameplay order: arrow navigation follows grouped display order
+	// and Enter selects the underlying index in Difficulties.
+	orig := Difficulties
+	Difficulties = []Difficulty{
+		{ID: "d1", Song: "曲目一", Gameplay: GameplayDuel, Rows: 500, Cols: 500, Mines: 45000, DuelDuration: 180, AIInterval: 1.0},
+		{ID: "c1", Song: "曲目二", Gameplay: GameplayClassic, Rows: 9, Cols: 9, Mines: 10},
+		{ID: "c2", Song: "曲目三", Gameplay: GameplayClassic, Rows: 16, Cols: 16, Mines: 40},
+	}
+	defer func() { Difficulties = orig }()
+
+	app2 := newMinesweeperApp(12345)
+	tt2 := ui.NewTester(app2.view, 1280, 900)
+	focusSetlistTriggerByTab(t, tt2)
+	tt2.Key(0, ui.KeyEnter)
+	if !tt2.Focused("曲目一") {
+		t.Fatal("expected focus on initial active track 曲目一 (duel)")
+	}
+	// Display order is 曲目二 (classic), 曲目三 (classic), 曲目一 (duel).
+	// ArrowDown from last visual item (曲目一) wraps to first visual item (曲目二).
+	tt2.Key(0, ui.KeyDown)
+	if !tt2.Focused("曲目二") {
+		t.Fatal("expected ArrowDown wrap to first grouped track 曲目二")
+	}
+	tt2.Key(0, ui.KeyDown)
+	if !tt2.Focused("曲目三") {
+		t.Fatal("expected ArrowDown to second grouped track 曲目三")
+	}
+	tt2.Key(0, ui.KeyEnter)
+	if app2.diffIdx != 2 || app2.game.Difficulty.Song != "曲目三" {
+		t.Fatalf("selected idx=%d song=%q, want 2 / 曲目三", app2.diffIdx, app2.game.Difficulty.Song)
+	}
+}
+
+func TestSetlistScreenReaderSemantics(t *testing.T) {
+	app := newMinesweeperApp(12345)
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.UseScreenReader()
+
+	// Collapsed trigger exposes name, current song name as value, popup kind, and collapsed state.
+	trig, ok := tt.Access("歌单")
+	if !ok {
+		t.Fatal("setlist trigger missing from accessibility tree")
+	}
+	if trig.Name != "歌单" || trig.Value != "迷星叫" || trig.HasPopup != ui.PopupListBox || trig.Expanded || !trig.Focusable {
+		t.Fatalf("unexpected collapsed trigger AccessInfo: %+v", trig)
+	}
+
+	// Open with keyboard and verify expanded listbox, groups, and options.
+	focusSetlistTriggerByTab(t, tt)
+	tt.Key(0, ui.KeyEnter)
+
+	trigOpen, ok := tt.Access("歌单")
+	if !ok || !trigOpen.Expanded || trigOpen.Value != "迷星叫" {
+		t.Fatalf("unexpected expanded trigger AccessInfo: %+v", trigOpen)
+	}
+	if len(trigOpen.Controls) == 0 || trigOpen.Controls[0] != "排练歌单" {
+		t.Fatalf("expected trigger Controls to include 排练歌单, got %v", trigOpen.Controls)
+	}
+
+	if _, ok := tt.AccessByRole(ui.RoleListBox, "排练歌单"); !ok {
+		t.Fatal("setlist listbox (RoleListBox) missing from accessibility tree")
+	}
+	for _, groupTitle := range []string{"经典", "决斗"} {
+		if _, ok := tt.AccessByRole(ui.RoleGroup, groupTitle); !ok {
+			t.Fatalf("setlist group %q (RoleGroup) missing from accessibility tree", groupTitle)
+		}
+	}
+
+	groups := groupSetlistTracks(Difficulties)
+	trackNo := 0
+	for _, group := range groups {
+		for _, entry := range group.Entries {
+			trackNo++
+			d := entry.Diff
+			opt, ok := tt.AccessByRole(ui.RoleOption, d.Song)
+			if !ok {
+				t.Fatalf("track option %q (RoleOption) missing from accessibility tree", d.Song)
+			}
+			wantSelected := entry.Index == app.diffIdx
+			if opt.Name != d.Song || opt.Description != setlistTrackSpec(d) ||
+				opt.Selected != wantSelected || opt.PosInSet != trackNo || opt.SetSize != len(Difficulties) || !opt.Focusable {
+				t.Fatalf("unexpected option AccessInfo for %q: %+v", d.Song, opt)
+			}
+			if opt.Focused != wantSelected {
+				t.Fatalf("option %q Focused=%v, want %v", d.Song, opt.Focused, wantSelected)
+			}
+		}
+	}
+
+	// Moving focus updates Focused option in the accessibility tree.
+	tt.Key(0, ui.KeyDown)
+	opt1, ok := tt.AccessByRole(ui.RoleOption, "碧天伴走")
+	if !ok || !opt1.Focused {
+		t.Fatalf("expected 碧天伴走 option focused in accessibility tree: ok=%v info=%+v", ok, opt1)
+	}
+	opt0, ok := tt.AccessByRole(ui.RoleOption, "迷星叫")
+	if !ok || opt0.Focused {
+		t.Fatalf("expected 迷星叫 option unfocused after ArrowDown: ok=%v info=%+v", ok, opt0)
+	}
+
+	// Selecting updates trigger value to the newly chosen song name.
+	tt.Key(0, ui.KeyEnter)
+	trigAfter, ok := tt.Access("歌单")
+	if !ok || trigAfter.Expanded || trigAfter.Value != "碧天伴走" || !trigAfter.Focused {
+		t.Fatalf("unexpected trigger AccessInfo after selection: %+v", trigAfter)
+	}
+}
+
 // TestSnapshotSetlistPopover renders the 7-track setlist popover expanded
 // in the default 1280×900 viewport for both day and night themes when
 // MYGO_SNAPSHOT_DIR is set.
