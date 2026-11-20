@@ -37,3 +37,17 @@ func TestSourceScanWellFormed(t *testing.T) {
 		}
 	}
 }
+
+func TestSourceScanDuelSpecZero(t *testing.T) {
+	rep, err := scanreport.Scan(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Copy {
+		for _, rule := range f.Rules {
+			if rule == scanreport.RuleDuelSpec {
+				t.Errorf("duel spec violation remains at %s:%d: %q", f.Path, f.Line, f.Text)
+			}
+		}
+	}
+}

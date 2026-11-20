@@ -71,7 +71,7 @@ var Difficulties = []Difficulty{
 	TrackSenzaihyoumei,
 	{
 		ID:           "duel",
-		Label:        "春日影 Live",
+		Label:        "解不完的心结",
 		Song:         "春日影",
 		Subtitle:     "1000×1000 · 180000雷 · 05:00",
 		Gameplay:     GameplayDuel,

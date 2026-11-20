@@ -177,7 +177,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 		a.pushChat("排练重开", hexOf(bandColor), fmt.Sprintf("重新演奏《%s》", diff.Song))
 	}
 	if diff.Gameplay == GameplayDuel {
-		a.pushChat("MyGO!!!!! 决斗室", hexOf(bandColor), "五分钟百万格抢地：开格 +1，踩雷 −100；旗帜终局按对错计分，不靠比分偷看雷。")
+		a.pushChat("MyGO!!!!! 决斗室", hexOf(bandColor), "同盘限时抢地：开格 +1，踩雷 −100；旗帜终局按对错计分，不靠比分偷看雷。")
 	}
 	a.pushChat(m.Name, m.ColorHex, a.quote)
 }
@@ -426,7 +426,7 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 		}
 		if tick.Finished {
 			a.elapsed = int(d.Duration)
-			result := "平局！这一百万格的迷茫，恰好一人一半"
+			result := "平局！这一整页的迷茫，恰好一人一半"
 			if d.PlayerScore > d.AIScore {
 				result = fmt.Sprintf("决斗胜利！%d : %d · 赢了就是赢了！", d.PlayerScore, d.AIScore)
 				a.unlockedMemes[MemeForever] = true

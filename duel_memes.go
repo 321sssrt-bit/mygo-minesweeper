@@ -9,13 +9,13 @@ type duelLine struct {
 
 var duelMemberLines = map[MemberID]map[string][]string{
 	MemberTomori: {
-		"duelStart": {"「一百万个格子……迷路的时候，也能一格一格继续前进。」"},
+		"duelStart": {"「就算格子多到数不清……迷路的时候，也能一格一格继续前进。」"},
 		"duelLead":  {"「大家一直在往前走呢……这一次不会再掉队了。」"},
 		"duelAI":    {"「这颗小石头，先归我了……」"},
 	},
 	MemberAnon: {
-		"duelStart":   {"「百万格超大舞台？这波抢地盘流量我吃定了！」"},
-		"duelLead":    {"「占格数反超！百万格盘的绝对 C 位果然是我！」"},
+		"duelStart":   {"「这么大的抢地盘舞台？这波流量我吃定了！」"},
+		"duelLead":    {"「占格数反超！这片棋盘的绝对 C 位果然是我！」"},
 		"duelBehind":  {"「等、等等！刚才只是鼠标飘了，马上追回来！」"},
 		"duelReclaim": {"「这片格子贴上我的签名啦！承让了小灯~」"},
 	},
