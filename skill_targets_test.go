@@ -19,8 +19,6 @@ func TestClassicSkillTargets(t *testing.T) {
 			g := NewGame(Difficulty{Rows: 9, Cols: 10, Mines: 14, SkillCharges: 1}, true, tc.member, 99)
 			g.Reveal(4, 4)
 			res := g.UseSkill()
-			t.Logf("targets=%v kind=%s quote=%q revealed=%d wave=%d charges=%d",
-				res.SkillTargets, res.Kind, res.QuoteEvent, res.RevealedCount, len(res.RevealWave), g.SkillUsesLeft)
 			if res.Kind != ActionSkill || res.QuoteEvent != "skill" || g.SkillUsesLeft != 0 {
 				t.Fatalf("expected a successful skill with one charge spent, got %+v", res)
 			}
@@ -62,8 +60,6 @@ func TestWinningSkillTargets(t *testing.T) {
 			g := fixedBoard(hidden, 1, 23)
 			g.BandMode, g.MemberID, g.SkillUsesLeft = true, tc.member, 1
 			res := g.UseSkill()
-			t.Logf("targets=%v kind=%s quote=%q revealed=%d memes=%v charges=%d",
-				res.SkillTargets, res.Kind, res.QuoteEvent, res.RevealedCount, res.NewMemes, g.SkillUsesLeft)
 			if g.Status != StatusWon || res.Kind != ActionWon || res.QuoteEvent != "won" ||
 				res.RevealedCount != len(hidden) || g.SkillUsesLeft != 0 ||
 				!slices.Equal(res.NewMemes, tc.memes) || !slices.Equal(res.SkillTargets, tc.want) {
@@ -86,7 +82,6 @@ func TestSkillTargetsBeyondRevealWaveBudget(t *testing.T) {
 	g.Reveal(0, size/2-1)
 
 	res := g.UseSkill()
-	t.Logf("targets=%v kind=%s revealed=%d wave=%d", res.SkillTargets, res.Kind, res.RevealedCount, len(res.RevealWave))
 	want := []int{294, 160}
 	if !slices.Equal(res.SkillTargets, want) || res.Kind != ActionWon ||
 		res.RevealedCount != 551 || len(res.RevealWave) != MaxRevealWaveEntries {
@@ -112,7 +107,6 @@ func TestInactiveSkillTargets(t *testing.T) {
 		}
 	}
 	res := g.UseSkill()
-	t.Logf("all mines already flagged: targets=%v kind=%s quote=%q charges=%d", res.SkillTargets, res.Kind, res.QuoteEvent, g.SkillUsesLeft)
 	if res.Kind != ActionNoop || len(res.SkillTargets) != 0 || res.QuoteEvent != "" || g.SkillUsesLeft != 1 {
 		t.Fatalf("no candidate: got %+v, want noop, no targets, and charge retained", res)
 	}
@@ -126,8 +120,7 @@ func TestDuelSkillTargets(t *testing.T) {
 			g := NewGame(diff, true, member.ID, 99)
 			g.Reveal(4, 4)
 			res := g.UseSkill()
-			count, active := g.ScanAt(4, 4)
-			t.Logf("targets=%v kind=%s scan=%v (%d mines) charges=%d", res.SkillTargets, res.Kind, active, count, g.SkillUsesLeft)
+			_, active := g.ScanAt(4, 4)
 			if res.Kind != ActionSkill || len(res.SkillTargets) != 0 || res.QuoteEvent != "skill" ||
 				len(res.RevealWave) != 0 || !active || g.SkillUsesLeft != 0 {
 				t.Fatalf("expected a successful duel scan with no targets, got %+v", res)
