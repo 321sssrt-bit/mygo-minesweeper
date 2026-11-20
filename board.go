@@ -396,6 +396,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	v, g := a.board, a.game
 	t := p.Theme()
 	now := p.Now()
+	a.syncMotionState(a.reducedMotionPainter(p))
 	hoverHint := g.InspectNumberHover(v.HoverRow, v.HoverCol, a.flagMode)
 	v.LastHoverHint = hoverHint
 	hintFill, hintStroke := hoverHintColors(hoverHint.Kind, a.memberID, a.darkMode)
@@ -573,7 +574,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 				y := r.Y + float32(row)*v.Cell - v.Y
 				p.Stroke(ui.Rect{X: x, Y: y, W: v.Cell, H: v.Cell}, duelPalette.AI, 4, 2)
 			}
-			if v.EffectCell >= 0 && g.Cols > 0 {
+			if !a.motionReducedActive && v.EffectCell >= 0 && g.Cols > 0 {
 				elapsed := now.Sub(v.LastEffect)
 				if elapsed >= 0 && elapsed < 350*time.Millisecond {
 					row, col := v.EffectCell/g.Cols, v.EffectCell%g.Cols
@@ -698,7 +699,11 @@ func (a *minesweeperApp) pruneAndDrawPopups(p *ui.Painter, r ui.Rect, now time.T
 		kept = append(kept, pop)
 		k := float32(elapsed) / float32(duelPopupDuration)
 		px := r.X + (float32(pop.Col)+0.5)*v.Cell - v.X - float32(len([]rune(pop.Text)))*3.5
-		py := r.Y + float32(pop.Row)*v.Cell - v.Y - 16 - k*28
+		lift := k * 28
+		if a.motionReducedActive {
+			lift = 0
+		}
+		py := r.Y + float32(pop.Row)*v.Cell - v.Y - 16 - lift
 		px = max(r.X+8, min(r.X+r.W-120, px))
 		py = max(r.Y+8, min(r.Y+r.H-28, py))
 		alpha := 1 - k*0.85
