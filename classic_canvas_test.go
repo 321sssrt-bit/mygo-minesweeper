@@ -1444,8 +1444,9 @@ func TestClassicCanvasShakeVisualDecayAndHitTestStability(t *testing.T) {
 }
 
 func minimapCellCenter(board, mini ui.Rect, rows, cols, row, col int) (float32, float32) {
-	return board.X + mini.X + (float32(col)+0.5)/float32(cols)*mini.W,
-		board.Y + mini.Y + (float32(row)+0.5)/float32(rows)*mini.H
+	plot := classicMinimapPlot(mini)
+	return board.X + plot.X + (float32(col)+0.5)/float32(cols)*plot.W,
+		board.Y + plot.Y + (float32(row)+0.5)/float32(rows)*plot.H
 }
 
 // Classic minimap renders only the player's own progress (opened safe cells,
@@ -1537,6 +1538,7 @@ func TestClassicMinimapShowsOwnProgressOnlyAndClickToJump(t *testing.T) {
 			assertColorNear(t, "live opened safe (1,6)", sampleCell(img, 1, 6), mc.Opened)
 			assertColorNear(t, "live normal flag (1,7)", sampleCell(img, 1, 7), mc.Flag)
 			assertColorNear(t, "live shield flag (3,7)", sampleCell(img, 3, 7), mc.Flag)
+			assertColorNear(t, "live misflagged safe (5,2) stays flag", sampleCell(img, 5, 2), mc.Flag)
 			assertColorNear(t, "live questioned (8,2) stays bg", sampleCell(img, 8, 2), mc.Bg)
 			assertColorNear(t, "live unrevealed (8,5) stays bg", sampleCell(img, 8, 5), mc.Bg)
 			for name, forbidden := range map[string]ui.Color{
@@ -1594,17 +1596,78 @@ func TestClassicMinimapShowsOwnProgressOnlyAndClickToJump(t *testing.T) {
 						t.Fatalf("minimap interior jump to %v landed at (%d,%d) ok=%v", tgt, gotR, gotC, ok)
 					}
 				}
-				// Verify viewport stroke appears along the computed viewport rect.
-				miniAbs := ui.Rect{X: bigBoard.X + bigMini.X, Y: bigBoard.Y + bigMini.Y, W: bigMini.W, H: bigMini.H}
-				vp := minimapViewportRect(miniAbs, bigApp.game.Rows, bigApp.game.Cols, bigApp.board.X, bigApp.board.Y, bigBoard.W, bigBoard.H, bigApp.board.Cell)
-				probe := ui.Rect{X: vp.X + vp.W/2 - 3, Y: vp.Y - 2, W: 6, H: 5}
-				if vp.Y <= miniAbs.Y+2 {
-					probe.Y = vp.Y + vp.H - 2
-				}
+				// Verify outset viewport frame appears along the computed viewport rect.
+				plotAbs := classicMinimapPlot(ui.Rect{X: bigBoard.X + bigMini.X, Y: bigBoard.Y + bigMini.Y, W: bigMini.W, H: bigMini.H})
+				vp := minimapViewportRect(plotAbs, bigApp.game.Rows, bigApp.game.Cols, bigApp.board.X, bigApp.board.Y, bigBoard.W, bigBoard.H, bigApp.board.Cell)
+				probe := ui.Rect{X: vp.X + vp.W/2 - 3, Y: vp.Y - 3, W: 6, H: 4}
 				if got := countMatchingPixels(bigTT.Image(), probe, 2, mc.Viewport, 28); got < 4 {
 					t.Errorf("minimap viewport frame missing near %+v after jump to %v (matched %d px)", probe, tgt, got)
 				}
 			}
 		})
+	}
+}
+
+// On a 100x100 classic board, corner cells stay inside the rounded card clip
+// and edge-row flags stay visible while the viewport sits flush against that
+// edge, at both 1x and 2x scale in day and night themes.
+func TestClassicMinimap100x100CornersAndEdgeFlagsStayVisible(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, scale := range []float32{1, 2} {
+			t.Run(fmt.Sprintf("dark=%v/scale=%.0fx", dark, scale), func(t *testing.T) {
+				app := newMinesweeperApp(42)
+				app.darkMode = dark
+				app.game = NewGame(TrackMayoiuta, true, MemberTomori, 42)
+				g := app.game
+
+				tt := ui.NewTester(classicCanvasTestView(app), 1280, 900)
+				tt.SetScale(scale)
+				tt.Frame()
+
+				board, ok := tt.Find("经典棋盘")
+				if !ok {
+					t.Fatal("classic canvas board missing")
+				}
+				mc := classicMinimapFor(dark)
+				mini := app.board.minimapBoundsFor(g)
+				plotAbs := classicMinimapPlot(ui.Rect{X: board.X + mini.X, Y: board.Y + mini.Y, W: mini.W, H: mini.H})
+				cw := plotAbs.W / float32(g.Cols)
+				ch := plotAbs.H / float32(g.Rows)
+				cellProbe := func(row, col int) ui.Rect {
+					return ui.Rect{
+						X: plotAbs.X + float32(col)*cw - 1,
+						Y: plotAbs.Y + float32(row)*ch - 1,
+						W: cw + 2,
+						H: ch + 2,
+					}
+				}
+
+				// 1. Flag all four corners, jump to center, and verify every corner renders mc.Flag.
+				corners := [][2]int{{0, 0}, {0, g.Cols - 1}, {g.Rows - 1, 0}, {g.Rows - 1, g.Cols - 1}}
+				for _, pt := range corners {
+					g.ToggleFlag(pt[0], pt[1], false)
+				}
+				cx, cy := minimapCellCenter(board, mini, g.Rows, g.Cols, g.Rows/2, g.Cols/2)
+				tt.ClickAt(cx, cy)
+				tt.Frame()
+				img := tt.Image()
+				for _, pt := range corners {
+					if n := countMatchingPixels(img, cellProbe(pt[0], pt[1]), scale, mc.Flag, 45); n == 0 {
+						t.Errorf("100x100 corner flag (%d,%d) clipped or invisible on minimap", pt[0], pt[1])
+					}
+				}
+
+				// 2. Pin viewport to each board edge and flag the middle cell on that edge.
+				edges := [][2]int{{0, g.Cols / 2}, {g.Rows - 1, g.Cols / 2}, {g.Rows / 2, 0}, {g.Rows / 2, g.Cols - 1}}
+				for _, pt := range edges {
+					g.ToggleFlag(pt[0], pt[1], false)
+					app.board.center(g, pt[0], pt[1])
+					tt.Frame()
+					if n := countMatchingPixels(tt.Image(), cellProbe(pt[0], pt[1]), scale, mc.Flag, 45); n == 0 {
+						t.Errorf("100x100 edge flag (%d,%d) obscured by flush viewport stroke", pt[0], pt[1])
+					}
+				}
+			})
+		}
 	}
 }

@@ -29,9 +29,22 @@ type boardView struct {
 }
 
 const (
-	minimapSize   = float32(148)
-	minimapMargin = float32(10)
+	minimapSize       = float32(148)
+	minimapMargin     = float32(10)
+	classicMinimapPad = float32(4)
 )
+
+// classicMinimapPlot insets the board area inside the rounded classic minimap
+// card so corner cells of 100x100 boards stay inside the clip and an outset
+// viewport frame clears edge rows and columns.
+func classicMinimapPlot(mini ui.Rect) ui.Rect {
+	return ui.Rect{
+		X: mini.X + classicMinimapPad,
+		Y: mini.Y + classicMinimapPad,
+		W: mini.W - classicMinimapPad*2,
+		H: mini.H - classicMinimapPad*2,
+	}
+}
 
 func newBoardView() *boardView {
 	return &boardView{Cell: 26, X: 487 * 26, Y: 487 * 26, needsCenter: true, HoverRow: -1, HoverCol: -1, EffectCell: -1}
@@ -168,6 +181,9 @@ func (v *boardView) minimapCellAt(g *Game, x, y float32) (int, int) {
 		return 0, 0
 	}
 	mini := v.minimapBoundsFor(g)
+	if g.duel == nil {
+		mini = classicMinimapPlot(mini)
+	}
 	if !isFinite32(mini.W) || !isFinite32(mini.H) || mini.W <= 0 || mini.H <= 0 {
 		return 0, 0
 	}
@@ -576,10 +592,12 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		mini := v.minimapBoundsFor(g)
 		mini.X += r.X
 		mini.Y += r.Y
-		view := minimapViewportRect(mini, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
 		if classic {
-			paintClassicMinimap(p, g, mini, view, pal, classicMinimapFor(a.darkMode))
+			plot := classicMinimapPlot(mini)
+			view := minimapViewportRect(plot, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
+			paintClassicMinimap(p, g, mini, plot, view, pal, classicMinimapFor(a.darkMode))
 		} else {
+			view := minimapViewportRect(mini, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
 			paintDuelMinimap(p, g, mini, view, t.Border)
 		}
 		// The caption sits on a scrap of the sheet so it reads over slips.
@@ -757,33 +775,43 @@ func (mc *minimapColors) colorFor(mark classicMinimapMark) ui.Color {
 	}
 }
 
-func paintClassicMinimap(p *ui.Painter, g *Game, mini, view ui.Rect, pal *palette, mc *minimapColors) {
+func paintClassicMinimap(p *ui.Painter, g *Game, mini, plot, view ui.Rect, pal *palette, mc *minimapColors) {
 	p.Shadow(mini, 6, 0, 2, 6, 0, pal.SlipShade)
 	p.Clip(mini, 6, func() {
 		p.Fill(mini, mc.Bg, 6)
-		if g.Rows > 0 && g.Cols > 0 {
-			cw := mini.W / float32(g.Cols)
-			ch := mini.H / float32(g.Rows)
-			for row := range g.Rows {
-				y0 := mini.Y + float32(row)*ch
-				y1 := mini.Y + float32(row+1)*ch
-				rowOff := row * g.Cols
-				for col := 0; col < g.Cols; {
-					mark := classicCellMark(&g.Cells[rowOff+col])
-					end := col + 1
-					for end < g.Cols && classicCellMark(&g.Cells[rowOff+end]) == mark {
-						end++
-					}
-					if mark != classicMarkNone {
-						x0 := mini.X + float32(col)*cw
-						x1 := mini.X + float32(end)*cw
-						p.Fill(ui.Rect{X: x0, Y: y0, W: x1 - x0, H: y1 - y0}, mc.colorFor(mark), 0)
-					}
-					col = end
+		cw := plot.W / float32(g.Cols)
+		ch := plot.H / float32(g.Rows)
+		for row := range g.Rows {
+			y0 := plot.Y + float32(row)*ch
+			y1 := plot.Y + float32(row+1)*ch
+			rowOff := row * g.Cols
+			for col := 0; col < g.Cols; {
+				mark := classicCellMark(&g.Cells[rowOff+col])
+				end := col + 1
+				for end < g.Cols && classicCellMark(&g.Cells[rowOff+end]) == mark {
+					end++
 				}
+				if mark != classicMarkNone {
+					x0 := plot.X + float32(col)*cw
+					x1 := plot.X + float32(end)*cw
+					p.Fill(ui.Rect{X: x0, Y: y0, W: x1 - x0, H: y1 - y0}, mc.colorFor(mark), 0)
+				}
+				col = end
 			}
 		}
-		p.Stroke(view, mc.Viewport, 2, 1.5)
+		// Outset the frame by 2px so even at 1x scale the 1.5px stroke clears
+		// edge rows and columns when the viewport sits flush on the boundary.
+		const (
+			frameStroke = float32(1.5)
+			frameOutset = float32(2)
+		)
+		frame := ui.Rect{
+			X: view.X - frameOutset,
+			Y: view.Y - frameOutset,
+			W: view.W + frameOutset*2,
+			H: view.H + frameOutset*2,
+		}
+		p.Stroke(frame, mc.Viewport, 2, frameStroke)
 	})
 	p.Stroke(mini, mc.Border, 6, 1)
 }
