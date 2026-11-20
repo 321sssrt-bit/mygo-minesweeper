@@ -13,6 +13,10 @@ import (
 // paints derives from it. bandColor is the official 乐队色.
 var bandColor = ui.Hex("#3388BB")
 
+// goldHighlighter is the warm gold highlighter used for duel mine-claim
+// hints, the 9×9 scan overlay, and milestone chat notes.
+var goldHighlighter = ui.Hex("#E8A849")
+
 // palette is one paper: the day notebook or the night desk-lamp notebook.
 type palette struct {
 	Dark bool
@@ -167,6 +171,99 @@ func newDuelInks(p *palette) *duelInks {
 		}
 	}
 	return &inks
+}
+
+// duelPopupKind classifies a floating duel score pill so its palette
+// colours follow the active day or night paper.
+type duelPopupKind uint8
+
+const (
+	duelPopupScore duelPopupKind = iota
+	duelPopupCombo
+	duelPopupClaim
+	duelPopupBoom
+)
+
+// duelPopupStyle holds the pill backdrop, border, and text colours for one
+// floating duel score popup.
+type duelPopupStyle struct {
+	Bg, Border, Text ui.Color
+}
+
+// duelPromptColors holds the palette colours for duel canvas overlays:
+// claim highlighter, 9×9 scan frame & corner badge, and floating score pills.
+type duelPromptColors struct {
+	ClaimFill, ClaimStroke       ui.Color
+	ScanFrame                    ui.Color
+	ScanBadgeBg, ScanBadgeBorder ui.Color
+	ScanBadgeText                ui.Color
+	Popups                       [duelPopupBoom + 1]duelPopupStyle
+}
+
+var dayDuelPrompts, nightDuelPrompts = newDuelPromptColors(dayPaper), newDuelPromptColors(nightPaper)
+
+func duelPromptsFor(dark bool) *duelPromptColors {
+	if dark {
+		return nightDuelPrompts
+	}
+	return dayDuelPrompts
+}
+
+func newDuelPromptColors(p *palette) *duelPromptColors {
+	scanBgAlpha := float32(0.24)
+	popupBg := p.Sheet
+	if p.Dark {
+		scanBgAlpha = 0.20
+		popupBg = p.Desk
+	}
+	scanBg := goldHighlighter.Alpha(scanBgAlpha).Over(p.Sheet)
+	goldInk := p.InkOf(goldHighlighter)
+	popupStyle := func(base ui.Color) duelPopupStyle {
+		ink := p.inkOn(popupBg, base)
+		border := ink
+		if p.Dark {
+			border = base
+		}
+		return duelPopupStyle{Bg: popupBg, Border: border, Text: ink}
+	}
+	return &duelPromptColors{
+		ClaimFill:       goldHighlighter,
+		ClaimStroke:     goldInk,
+		ScanFrame:       goldInk,
+		ScanBadgeBg:     scanBg,
+		ScanBadgeBorder: goldInk,
+		ScanBadgeText:   p.inkOn(scanBg, goldHighlighter),
+		Popups: [duelPopupBoom + 1]duelPopupStyle{
+			duelPopupScore: popupStyle(duelPalette.Player),
+			duelPopupCombo: popupStyle(duelMinimapPalette.PlayerMarker),
+			duelPopupClaim: popupStyle(goldHighlighter),
+			duelPopupBoom:  popupStyle(p.BoomInk),
+		},
+	}
+}
+
+// hoverHintColors returns the highlighter fill and crisp cell outline for
+// a number-hover hint on this paper.
+func hoverHintColors(kind HoverHintKind, memberID MemberID, dark bool) (fill, stroke ui.Color) {
+	switch kind {
+	case HintClaimable:
+		dp := duelPromptsFor(dark)
+		return dp.ClaimFill, dp.ClaimStroke
+	case HintChordable:
+		base := memberImage(memberID)
+		return base, paperFor(dark).InkOf(base)
+	default:
+		return ui.Color{}, ui.Color{}
+	}
+}
+
+// inkOn derives the variant of c that reaches minInkContrast against bg,
+// darkened on the day page and lightened under the night lamp.
+func (p *palette) inkOn(bg, c ui.Color) ui.Color {
+	under := *p
+	under.Board = bg
+	under.Sheet = bg
+	return under.InkOf(c)
 }
 
 // minInkContrast is the WCAG AA ratio every ink keeps against the paper.
