@@ -312,8 +312,10 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 					a.pendingResult = result
 					a.pendingRow = row
 					a.pendingCol = col
-					v.LastEffect = c.Now()
-					v.EffectCell = row*a.game.Cols + col
+					if a.game.duel != nil {
+						v.LastEffect = c.Now()
+						v.EffectCell = row*a.game.Cols + col
+					}
 				}
 				return true
 			}
@@ -375,12 +377,13 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	}
 
 	pal, art, inks := paperFor(a.darkMode), artFor(a.darkMode), duelInksFor(a.darkMode)
+	classic := g.duel == nil
 	radius := min(4, v.Cell/7)
 	// Numbers, props and slip shadows only once a cell is big enough to
 	// show them; zoomed out, the board is flat slips, washes and state dots.
 	detail := v.Cell >= 16
 	var shieldDot ui.Color
-	if !detail && g.duel == nil {
+	if !detail && classic {
 		shieldDot = pal.InkOf(memberImage(MemberSoyorin))
 	}
 	numberSize := v.Cell * 0.55
@@ -415,6 +418,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 					x := r.X + float32(col)*v.Cell - v.X
 					y := r.Y + float32(row)*v.Cell - v.Y
 					tile := ui.Rect{X: x + 1, Y: y + 1, W: v.Cell - 2, H: v.Cell - 2}
+					isHovered := row == v.HoverRow && col == v.HoverCol
 					isHintCenter := hoverHint.Kind != HintNone && idx == hoverHint.Center
 					isHintTarget := hoverHint.Kind != HintNone && !isHintCenter && containsIndex(hoverHint.Targets, idx)
 
@@ -436,7 +440,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						}
 						// Duel flags already carry their side's outline when
 						// zoomed out; state dots are classic-only.
-						if g.duel != nil {
+						if !classic {
 							dot = ui.Color{}
 						}
 						// A duel flag is outlined in its side's colour; classic
@@ -445,8 +449,12 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 							outline = duelOwnerColor(cell.FlagOwner)
 						}
 						if isHintTarget {
-							bg, outline = hintColor.Alpha(0.28).Over(pal.Slip), hintColor
-						} else if hoverHint.Kind == HintNone && row == v.HoverRow && col == v.HoverCol {
+							if classic {
+								bg = hintColor.Alpha(0.42).Over(pal.Slip)
+							} else {
+								bg, outline = hintColor.Alpha(0.28).Over(pal.Slip), hintColor
+							}
+						} else if hoverHint.Kind == HintNone && isHovered {
 							bg = pal.Slip.Mix(pal.Sheet, 0.45)
 						}
 						paintSlip(p, tile, radius, bg, pal.SlipShade, outline, prop, dot, detail)
@@ -460,22 +468,38 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						continue
 					}
 
-					switch {
-					case cell.Exploded:
-						p.Fill(tile, pal.Boom, radius)
-					case cell.Owner != DuelNobody:
-						p.Fill(tile, duelOwnerColor(cell.Owner).Alpha(duelTerritoryWash), radius)
-					}
-					if isHintCenter {
-						p.Fill(tile, hintColor.Alpha(0.22), radius)
-						if v.Cell >= 15 {
-							p.Stroke(tile, hintColor, radius, 1)
+					if classic {
+						switch {
+						case cell.Exploded:
+							p.Fill(tile, pal.Boom, radius)
+						case cell.IsMine:
+						case cell.Adjacent > 0:
+							if isHintCenter {
+								p.Fill(tile, hintColor.Alpha(0.38), radius)
+							} else if k, ok := a.rippleAlphaAt(idx, now); ok {
+								p.Fill(tile, bandColor.Alpha(0.22*k), radius)
+							} else if isHovered {
+								p.Fill(tile, pal.Ink.Alpha(0.05), radius)
+							}
+						default:
+							if k, ok := a.rippleAlphaAt(idx, now); ok {
+								p.Fill(tile, bandColor.Alpha(0.26*k), radius)
+							}
 						}
-					}
-					if rip, ok := a.ripples[idx]; ok {
-						elapsed := now.Sub(rip.Start)
-						if elapsed >= rip.Delay && elapsed < rip.Delay+rippleDuration {
-							k := 1 - float32(elapsed-rip.Delay)/float32(rippleDuration)
+					} else {
+						switch {
+						case cell.Exploded:
+							p.Fill(tile, pal.Boom, radius)
+						case cell.Owner != DuelNobody:
+							p.Fill(tile, duelOwnerColor(cell.Owner).Alpha(duelTerritoryWash), radius)
+						}
+						if isHintCenter {
+							p.Fill(tile, hintColor.Alpha(0.22), radius)
+							if v.Cell >= 15 {
+								p.Stroke(tile, hintColor, radius, 1)
+							}
+						}
+						if k, ok := a.rippleAlphaAt(idx, now); ok {
 							ripColor := duelOwnerColor(cell.Owner)
 							p.Fill(tile, ripColor.Alpha(0.36*k), radius)
 							if v.Cell >= 15 {
@@ -629,6 +653,18 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		p.Fill(ui.Rect{X: r.X + 8, Y: r.Y + r.H - 36, W: cw + 12, H: ch + 8}, pal.Sheet.Alpha(0.92), 6)
 		p.RichText(r.X+14, r.Y+r.H-32, 0, caption)
 	})
+}
+
+func (a *minesweeperApp) rippleAlphaAt(idx int, now time.Time) (float32, bool) {
+	rip, ok := a.ripples[idx]
+	if !ok {
+		return 0, false
+	}
+	elapsed := now.Sub(rip.Start)
+	if elapsed < rip.Delay || elapsed >= rip.Delay+rippleDuration {
+		return 0, false
+	}
+	return 1 - float32(elapsed-rip.Delay)/float32(rippleDuration), true
 }
 
 // cellDigits are the numbers a revealed cell can show, by count.
