@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -45,17 +46,47 @@ type duelPopup struct {
 	Start time.Time
 }
 
+type appPopover uint8
+
+const (
+	popoverNone appPopover = iota
+	popoverSetlist
+	popoverSettings
+)
+
+type appOptions struct {
+	Seed      uint64
+	Prefs     *prefs
+	SavePrefs func(prefs) error
+}
+
+type memeUnlockNotice struct {
+	Meme MemeAchievement
+	At   time.Time
+}
+
 type minesweeperApp struct {
 	diffIdx         int
 	modeIdx         int // 0 = Band Live Mode, 1 = Classic Mode
 	darkMode        bool
+	motion          motionMode
+	soundEnabled    bool
+	volume          int
 	memberID        MemberID
 	flagMode        bool
 	allowQuestion   bool
 	showMemes       bool
 	setlistOpen     bool
+	activePopover   appPopover
+	restorePopover  appPopover
 	haruhikageAlert bool
 	haruhikageIntro bool
+
+	savePrefsFn         func(prefs) error
+	systemReduceMotion  bool
+	motionReducedActive bool
+	windowActive        bool
+	desktopFocused      bool
 
 	game                 *Game
 	quote                string
@@ -63,6 +94,7 @@ type minesweeperApp struct {
 	elapsed              int
 	bestTimes            map[string]int
 	unlockedMemes        map[string]bool
+	memeUnlockLog        []memeUnlockNotice
 	chatLog              []chatMessage
 	seed                 uint64
 	board                *boardView
@@ -89,22 +121,251 @@ func newMinesweeperApp(seed ...uint64) *minesweeperApp {
 	if len(seed) > 0 {
 		s = seed[0]
 	}
+	return newMinesweeperAppWith(appOptions{Seed: s})
+}
+
+func newMinesweeperAppWith(opts appOptions) *minesweeperApp {
+	p := defaultPrefs()
+	if opts.Prefs != nil {
+		p = normalizePrefs(*opts.Prefs)
+	}
 	app := &minesweeperApp{
 		diffIdx:         0,
 		modeIdx:         0,
-		darkMode:        true,
 		memberID:        MemberTomori,
+		savePrefsFn:     opts.SavePrefs,
+		windowActive:    true,
+		desktopFocused:  true,
 		bestTimes:       make(map[string]int),
 		unlockedMemes:   make(map[string]bool),
-		seed:            s,
+		seed:            opts.Seed,
 		board:           newBoardView(),
 		pendingRow:      -1,
 		pendingCol:      -1,
 		classicHoverRow: -1,
 		classicHoverCol: -1,
 	}
+	app.applyPrefs(p)
 	app.resetGame(true)
 	return app
+}
+
+func newDesktopApp(userConfigDir func() (string, error), save func(string, prefs) error) *minesweeperApp {
+	p := defaultPrefs()
+	var persist func(prefs) error
+	if userConfigDir != nil {
+		if dir, err := userConfigDir(); err == nil && dir != "" {
+			p = loadPrefs(dir)
+			if save != nil {
+				persist = func(next prefs) error {
+					return save(dir, next)
+				}
+			}
+		}
+	}
+	return newMinesweeperAppWith(appOptions{
+		Prefs:     &p,
+		SavePrefs: persist,
+	})
+}
+
+func (a *minesweeperApp) currentPrefs() prefs {
+	return normalizePrefs(prefs{
+		DarkMode:      a.darkMode,
+		Motion:        a.motion,
+		SoundEnabled:  a.soundEnabled,
+		Volume:        a.volume,
+		AllowQuestion: a.allowQuestion,
+	})
+}
+
+func (a *minesweeperApp) applyPrefs(p prefs) {
+	p = normalizePrefs(p)
+	a.darkMode = p.DarkMode
+	a.motion = p.Motion
+	a.soundEnabled = p.SoundEnabled
+	a.volume = p.Volume
+	a.allowQuestion = p.AllowQuestion
+	a.syncMotionState(a.motion.reducedMotion(a.systemReduceMotion))
+}
+
+// updatePrefs applies a preference mutation in memory and persists it when any
+// field changes. Persistence errors leave the updated in-memory value intact.
+func (a *minesweeperApp) updatePrefs(fn func(*prefs)) bool {
+	prev := a.currentPrefs()
+	next := prev
+	if fn != nil {
+		fn(&next)
+	}
+	next = normalizePrefs(next)
+	if next == prev {
+		return false
+	}
+	a.applyPrefs(next)
+	if a.savePrefsFn != nil {
+		_ = a.savePrefsFn(next)
+	}
+	return true
+}
+
+func (a *minesweeperApp) toggleMute() bool {
+	return a.updatePrefs(func(p *prefs) {
+		p.SoundEnabled = !p.SoundEnabled
+	})
+}
+
+func (a *minesweeperApp) reducedMotion(c *ui.Context) bool {
+	return a.motion.reducedMotion(c.Preferences().ReduceMotion)
+}
+
+func (a *minesweeperApp) reducedMotionPainter(p *ui.Painter) bool {
+	return a.motion.reducedMotion(p.Preferences().ReduceMotion)
+}
+
+func (a *minesweeperApp) syncMotionState(reduced bool) {
+	a.motionReducedActive = reduced
+	if reduced {
+		a.ripples = nil
+		a.shakeStart = time.Time{}
+		a.shakeAmplitude = 0
+		a.shakeDuration = 0
+	}
+}
+
+func (a *minesweeperApp) setWindowFocused(focused bool) {
+	a.desktopFocused = focused
+}
+
+func (a *minesweeperApp) syncWindowFocus(c *ui.Context) {
+	a.windowActive = c.WindowActive() && !c.WindowHidden()
+}
+
+func (a *minesweeperApp) isWindowFocused() bool {
+	return a.windowActive && a.desktopFocused
+}
+
+func (a *minesweeperApp) syncSetlistPopover() {
+	if a.setlistOpen && a.activePopover != popoverSetlist {
+		a.activePopover = popoverSetlist
+	} else if !a.setlistOpen && a.activePopover == popoverSetlist {
+		a.activePopover = popoverNone
+	}
+}
+
+func (a *minesweeperApp) popoverOpen(kind appPopover) bool {
+	a.syncSetlistPopover()
+	return kind != popoverNone && a.activePopover == kind
+}
+
+func (a *minesweeperApp) hasOpenPopover() bool {
+	a.syncSetlistPopover()
+	return a.activePopover != popoverNone
+}
+
+func (a *minesweeperApp) openPopover(kind appPopover) {
+	a.activePopover = kind
+	a.setlistOpen = kind == popoverSetlist
+	a.restorePopover = popoverNone
+}
+
+func (a *minesweeperApp) togglePopover(kind appPopover) bool {
+	if a.popoverOpen(kind) {
+		a.closePopover(kind, false)
+		return false
+	}
+	a.openPopover(kind)
+	return kind != popoverNone
+}
+
+func (a *minesweeperApp) closePopover(kind appPopover, restoreFocus bool) {
+	a.syncSetlistPopover()
+	if kind != popoverNone && a.activePopover != kind {
+		return
+	}
+	prev := a.activePopover
+	a.activePopover = popoverNone
+	a.setlistOpen = false
+	if restoreFocus && prev != popoverNone {
+		a.restorePopover = prev
+	}
+}
+
+func (a *minesweeperApp) dismissPopovers() {
+	a.activePopover = popoverNone
+	a.setlistOpen = false
+	a.restorePopover = popoverNone
+}
+
+func (a *minesweeperApp) consumePopoverFocusRestore(kind appPopover) bool {
+	if kind != popoverNone && a.restorePopover == kind {
+		a.restorePopover = popoverNone
+		return true
+	}
+	return false
+}
+
+// bindPopover mounts a mutually-exclusive non-modal popover anchored to
+// trigger, handling Escape dismissal with focus return to trigger and
+// FocusLeft auto-close.
+func (a *minesweeperApp) bindPopover(
+	c *ui.Context,
+	kind appPopover,
+	key string,
+	trigger ui.Element,
+	body func(closeWithFocus func()) ui.Element,
+) ui.Element {
+	open := a.popoverOpen(kind)
+	wasOpen := open
+	closeWithFocus := func() {
+		a.activePopover = popoverNone
+		a.setlistOpen = false
+		a.restorePopover = kind
+		open = false
+	}
+	if open && trigger.Shortcut(0, ui.KeyEscape) {
+		closeWithFocus()
+	}
+	popover := ui.Popover(c.Key(key), trigger, &open, func() {
+		panel := body(closeWithFocus)
+		if panel.Valid() && panel.Shortcut(0, ui.KeyEscape) {
+			closeWithFocus()
+		}
+	}).Background(c.Theme().Surface).KeepFocus()
+
+	if popover.Valid() {
+		if popover.Shortcut(0, ui.KeyEscape) {
+			closeWithFocus()
+		} else if wasOpen && !open {
+			a.closePopover(kind, false)
+		} else if a.popoverOpen(kind) && popover.FocusLeft() {
+			a.closePopover(kind, false)
+		}
+	} else if wasOpen && !open {
+		a.closePopover(kind, false)
+	}
+	if a.consumePopoverFocusRestore(kind) {
+		trigger.Focus()
+	}
+	return popover
+}
+
+// popoverWorkspaceShield covers the workspace while any popover is open so an
+// outside dismiss click never leaks onto a board cell or mine.
+func (a *minesweeperApp) popoverWorkspaceShield(c *ui.Context) {
+	if !a.hasOpenPopover() {
+		return
+	}
+	ui.Box(c.Key("setlist-workspace-shield")).Absolute().Top(0).Bottom(0).Start(0).End(0).
+		HandleInput(func(ev ui.InputEvent) bool {
+			switch ev.Kind {
+			case ui.InputPointerDown:
+				a.dismissPopovers()
+				return true
+			case ui.InputPointerUp, ui.InputScroll, ui.InputZoom:
+				return true
+			}
+			return false
+		})
 }
 
 func (a *minesweeperApp) currentDiff() Difficulty {
@@ -179,7 +440,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.haruhikageAlert = false
 	a.haruhikageIntro = false
 	a.haruhikageIntroStart = time.Time{}
-	a.setlistOpen = false
+	a.dismissPopovers()
 	a.classicHoverRow = -1
 	a.classicHoverCol = -1
 	a.classicHoverHint = HoverHint{}
@@ -200,7 +461,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 }
 
 func (a *minesweeperApp) enqueueRipple(now time.Time, wave []RevealWaveEntry) {
-	if len(wave) == 0 {
+	if a.motionReducedActive || len(wave) == 0 {
 		return
 	}
 	a.pruneRipples(now)
@@ -263,12 +524,19 @@ func (a *minesweeperApp) spawnDuelPopup(row, col int, res ActionResult, now time
 }
 
 func (a *minesweeperApp) triggerShake(now time.Time, amp float32, dur time.Duration) {
+	if a.motionReducedActive {
+		return
+	}
 	a.shakeStart = now
 	a.shakeAmplitude = amp
 	a.shakeDuration = dur
 }
 
 func (a *minesweeperApp) currentShakeOffset(now time.Time) (float32, float32) {
+	if a.motionReducedActive {
+		a.shakeAmplitude = 0
+		return 0, 0
+	}
 	if a.shakeAmplitude <= 0 || a.shakeStart.IsZero() || a.shakeDuration <= 0 {
 		return 0, 0
 	}
@@ -360,19 +628,43 @@ func (a *minesweeperApp) applyQuote(event string) {
 	a.pushChat(m.Name, m.ColorHex, a.quote)
 }
 
+func findMeme(id string) (MemeAchievement, bool) {
+	for _, meme := range AllMemes {
+		if meme.ID == id {
+			return meme, true
+		}
+	}
+	return MemeAchievement{}, false
+}
+
+// recordMemeUnlock marks memeID unlocked once per run and records a single
+// first-unlock notice for downstream presentation without emitting UI side
+// effects itself.
+func (a *minesweeperApp) recordMemeUnlock(memeID string, now time.Time) (MemeAchievement, bool) {
+	if a.unlockedMemes[memeID] {
+		return MemeAchievement{}, false
+	}
+	a.unlockedMemes[memeID] = true
+	meme, ok := findMeme(memeID)
+	if !ok {
+		return MemeAchievement{}, false
+	}
+	a.memeUnlockLog = append(a.memeUnlockLog, memeUnlockNotice{
+		Meme: meme,
+		At:   now,
+	})
+	return meme, true
+}
+
 func (a *minesweeperApp) unlockMemes(c *ui.Context, memeIDs []string) {
+	now := c.Now()
 	for _, memeID := range memeIDs {
-		if a.unlockedMemes[memeID] {
+		meme, unlocked := a.recordMemeUnlock(memeID, now)
+		if !unlocked {
 			continue
 		}
-		a.unlockedMemes[memeID] = true
-		for _, meme := range AllMemes {
-			if meme.ID == memeID {
-				c.Toast("解锁名场面：「" + meme.Title + "」")
-				a.pushChat("名场面解锁", hexOf(goldHighlighter), "★ "+meme.Title+" — "+meme.Desc)
-				break
-			}
-		}
+		c.Toast("解锁名场面：「" + meme.Title + "」")
+		a.pushChat("名场面解锁", hexOf(goldHighlighter), "★ "+meme.Title+" — "+meme.Desc)
 	}
 }
 
@@ -413,7 +705,7 @@ func (a *minesweeperApp) activeTheme() *ui.Theme {
 func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string) {
 	d := a.game.duel
 	a.duelEnded = true
-	a.setlistOpen = false
+	a.dismissPopovers()
 	a.pushChat("决斗结算", hexOf(goldHighlighter), result)
 	a.applyQuote(d.QuoteEvent)
 	a.unlockMemes(c, d.NewMemes)
@@ -447,7 +739,7 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 			result := "平局！这一整页的迷茫，恰好一人一半"
 			if d.PlayerScore > d.AIScore {
 				result = fmt.Sprintf("决斗胜利！%d : %d · 赢了就是赢了！", d.PlayerScore, d.AIScore)
-				a.unlockedMemes[MemeForever] = true
+				a.recordMemeUnlock(MemeForever, now)
 			} else if d.PlayerScore < d.AIScore {
 				result = fmt.Sprintf("决斗惜败 %d : %d · 这局剪掉不准发到 SNS 上！", d.PlayerScore, d.AIScore)
 			}
@@ -562,14 +854,15 @@ func setlistTrackSpec(d Difficulty) string {
 
 func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme) {
 	cur := a.game.Difficulty
+	isOpen := a.popoverOpen(popoverSetlist)
 	trigger := ui.ButtonBase(c.Key("setlist-trigger")).
 		Padding(6, 12).Radius(6).Cursor(ui.CursorPointer).
-		Label("歌单").Value(cur.Song).HasPopup(ui.PopupListBox).Expanded(a.setlistOpen)
+		Label("歌单").Value(cur.Song).HasPopup(ui.PopupListBox).Expanded(isOpen)
 
 	var triggerBg ui.Color
 	var triggerBorder ui.Color
 	switch {
-	case a.setlistOpen:
+	case isOpen:
 		triggerBg = t.Accent.Alpha(0.14).Over(t.Surface)
 		triggerBorder = t.Accent.Alpha(0.7)
 	case trigger.Hovered():
@@ -593,7 +886,7 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 				ui.Text(c, cur.Label).FontSize(11).TextColor(t.TextMuted).PassThrough()
 			}
 			chevron, chevronColor := setlistChevronDown, pal.InkMuted
-			if a.setlistOpen {
+			if isOpen {
 				chevron, chevronColor = setlistChevronUp, triggerInk
 			}
 			ui.Icon(c, chevron).Size(13, 13).TextColor(chevronColor).PassThrough()
@@ -604,22 +897,21 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 	openArrow := trigger.Shortcut(0, ui.KeyDown) || trigger.Shortcut(0, ui.KeyUp)
 	switch {
 	case trigger.Clicked():
-		a.setlistOpen = !a.setlistOpen
-		focusSelected = a.setlistOpen
+		focusSelected = a.togglePopover(popoverSetlist)
 	case openArrow:
-		a.setlistOpen = true
+		a.openPopover(popoverSetlist)
 		focusSelected = true
 	}
 
 	var listbox ui.Element
-	restoreTriggerFocus := false
-	popover := ui.Popover(c.Key("setlist-popover"), trigger, &a.setlistOpen, func() {
+	popover := a.bindPopover(c, popoverSetlist, "setlist-popover", trigger, func(closeWithFocus func()) ui.Element {
 		selectedBg := t.Accent.Alpha(0.14).Over(t.Surface)
 		selectedInk := setlistAccentInk(pal, selectedBg)
 		groupInk := setlistAccentInk(pal, t.Surface)
 		groups := groupSetlistTracks(Difficulties)
 
-		ui.Column(c).Width(332).Gap(4).Children(func() {
+		panel := ui.Column(c).Width(332).Gap(4)
+		panel.Children(func() {
 			ui.Row(c).FillWidth().Padding(2, 6, 6, 6).AlignItems(ui.Center).Justify(ui.SpaceBetween).
 				Draw(func(p *ui.Painter, r ui.Rect) {
 					p.Line(r.X, r.Y+r.H-0.5, r.X+r.W, r.Y+r.H-0.5, 1, pal.Rule)
@@ -701,34 +993,23 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 							})
 
 							if item.Clicked() {
-								a.setlistOpen = false
 								if entry.Index != a.diffIdx {
 									a.diffIdx = entry.Index
 									a.resetGame(false)
 								}
-								restoreTriggerFocus = true
+								closeWithFocus()
 							}
 						}
 					})
 					section.LabelledBy(groupHeading)
 				}
 			})
-
-			if listbox.Shortcut(0, ui.KeyEscape) {
-				a.setlistOpen = false
-				restoreTriggerFocus = true
-			}
 		})
-	}).Background(t.Surface).KeepFocus()
+		return panel
+	})
 
 	if popover.Valid() {
 		trigger.Controls(listbox)
-		if a.setlistOpen && popover.FocusLeft() {
-			a.setlistOpen = false
-		}
-	}
-	if restoreTriggerFocus {
-		trigger.Focus()
 	}
 }
 
@@ -783,6 +1064,9 @@ func (a *minesweeperApp) duelHUD(c *ui.Context) {
 
 func (a *minesweeperApp) view(c *ui.Context) {
 	now := c.Now()
+	a.syncWindowFocus(c)
+	a.systemReduceMotion = c.Preferences().ReduceMotion
+	a.syncMotionState(a.reducedMotion(c))
 	if a.pendingResult.Kind != ActionNoop {
 		res := a.pendingResult
 		a.pendingResult = ActionResult{}
@@ -808,6 +1092,9 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	if c.Shortcut(0, ui.KeyE) {
 		res := a.game.UseSkill()
 		a.handleAction(c, res, now)
+	}
+	if c.Shortcut(0, ui.KeyM) && !c.ShortcutRepeated() {
+		a.toggleMute()
 	}
 	if a.isDuel() || a.classicOnCanvas() {
 		if c.Shortcut(ui.Ctrl, ui.KeyEqual) {
@@ -921,7 +1208,10 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				}
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 					lamp := ui.Text(c, "夜间台灯").FontSize(12).TextColor(t.TextMuted)
-					ui.Switch(c, &a.darkMode).LabelledBy(lamp).Tooltip("切换日间方格纸与深夜台灯下的笔记本")
+					dark := a.darkMode
+					if ui.Switch(c, &dark).LabelledBy(lamp).Tooltip("切换日间方格纸与深夜台灯下的笔记本").Changed() {
+						a.updatePrefs(func(p *prefs) { p.DarkMode = dark })
+					}
 				})
 			})
 		})
@@ -933,7 +1223,10 @@ func (a *minesweeperApp) view(c *ui.Context) {
 
 			ui.ToggleGroup(c, func() {
 				ui.Toggle(c, &a.flagMode, "插旗模式 (F)").Tooltip("开启后左键直接贴创可贴插旗")
-				ui.Toggle(c, &a.allowQuestion, "? 标记").Tooltip("右键循环加入「？」不确定标记")
+				allowQuestion := a.allowQuestion
+				if ui.Toggle(c, &allowQuestion, "? 标记").Tooltip("右键循环加入「？」不确定标记").Changed() {
+					a.updatePrefs(func(p *prefs) { p.AllowQuestion = allowQuestion })
+				}
 				ui.Toggle(c, &a.showMemes, "名场面图鉴").Tooltip("展开或收起已解锁的 MyGO!!!!! 名场面")
 			}).Label("工具开关")
 		})
@@ -1363,27 +1656,13 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				})
 			})
 
-			// Shield the workspace while the setlist popover is open so an
-			// outside dismiss click never leaks onto a board cell or mine.
-			if a.setlistOpen {
-				ui.Box(c.Key("setlist-workspace-shield")).Absolute().Top(0).Bottom(0).Start(0).End(0).
-					HandleInput(func(ev ui.InputEvent) bool {
-						switch ev.Kind {
-						case ui.InputPointerDown:
-							a.setlistOpen = false
-							return true
-						case ui.InputPointerUp, ui.InputScroll, ui.InputZoom:
-							return true
-						}
-						return false
-					})
-			}
+			a.popoverWorkspaceShield(c)
 		})
 	})
 }
 
 func main() {
-	app := newMinesweeperApp()
+	app := newDesktopApp(os.UserConfigDir, savePrefs)
 	mygo.App.WhenReady(func() {
 		w := mygo.NewWindow(mygo.WindowOptions{
 			Title:           "MyGO!!!!! 迷子扫雷",
@@ -1392,6 +1671,12 @@ func main() {
 			BackgroundColor: hexOf(app.paper().Desk),
 			StateKey:        "mygo-minesweeper-v2",
 			Content:         ui.View(app.view),
+		})
+		w.OnFocus(func() {
+			app.setWindowFocused(true)
+		})
+		w.OnBlur(func() {
+			app.setWindowFocused(false)
 		})
 		_ = w.SetIcon(appIconPNG)
 	})

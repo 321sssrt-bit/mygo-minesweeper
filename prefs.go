@@ -32,6 +32,27 @@ func defaultPrefs() prefs {
 	}
 }
 
+func normalizePrefs(p prefs) prefs {
+	switch p.Motion {
+	case motionSystem, motionStandard, motionReduced:
+	default:
+		p.Motion = motionSystem
+	}
+	p.Volume = max(0, min(100, p.Volume))
+	return p
+}
+
+func (m motionMode) reducedMotion(systemReduce bool) bool {
+	switch m {
+	case motionStandard:
+		return false
+	case motionReduced:
+		return true
+	default:
+		return systemReduce
+	}
+}
+
 // configDir is the root returned by os.UserConfigDir.
 func prefsPath(configDir string) string {
 	return filepath.Join(configDir, "dev.mygo.minesweeper", "prefs.json")

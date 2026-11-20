@@ -396,6 +396,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	v, g := a.board, a.game
 	t := p.Theme()
 	now := p.Now()
+	a.syncMotionState(a.reducedMotionPainter(p))
 	hoverHint := g.InspectNumberHover(v.HoverRow, v.HoverCol, a.flagMode)
 	v.LastHoverHint = hoverHint
 	hintFill, hintStroke := hoverHintColors(hoverHint.Kind, a.memberID, a.darkMode)
