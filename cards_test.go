@@ -19,8 +19,9 @@ import (
 )
 
 // The two README overview cards are rendered with the app's own notebook
-// palette, props and ui package at 2x scale. Regenerate both PNGs after editing
-// card copy or layout with:
+// palette, props and ui package at 2x scale. Exporting requires the full
+// WenKai TTFs in the local font cache (populated by `go generate`). Regenerate
+// both PNGs after editing card copy or layout with:
 //
 //	MYGO_CARDS_EXPORT=1 go test -run TestCardsExport .
 const (
@@ -28,9 +29,9 @@ const (
 	membersCardPath  = "docs/assets/card-members.png"
 
 	gameplayCardW = 1160
-	gameplayCardH = 420
+	gameplayCardH = 424
 	membersCardW  = 1160
-	membersCardH  = 342
+	membersCardH  = 360
 	cardScale     = 2
 
 	cardFontFamily   = "LXGW WenKai Cards"
@@ -167,12 +168,12 @@ func gameplayCardData() gameplayCardSpec {
 			},
 			{
 				Key:  "右键",
-				Desc: "贴创可贴插旗（可开启「? 标记」循环）",
+				Desc: "贴创可贴插旗\n经典曲目可开启「? 标记」循环",
 				Icon: dayArt.Flag,
 			},
 			{
 				Key:  "E / F / R",
-				Desc: "E 发动领队技能 · F 切换「插旗模式 (F)」\nR 立即重开本曲",
+				Desc: "E 发动技能（乐队 Live / 决斗有充能时）\nF 切换「插旗模式 (F)」· R 重开本曲",
 			},
 			{
 				Key:  "视野导航",
@@ -190,15 +191,15 @@ func membersCardData() membersCardSpec {
 		},
 		MemberAnon: {
 			"随机翻开 2 个安全格，\n快速打开当前局面",
-			"9×9 扫描，把连击转为\n最高 +75 奖励分",
+			"9×9 扫描 7 秒，\n连击转为最高 +75 奖励分",
 		},
 		MemberSoyorin: {
 			"踩雷自动消耗护盾，\n并替你贴上创可贴",
-			"自动消耗护盾，抵消\n−100 扣分与 2.4 秒硬直",
+			"被动护盾抵消 −100 与硬直；\n按 E 扫描 7 秒并延缓灯 1.2 秒",
 		},
 		MemberTaki: {
 			"精准找出边界隐藏雷，\n并贴上创可贴插旗",
-			"9×9 扫描，\n延缓高松灯行动 3.0 秒",
+			"9×9 扫描 7 秒，\n延缓高松灯行动 3.0 秒",
 		},
 		MemberRana: {
 			"展开一片 0 雷空白区，\n并缓和乐队重力值",
@@ -209,7 +210,7 @@ func membersCardData() membersCardSpec {
 	for i, m := range Members {
 		tag := "主动 E"
 		if m.Passive {
-			tag = "被动护盾"
+			tag = "护盾 / E"
 		}
 		desc := descriptions[m.ID]
 		entries[i] = memberCardEntry{
@@ -221,9 +222,9 @@ func membersCardData() membersCardSpec {
 	}
 	return membersCardSpec{
 		Title:    "MyGO!!!!! 五人领队技能图鉴",
-		Subtitle: "全员均取官方代表色入墨，技能分经典曲目与决斗曲目两套效果",
+		Subtitle: "全员均取官方代表色入墨，技能仅在「乐队 Live」与决斗有充能时生效",
 		RightTip: fmt.Sprintf("左侧栏随时切换领队 · 内置 %d 项名场面图鉴与排练室群聊", len(AllMemes)),
-		Classic:  "经典曲目",
+		Classic:  "经典曲目 · 乐队 Live",
 		Duel:     "决斗曲目",
 		Entries:  entries,
 	}
@@ -439,20 +440,24 @@ func gameplayCardView(spec gameplayCardSpec) func(*ui.Context) {
 					})
 
 					// 7-Track Ladder Inset
+					classicTagBg := bandColor.Alpha(0.16).Over(dayPaper.Board)
+					classicTagInk := setlistInk(dayPaper, classicTagBg, bandColor)
+					duelTagBg := duelPalette.AI.Alpha(0.18).Over(dayPaper.Board)
+					duelTagInk := setlistInk(dayPaper, duelTagBg, duelPalette.AI)
 					ui.Column(c).FillWidth().Padding(8, 10).Gap(6).Radius(6).
 						Background(dayPaper.Board).Border(1, dayPaper.Rule).Children(func() {
 						ui.Column(c).FillWidth().Gap(3).Children(func() {
 							ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(7).Children(func() {
-								ui.Box(c).Shrink(0).Padding(1.5, 6).Radius(4).Background(bandColor.Alpha(0.16)).Children(func() {
-									ui.Text(c, spec.ClassicGroup).FontSize(10.5).Bold().TextColor(bandInk).SingleLine()
+								ui.Box(c).Shrink(0).Padding(1.5, 6).Radius(4).Background(classicTagBg).Children(func() {
+									ui.Text(c, spec.ClassicGroup).FontSize(10.5).Bold().TextColor(classicTagInk).SingleLine()
 								})
 								ui.Text(c, spec.ModeNote).Grow(1).FontSize(10.5).TextColor(dayPaper.InkMuted).SingleLine()
 							})
 							ui.Text(c, spec.ClassicTracks).FontSize(11).LineHeight(1.38).TextColor(dayPaper.Ink).FontFeatures("tnum")
 						})
 						ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(7).Children(func() {
-							ui.Box(c).Shrink(0).Padding(1.5, 6).Radius(4).Background(duelPalette.AI.Alpha(0.18)).Children(func() {
-								ui.Text(c, spec.DuelGroup).FontSize(10.5).Bold().TextColor(aiInk).SingleLine()
+							ui.Box(c).Shrink(0).Padding(1.5, 6).Radius(4).Background(duelTagBg).Children(func() {
+								ui.Text(c, spec.DuelGroup).FontSize(10.5).Bold().TextColor(duelTagInk).SingleLine()
 							})
 							ui.Text(c, spec.DuelTracks).Grow(1).FontSize(11).LineHeight(1.36).TextColor(dayPaper.Ink).FontFeatures("tnum")
 						})
@@ -511,11 +516,14 @@ func gameplayCardView(spec gameplayCardSpec) func(*ui.Context) {
 					})
 
 					// Mini Notebook Visual Legend
+					lgPlayerBg := duelPalette.Player.Alpha(0.24).Over(dayPaper.Board)
+					lgAIBg := duelPalette.AI.Alpha(0.24).Over(dayPaper.Board)
+					lgClaimBg := soyoColor.Alpha(0.45).Over(dayPaper.Board)
 					ui.Row(c).FillWidth().Padding(6, 8).Radius(6).Background(dayPaper.Board).
 						Border(1, dayPaper.Rule).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						legendTile(c, "lg-player", duelPalette.Player.Alpha(0.24).Over(dayPaper.Board), duelPalette.Player, "1", playerInk, nil, spec.LegendLabels[0])
-						legendTile(c, "lg-ai", duelPalette.AI.Alpha(0.24).Over(dayPaper.Board), duelPalette.AI, "2", aiInk, nil, spec.LegendLabels[1])
-						legendTile(c, "lg-claim", soyoColor.Alpha(0.45).Over(dayPaper.Board), soyoInk, "3", soyoInk, nil, spec.LegendLabels[2])
+						legendTile(c, "lg-player", lgPlayerBg, duelPalette.Player, "1", setlistInk(dayPaper, lgPlayerBg, duelPalette.Player), nil, spec.LegendLabels[0])
+						legendTile(c, "lg-ai", lgAIBg, duelPalette.AI, "2", setlistInk(dayPaper, lgAIBg, duelPalette.AI), nil, spec.LegendLabels[1])
+						legendTile(c, "lg-claim", lgClaimBg, soyoInk, "3", setlistInk(dayPaper, lgClaimBg, soyoColor), nil, spec.LegendLabels[2])
 						legendTile(c, "lg-flag", dayPaper.Slip, dayPaper.Rule, "", dayPaper.Ink, dayArt.Flag, spec.LegendLabels[3])
 						legendTile(c, "lg-knot", dayPaper.Boom.Over(dayPaper.Board), dayPaper.BoomInk.Alpha(0.45), "", dayPaper.Ink, dayArt.KnotHit, spec.LegendLabels[4])
 					})
@@ -597,7 +605,12 @@ func membersCardView(spec membersCardSpec) func(*ui.Context) {
 				for i, entry := range spec.Entries {
 					m := entry.Member
 					mc := memberImage(m.ID)
-					mInk := dayPaper.InkOf(mc)
+					roleBg := mc.Alpha(0.28).Over(dayPaper.Sheet)
+					roleInk := setlistInk(dayPaper, roleBg, mc)
+					skillBg := mc.Alpha(0.24).Over(dayPaper.Sheet)
+					skillInk := setlistInk(dayPaper, skillBg, mc)
+					trigBg := dayPaper.Sheet.Alpha(0.85).Over(skillBg)
+					trigInk := setlistInk(dayPaper, trigBg, mc)
 					angle := tapeAngles[i%len(tapeAngles)]
 
 					ui.Column(c.Key(string(m.ID))).Grow(1).FillHeight().Padding(15, 12, 12, 12).Gap(8).Radius(8).
@@ -615,8 +628,8 @@ func membersCardView(spec membersCardSpec) func(*ui.Context) {
 							ui.Column(c).Grow(1).Gap(2).Children(func() {
 								ui.Row(c).FillWidth().AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(4).Children(func() {
 									ui.Text(c, m.Name).FontSize(14.5).Bold().TextColor(dayPaper.Ink).SingleLine()
-									ui.Box(c).Padding(1.5, 6).Radius(4).Background(mc.Alpha(0.28).Over(dayPaper.Sheet)).Children(func() {
-										ui.Text(c, m.Role).FontSize(10.5).Bold().TextColor(mInk).SingleLine()
+									ui.Box(c).Padding(1.5, 6).Radius(4).Background(roleBg).Children(func() {
+										ui.Text(c, m.Role).FontSize(10.5).Bold().TextColor(roleInk).SingleLine()
 									})
 								})
 								ui.Text(c, m.Romaji).FontSize(11).TextColor(dayPaper.InkMuted).SingleLine()
@@ -628,15 +641,15 @@ func membersCardView(spec membersCardSpec) func(*ui.Context) {
 
 						// Skill Name Strip
 						ui.Row(c).FillWidth().Padding(6, 7).Radius(6).
-							Background(mc.Alpha(0.24).Over(dayPaper.Sheet)).
+							Background(skillBg).
 							AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(4).Children(func() {
 							ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
-								ui.Box(c).Size(3, 13).Radius(1.5).Background(mInk)
-								ui.Text(c, "「"+m.SkillName+"」").FontSize(12).Bold().TextColor(mInk).SingleLine()
+								ui.Box(c).Size(3, 13).Radius(1.5).Background(skillInk)
+								ui.Text(c, "「"+m.SkillName+"」").FontSize(12).Bold().TextColor(skillInk).SingleLine()
 							})
-							ui.Box(c).Padding(1.5, 5).Radius(4).Background(dayPaper.Sheet.Alpha(0.85)).
+							ui.Box(c).Padding(1.5, 5).Radius(4).Background(trigBg).
 								Border(1, dayPaper.Rule).Children(func() {
-								ui.Text(c, entry.TriggerTag).FontSize(9.8).Bold().TextColor(mInk).SingleLine()
+								ui.Text(c, entry.TriggerTag).FontSize(9.8).Bold().TextColor(trigInk).SingleLine()
 							})
 						})
 
@@ -726,7 +739,8 @@ func TestCardCopyContracts(t *testing.T) {
 		"踩雷 −100",
 		"2.4 秒",
 		"插旗模式 (F)",
-		"? 标记",
+		"经典曲目可开启「? 标记」循环",
+		"有充能时",
 		"拖动平移",
 		"滚轮缩放",
 		"回到中心",
@@ -736,6 +750,10 @@ func TestCardCopyContracts(t *testing.T) {
 		if !strings.Contains(gpJoined, required) {
 			t.Errorf("gameplay card missing aligned in-game copy %q", required)
 		}
+	}
+
+	if !strings.Contains(mbJoined, "经典曲目 · 乐队 Live") {
+		t.Errorf("members card must note 经典曲目 · 乐队 Live so classic-mode skills are clear")
 	}
 
 	// Every band member must appear verbatim with official tagline and skill name.
@@ -894,9 +912,11 @@ func TestCardAssetsMatchNotebookPalette(t *testing.T) {
 		{"dayPaper.Ink", dayPaper.Ink, 500},
 	}
 	for _, m := range Members {
+		mc := memberImage(m.ID)
+		skillInk := setlistInk(dayPaper, mc.Alpha(0.24).Over(dayPaper.Sheet), mc)
 		mbSwatches = append(mbSwatches,
-			swatch{m.Name + " 代表色", memberImage(m.ID), 120},
-			swatch{m.Name + " 墨色", dayPaper.InkOf(memberImage(m.ID)), 60},
+			swatch{m.Name + " 代表色", mc, 120},
+			swatch{m.Name + " 墨色", skillInk, 60},
 		)
 	}
 	mbColors := make([]ui.Color, len(mbSwatches))
