@@ -3,11 +3,14 @@ package main
 import (
 	"math/rand/v2"
 	"testing"
+	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
-// TestSenzaihyoumeiDefinition pins the #28 acceptance criteria: a 500x500 duel
-// track with ~45,000 mines (18%) and 5 skill charges, defined but not yet
-// listed in the setlist (Difficulties).
+// TestSenzaihyoumeiDefinition pins TrackSenzaihyoumei's 500x500 duel definition
+// (45,000 mines, 5 skill charges, 3 minutes, 1.0s AI interval) and verifies it
+// is listed first in the duel group of Difficulties (#38).
 func TestSenzaihyoumeiDefinition(t *testing.T) {
 	d := TrackSenzaihyoumei
 	if d.ID != "senzaihyoumei" || d.Subtitle != "500×500 · 45000雷 · 03:00" {
@@ -25,10 +28,13 @@ func TestSenzaihyoumeiDefinition(t *testing.T) {
 	if got := float64(d.Mines) / float64(d.Rows*d.Cols); got < 0.17 || got > 0.19 {
 		t.Fatalf("mine density %.3f, want ~18%%", got)
 	}
-	for _, listed := range Difficulties {
-		if listed.ID == d.ID {
-			t.Fatalf("%s must stay off the setlist until its listing ticket", d.ID)
-		}
+	groups := groupSetlistTracks(Difficulties)
+	if len(groups) != 2 || groups[1].Gameplay != GameplayDuel || groups[1].Title != "决斗" {
+		t.Fatalf("setlist groups = %+v, want classic and duel groups", groups)
+	}
+	duelEntries := groups[1].Entries
+	if len(duelEntries) != 2 || duelEntries[0].Diff != d || duelEntries[1].Diff.ID != "duel" {
+		t.Fatalf("duel group entries = %+v, want [TrackSenzaihyoumei, duel]", duelEntries)
 	}
 	g := NewGame(d, true, MemberTomori, 1)
 	if g.Rows != 500 || g.Cols != 500 || g.Mines != 45000 || g.SkillUsesLeft != 5 {
@@ -128,5 +134,154 @@ func TestSenzaihyoumeiAIPace(t *testing.T) {
 	}
 	if want := g.duel.Elapsed + 2.4; g.duel.NextAI != want {
 		t.Fatalf("AI mine hit re-armed NextAI = %v, want %v (elapsed + 2.4 stun)", g.duel.NextAI, want)
+	}
+}
+
+// TestSenzaihyoumeiSetlistSelectionAndFullGame verifies the shipped setlist
+// lists 《潜在表明》 (500×500) before 《春日影》 (1000×1000) in the duel group,
+// every shipped track (including the 6th track 《春日影》) is selectable by
+// song name, and a player can pick 《潜在表明》 and play a full 3-minute duel
+// through settlement and rematch without triggering the Haruhikage scene.
+func TestSenzaihyoumeiSetlistSelectionAndFullGame(t *testing.T) {
+	app := newMinesweeperApp(42)
+	tt := ui.NewTester(app.view, 1280, 900)
+
+	// Verify shipped popover duel group ordering and specs.
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("open setlist popover: %v", err)
+	}
+	duelHdr, ok := tt.Find("决斗")
+	if !ok {
+		t.Fatal("duel group header 「决斗」 missing from shipped setlist")
+	}
+	senzaiRect, ok := tt.Find("潜在表明")
+	if !ok {
+		t.Fatal("《潜在表明》 missing from shipped setlist")
+	}
+	haruRect, ok := tt.Find("春日影")
+	if !ok {
+		t.Fatal("《春日影》 missing from shipped setlist")
+	}
+	if senzaiRect.Y <= duelHdr.Y || haruRect.Y <= senzaiRect.Y {
+		t.Fatalf("duel group order wrong: hdr=%+v senzai=%+v haru=%+v", duelHdr, senzaiRect, haruRect)
+	}
+	for _, wantSpec := range []string{"500×500 · 45,000 雷", "1000×1000 · 180,000 雷"} {
+		if _, ok := tt.Find(wantSpec); !ok {
+			t.Fatalf("shipped setlist missing duel spec %q", wantSpec)
+		}
+	}
+
+	// Select every shipped track by song name, including the 6th track 《春日影》.
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("close setlist popover: %v", err)
+	}
+	for wantIdx := 1; wantIdx < len(Difficulties); wantIdx++ {
+		want := Difficulties[wantIdx]
+		if err := tt.Click("歌单"); err != nil {
+			t.Fatalf("open setlist for %s: %v", want.Song, err)
+		}
+		if err := tt.Click(want.Song); err != nil {
+			t.Fatalf("select %s: %v", want.Song, err)
+		}
+		if app.diffIdx != wantIdx || app.game.Difficulty.ID != want.ID {
+			t.Fatalf("selected idx=%d id=%q, want idx=%d id=%q", app.diffIdx, app.game.Difficulty.ID, wantIdx, want.ID)
+		}
+	}
+
+	// Switch to 《潜在表明》 via setlist and play a complete 3-minute duel.
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("open setlist for senzaihyoumei play: %v", err)
+	}
+	if err := tt.Click("潜在表明"); err != nil {
+		t.Fatalf("select 《潜在表明》: %v", err)
+	}
+	if !app.isDuel() || app.game.Rows != 500 || app.game.Cols != 500 || app.game.Mines != 45000 || app.game.SkillUsesLeft != 5 {
+		t.Fatalf("senzaihyoumei setup wrong: duel=%v %dx%d mines=%d charges=%d",
+			app.isDuel(), app.game.Rows, app.game.Cols, app.game.Mines, app.game.SkillUsesLeft)
+	}
+	if !tt.HasText("《潜在表明》") || !tt.HasText("剩余 03:00") || !tt.HasText("500×500 · 45000雷 · 03:00") {
+		t.Fatal("senzaihyoumei duel HUD missing expected title, subtitle, or 03:00 timer")
+	}
+
+	boardRect, ok := tt.Find("百万格决斗战场")
+	if !ok {
+		t.Fatal("duel board missing on 《潜在表明》")
+	}
+	centerRow, centerCol, ok := app.board.cellAt(app.game, boardRect.W/2, boardRect.H/2)
+	if !ok || centerRow != 250 || centerCol != 250 {
+		t.Fatalf("senzaihyoumei initial center = (%d,%d) ok=%v, want (250,250)", centerRow, centerCol, ok)
+	}
+
+	// First click opens the board and starts the duel.
+	tt.ClickAt(boardRect.X+boardRect.W/2, boardRect.Y+boardRect.H/2)
+	if app.game.Status != StatusPlaying || !app.game.FirstClick || app.game.duel.PlayerScore <= 0 {
+		t.Fatalf("first click did not start 《潜在表明》: status=%v score=%d", app.game.Status, app.game.duel.PlayerScore)
+	}
+
+	// Place a flag via right-click and use one skill charge.
+	var flagRow, flagCol int
+	foundUnrevealed := false
+	for dr := -4; dr <= 4 && !foundUnrevealed; dr++ {
+		for dc := -4; dc <= 4; dc++ {
+			c := app.game.Cell(centerRow+dr, centerCol+dc)
+			if c != nil && !c.Revealed && !c.Flagged {
+				flagRow, flagCol, foundUnrevealed = c.Row, c.Col, true
+				break
+			}
+		}
+	}
+	if !foundUnrevealed {
+		t.Fatal("no unrevealed cell near center for flag test")
+	}
+	fx := boardRect.X + (float32(flagCol)+0.5)*app.board.Cell - app.board.X
+	fy := boardRect.Y + (float32(flagRow)+0.5)*app.board.Cell - app.board.Y
+	tt.RightClickAt(fx, fy)
+	if app.game.FlagsPlaced != 1 {
+		t.Fatalf("flagsPlaced = %d, want 1", app.game.FlagsPlaced)
+	}
+	tt.Key(0, ui.KeyE)
+	if app.game.SkillUsesLeft != 4 {
+		t.Fatalf("skillUsesLeft = %d, want 4 after KeyE", app.game.SkillUsesLeft)
+	}
+
+	// Let Tomori AI take turns under the virtual clock, then run out the 3-minute clock.
+	tt.Advance(2500 * time.Millisecond)
+	if app.game.duel.LastAI < 0 {
+		t.Fatal("Tomori AI did not take a turn during 《潜在表明》")
+	}
+	// Guarantee a score-loss finish to also verify 《潜在表明》 never triggers Haruhikage drama.
+	app.game.duel.AIScore = app.game.duel.PlayerScore + 500
+	app.game.duel.NextAI = 999
+	app.game.duel.Elapsed = 179.5
+	tt.Advance(600 * time.Millisecond)
+
+	if !app.duelEnded || app.game.Status != StatusWon || !app.game.duel.Settled || app.game.duel.remaining() != 0 {
+		t.Fatalf("《潜在表明》 did not settle at 03:00: ended=%v status=%v settled=%v rem=%v",
+			app.duelEnded, app.game.Status, app.game.duel.Settled, app.game.duel.remaining())
+	}
+	if !tt.HasText("决斗结束 · 再来一局 (R)") || !tt.HasText("剩余 00:00") {
+		t.Fatal("settled 《潜在表明》 HUD missing end-of-duel label or 00:00 timer")
+	}
+	if app.haruhikageIntro || app.haruhikageAlert || app.unlockedMemes[MemeHaruhikage] {
+		t.Fatalf("《潜在表明》 score loss must not trigger Haruhikage drama: intro=%v alert=%v", app.haruhikageIntro, app.haruhikageAlert)
+	}
+	settledChat := false
+	for _, msg := range app.chatLog {
+		if msg.Speaker == "决斗结算" {
+			settledChat = true
+			break
+		}
+	}
+	if !settledChat {
+		t.Fatal("missing 「决斗结算」 chat entry after 《潜在表明》 finished")
+	}
+
+	// Rematch resets cleanly back to an idle 500×500 《潜在表明》 duel.
+	if err := tt.Click("再战一局"); err != nil {
+		t.Fatalf("rematch click failed: %v", err)
+	}
+	if app.duelEnded || app.game.Status != StatusIdle || app.game.Difficulty.ID != "senzaihyoumei" || !tt.HasText("剩余 03:00") {
+		t.Fatalf("rematch did not reset 《潜在表明》 cleanly: ended=%v status=%v id=%q",
+			app.duelEnded, app.game.Status, app.game.Difficulty.ID)
 	}
 }

@@ -33,6 +33,8 @@ var snapshotScenes = []snapshotScene{
 	{name: "won", stage: stageWonScene},
 	{name: "lost", stage: stageLostScene},
 	{name: "duel", stage: stageDuelScene},
+	{name: "senzaihyoumei", stage: stageSenzaihyoumeiScene},
+	{name: "setlist-shipped", stage: stageShippedSetlistScene},
 	{name: "classic-canvas-live", stage: stageClassicCanvasLiveScene, canvas: true},
 	{name: "classic-canvas-won", stage: stageClassicCanvasWonScene, canvas: true},
 	{name: "classic-canvas-lost", stage: stageClassicCanvasLostScene, canvas: true},
@@ -119,15 +121,44 @@ func stageLostScene(dark bool) *minesweeperApp {
 // Duel snapshots are framed on the skirmish staged around this cell.
 const duelStageRow, duelStageCol = 500, 498
 
+func findDifficultyIdx(id string) int {
+	for i, d := range Difficulties {
+		if d.ID == id {
+			return i
+		}
+	}
+	panic("difficulty not found: " + id)
+}
+
 // stageDuelScene stages the million-cell duel mid-fight, with player and
 // AI territory, each side's flags, scores, and the minimap.
 func stageDuelScene(dark bool) *minesweeperApp {
 	app := newMinesweeperApp(9)
 	app.darkMode = dark
-	app.diffIdx = 4
+	app.diffIdx = findDifficultyIdx("duel")
 	app.resetGame(true)
 	pinStartQuote(app)
-	playDuelGame(app)
+	playDuelGame(app, duelStageRow, duelStageCol, 137)
+	return app
+}
+
+// stageSenzaihyoumeiScene stages the 500×500 《潜在表明》 duel mid-fight,
+// centered on its skirmish with player and AI territory, flags, and minimap.
+func stageSenzaihyoumeiScene(dark bool) *minesweeperApp {
+	app := newMinesweeperApp(9)
+	app.darkMode = dark
+	app.diffIdx = findDifficultyIdx("senzaihyoumei")
+	app.resetGame(true)
+	pinStartQuote(app)
+	playDuelGame(app, app.game.Rows/2, app.game.Cols/2-2, 83)
+	return app
+}
+
+// stageShippedSetlistScene stages the live scene with the shipped setlist
+// popover expanded, showing the real Difficulties groups and duel entries.
+func stageShippedSetlistScene(dark bool) *minesweeperApp {
+	app := stageLiveScene(dark)
+	app.setlistOpen = true
 	return app
 }
 
@@ -290,13 +321,14 @@ func writeSnapshot(t *testing.T, app *minesweeperApp, canvas bool, width, height
 	if app.game.duel != nil {
 		// Park the AI and land the minimap pulse on a phase boundary, then
 		// re-pin the duel clock so the shot is byte-stable across runs.
+		elapsed := app.game.duel.Elapsed
 		app.game.duel.NextAI = 1e9
 		tt.Advance(time.Duration(1200-tt.Now().UnixMilli()%1200) * time.Millisecond)
-		app.game.duel.Elapsed = 137
-		app.elapsed = 137
+		app.game.duel.Elapsed = elapsed
+		app.elapsed = int(elapsed)
 		app.lastTick = tt.Now()
 		// The board's real size only exists after a frame's draw.
-		app.board.center(app.game, duelStageRow, duelStageCol)
+		app.board.center(app.game, app.game.Rows/2, app.game.Cols/2-2)
 	} else if canvas {
 		// The board's real size only exists after a frame's draw.
 		tt.Frame()
@@ -390,41 +422,41 @@ func playLostGame(app *minesweeperApp) {
 	}
 }
 
-// playDuelGame opens a mid-duel skirmish around the stage cell: player
+// playDuelGame opens a mid-duel skirmish around (stageRow, stageCol): player
 // territory with flags on real mines, an AI pocket with a flag of its own,
 // and both minimap markers. Deterministic for the app's seed.
-func playDuelGame(app *minesweeperApp) {
+func playDuelGame(app *minesweeperApp, stageRow, stageCol int, elapsed float64) {
 	g := app.game
-	g.Reveal(duelStageRow, duelStageCol)
+	g.Reveal(stageRow, stageCol)
 	playerOpened, aiOpened, playerFlagged, aiFlagged := 0, 0, 0, 0
-	for row := duelStageRow - 6; row <= duelStageRow+6; row++ {
-		for col := duelStageCol - 8; col <= duelStageCol+12; col++ {
+	for row := stageRow - 6; row <= stageRow+6; row++ {
+		for col := stageCol - 8; col <= stageCol+12; col++ {
 			c := g.Cell(row, col)
 			if c == nil || c.Revealed || c.Flagged {
 				continue
 			}
 			// The AI pocket stays within sight of the stage cell on every
 			// viewport; the four-column gap reads as contested ground.
-			nearStage := row >= duelStageRow-3 && row <= duelStageRow+3
+			nearStage := row >= stageRow-3 && row <= stageRow+3
 			switch {
-			case !c.IsMine && col < duelStageCol && playerOpened < 5 && hasRevealedNeighbour(g, row, col):
+			case !c.IsMine && col < stageCol && playerOpened < 5 && hasRevealedNeighbour(g, row, col):
 				g.Reveal(row, col)
 				playerOpened++
-			case !c.IsMine && col >= duelStageCol+4 && nearStage && aiOpened < 5:
+			case !c.IsMine && col >= stageCol+4 && nearStage && aiOpened < 5:
 				g.revealDuel(row, col, DuelAI)
 				g.duel.LastAI = row*g.Cols + col
 				aiOpened++
-			case c.IsMine && col < duelStageCol && playerFlagged < 2 && hasRevealedNeighbour(g, row, col):
+			case c.IsMine && col < stageCol && playerFlagged < 2 && hasRevealedNeighbour(g, row, col):
 				g.ToggleFlag(row, col, false)
 				playerFlagged++
-			case c.IsMine && col >= duelStageCol+4 && nearStage && aiFlagged < 1 && hasRevealedNeighbour(g, row, col):
+			case c.IsMine && col >= stageCol+4 && nearStage && aiFlagged < 1 && hasRevealedNeighbour(g, row, col):
 				g.flagDuel(row, col, DuelAI)
 				aiFlagged++
 			}
 		}
 	}
 	// Mid-duel clock, far enough in that both sides have scores.
-	g.duel.Elapsed = 137
+	g.duel.Elapsed = elapsed
 }
 
 func chordableNumber(g *Game) (int, int) {

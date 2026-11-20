@@ -13,7 +13,7 @@ import (
 func qaApp(t *testing.T) (*minesweeperApp, *ui.Tester, ui.Rect) {
 	t.Helper()
 	a := newMinesweeperApp(42)
-	a.diffIdx = 4
+	a.diffIdx = haruhikageDuelIdx(t)
 	a.resetGame(false)
 	tt := ui.NewTester(a.view, 1280, 900)
 	r, ok := tt.Find("百万格决斗战场")
@@ -24,7 +24,7 @@ func qaApp(t *testing.T) (*minesweeperApp, *ui.Tester, ui.Rect) {
 }
 
 func TestQAFirstFlag(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[haruhikageDuelIdx(t)], true, MemberAnon, 42)
 	g.ToggleFlag(500, 500, false)
 	if !g.Cell(500, 500).IsMine && g.duel.PlayerScore == -30 && g.FirstClick {
 		t.Fatalf("first flag forced safe and penalized: score=%d status=%v", g.duel.PlayerScore, g.Status)
@@ -32,7 +32,7 @@ func TestQAFirstFlag(t *testing.T) {
 }
 
 func TestQAFrozenSettlement(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[haruhikageDuelIdx(t)], true, MemberAnon, 42)
 	g.ToggleFlag(500, 500, false)
 	g.Reveal(500, 501)
 	g.TickDuel(300)
@@ -44,7 +44,7 @@ func TestQAFrozenSettlement(t *testing.T) {
 }
 
 func TestQAStunnedUnflag(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[haruhikageDuelIdx(t)], true, MemberAnon, 42)
 	g.ToggleFlag(500, 500, false)
 	g.duel.StunnedUntil = 2.4
 	if res := g.UnflagDuel(500, 500); res.Kind != ActionNoop {
@@ -93,7 +93,7 @@ func TestQAInputNavigationReset(t *testing.T) {
 }
 
 func TestQAFrontierFlood(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[haruhikageDuelIdx(t)], true, MemberAnon, 42)
 	g.Reveal(500, 500)
 	actual, missing := 0, 0
 	for i := range g.Cells {
@@ -117,7 +117,7 @@ func TestQAFrontierFlood(t *testing.T) {
 }
 
 func TestQAAIPublicOnlyAndTurns(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[haruhikageDuelIdx(t)], true, MemberAnon, 42)
 	g.Reveal(500, 500)
 	g.duel.frontier = map[int]bool{}
 	g.duel.rng = rand.New(rand.NewPCG(7, 9))
@@ -175,7 +175,7 @@ func TestQAMemory(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	start := time.Now()
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[haruhikageDuelIdx(t)], true, MemberAnon, 42)
 	construct := time.Since(start)
 	start = time.Now()
 	g.Reveal(500, 500)
@@ -206,7 +206,7 @@ func TestQAAIKnownExplodedMine(t *testing.T) {
 }
 
 func TestQAScoreAccounting(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[haruhikageDuelIdx(t)], true, MemberAnon, 42)
 	res := g.Reveal(500, 500)
 	if g.duel.PlayerScore != res.RevealedCount {
 		t.Fatal("reveal score mismatch")
@@ -245,7 +245,7 @@ func TestQALosingHUD(t *testing.T) {
 
 func BenchmarkQAIdleFrame(b *testing.B) {
 	a := newMinesweeperApp(42)
-	a.diffIdx = 4
+	a.diffIdx = haruhikageDuelIdx(b)
 	a.resetGame(false)
 	tt := ui.NewTester(a.view, 1280, 900)
 	b.ReportAllocs()
@@ -257,7 +257,7 @@ func BenchmarkQAIdleFrame(b *testing.B) {
 
 func BenchmarkQARevealedFrame(b *testing.B) {
 	a := newMinesweeperApp(42)
-	a.diffIdx = 4
+	a.diffIdx = haruhikageDuelIdx(b)
 	a.resetGame(false)
 	a.game.Reveal(500, 500)
 	tt := ui.NewTester(a.view, 1280, 900)
@@ -271,7 +271,7 @@ func BenchmarkQARevealedFrame(b *testing.B) {
 
 func BenchmarkQAPanFrame(b *testing.B) {
 	a := newMinesweeperApp(42)
-	a.diffIdx = 4
+	a.diffIdx = haruhikageDuelIdx(b)
 	a.resetGame(false)
 	a.game.Reveal(500, 500)
 	tt := ui.NewTester(a.view, 1280, 900)
@@ -288,7 +288,7 @@ func BenchmarkQAPanFrame(b *testing.B) {
 }
 
 func TestQAFlagProbeEvidence(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[haruhikageDuelIdx(t)], true, MemberAnon, 42)
 	g.Reveal(500, 500)
 	inferred := 0
 	for i := range g.Cells {
@@ -311,7 +311,7 @@ func TestQAFlagProbeEvidence(t *testing.T) {
 }
 
 func TestQASettlementAwardsFlagAccuracy(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[haruhikageDuelIdx(t)], true, MemberAnon, 42)
 	g.Reveal(500, 500)
 	before := g.duel.PlayerScore
 	safe := -1
@@ -343,7 +343,7 @@ func TestQASettlementAwardsFlagAccuracy(t *testing.T) {
 func TestQADuelSkillAndIdleFlagEdges(t *testing.T) {
 	app := newMinesweeperApp(42)
 	app.modeIdx = 1
-	app.diffIdx = 4
+	app.diffIdx = haruhikageDuelIdx(t)
 	app.resetGame(false)
 	if !app.game.BandMode || app.game.SkillUsesLeft == 0 {
 		t.Fatal("duel inherited classic disabled skills")
