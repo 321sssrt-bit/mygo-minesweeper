@@ -1030,3 +1030,402 @@ func TestClassicCanvasSnapshotScenesCoverAllStates(t *testing.T) {
 			lostSlips, lostNums, lostFlags, lostShield, lostWrong, lostQ, lostKnots, lostHit)
 	}
 }
+
+func sampleCanvasPixel(img *image.RGBA, x, y, scale float32) ui.Color {
+	px := img.RGBAAt(int(x*scale), int(y*scale))
+	return ui.Color{R: px.R, G: px.G, B: px.B, A: px.A}
+}
+
+func assertColorNear(t *testing.T, label string, got, want ui.Color) {
+	t.Helper()
+	if !near(got.R, want.R) || !near(got.G, want.G) || !near(got.B, want.B) {
+		t.Errorf("%s painted %s, want %s", label, hexOf(got), hexOf(want))
+	}
+}
+
+// Classic hover hints on the canvas match the classic cell widgets: soft
+// member-colour highlighter fills with no border strokes, subtle ink hover on
+// non-chordable numbers, slip lift on hovered slips, bare empty ground, and
+// clean flagMode / off-board / end-of-game clearing.
+func TestClassicCanvasHoverHighlighterParity(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app := newMinesweeperApp(42)
+			app.darkMode = dark
+			app.memberID = MemberTomori
+			app.allowQuestion = true
+			app.game = NewGame(Difficulty{
+				ID:       "classic-hover-fx",
+				Gameplay: GameplayClassic,
+				Rows:     7,
+				Cols:     7,
+				Mines:    2,
+			}, true, MemberTomori, 42)
+			g := app.game
+			g.FirstClick = true
+			g.Status = StatusPlaying
+			// Mines at (0,0) and (0,5): (1,1) is chordable once (0,0) is flagged;
+			// (1,5) stays an unchordable revealed number; (4,4) is revealed empty;
+			// (6,0) is a standalone unrevealed slip outside any chord range.
+			g.Cell(0, 0).IsMine = true
+			g.Cell(0, 5).IsMine = true
+			g.RecomputeAdjacency()
+			g.Cell(1, 1).Revealed = true
+			g.Cell(1, 5).Revealed = true
+			g.Cell(4, 4).Revealed = true
+			g.RevealedSafe = 3
+			g.ToggleFlag(0, 0, false)
+			// Mark chord target (0,1) with ? so both blank and questioned targets are covered.
+			g.ToggleFlag(0, 1, true)
+			g.ToggleFlag(0, 1, true)
+
+			tt := ui.NewTester(classicCanvasTestView(app), 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+
+			board, ok := tt.Find("经典棋盘")
+			if !ok {
+				t.Fatal("classic canvas board missing")
+			}
+			pal := paperFor(dark)
+			v := app.board
+
+			moveToCell := func(row, col int) ui.Rect {
+				tile := classicCanvasCellRect(board, v, row, col)
+				tt.Move(tile.X+tile.W/2, tile.Y+tile.H/2)
+				tt.Frame()
+				return tile
+			}
+
+			// 1. Hover chordable (1,1): center uses 0.38 highlighter, targets use 0.42 over slip, neither has a solid outline.
+			centerTile := moveToCell(1, 1)
+			if v.LastHoverHint.Kind != HintChordable || v.LastHoverHint.Center != 1*g.Cols+1 || len(v.LastHoverHint.Targets) != 7 {
+				t.Fatalf("expected HintChordable at (1,1) with 7 targets, got %+v", v.LastHoverHint)
+			}
+			img := tt.Image()
+			hintColor := memberImage(MemberTomori)
+			wantCenter := hintColor.Alpha(0.38).Over(pal.Board)
+			wantTarget := hintColor.Alpha(0.42).Over(pal.Slip)
+
+			assertColorNear(t, "hint center interior", sampleCanvasPixel(img, centerTile.X+3, centerTile.Y+3, 2), wantCenter)
+			// Sampling the top edge ensures no duel-style solid hintColor border stroke was drawn.
+			assertColorNear(t, "hint center top edge (no stroke)", sampleCanvasPixel(img, centerTile.X+centerTile.W/2, centerTile.Y+0.5, 2), wantCenter)
+
+			blankTarget := classicCanvasCellRect(board, v, 0, 2)
+			assertColorNear(t, "blank target interior", sampleCanvasPixel(img, blankTarget.X+blankTarget.W/2, blankTarget.Y+blankTarget.H/2, 2), wantTarget)
+			assertColorNear(t, "blank target top edge (no outline)", sampleCanvasPixel(img, blankTarget.X+blankTarget.W/2, blankTarget.Y+0.5, 2), wantTarget)
+
+			qTarget := classicCanvasCellRect(board, v, 0, 1)
+			assertColorNear(t, "questioned target corner", sampleCanvasPixel(img, qTarget.X+3, qTarget.Y+3, 2), wantTarget)
+
+			// 2. Changing leader swaps the highlighter to the new member's 代表色.
+			app.memberID = MemberAnon
+			tt.Frame()
+			img = tt.Image()
+			anonColor := memberImage(MemberAnon)
+			assertColorNear(t, "anon hint center", sampleCanvasPixel(img, centerTile.X+3, centerTile.Y+3, 2), anonColor.Alpha(0.38).Over(pal.Board))
+			assertColorNear(t, "anon hint target", sampleCanvasPixel(img, blankTarget.X+blankTarget.W/2, blankTarget.Y+blankTarget.H/2, 2), anonColor.Alpha(0.42).Over(pal.Slip))
+
+			// 3. Toggling flagMode clears hint, restores target slip, and drops center to plain number hover tint.
+			tt.Key(0, ui.KeyF)
+			tt.Frame()
+			if v.LastHoverHint.Kind != HintNone {
+				t.Fatalf("expected HintNone in flagMode, got %+v", v.LastHoverHint)
+			}
+			img = tt.Image()
+			assertColorNear(t, "center in flagMode (plain number hover)", sampleCanvasPixel(img, centerTile.X+3, centerTile.Y+3, 2), pal.Ink.Alpha(0.05).Over(pal.Board))
+			assertColorNear(t, "target restored in flagMode", sampleCanvasPixel(img, blankTarget.X+blankTarget.W/2, blankTarget.Y+blankTarget.H/2, 2), pal.Slip)
+			tt.Key(0, ui.KeyF)
+
+			// 4. Hovering a non-chordable revealed number paints subtle pal.Ink.Alpha(0.05) tint.
+			nonChordTile := moveToCell(1, 5)
+			if v.LastHoverHint.Kind != HintNone {
+				t.Fatalf("expected HintNone on unchordable (1,5), got %+v", v.LastHoverHint)
+			}
+			assertColorNear(t, "non-chordable number hover", sampleCanvasPixel(tt.Image(), nonChordTile.X+3, nonChordTile.Y+3, 2), pal.Ink.Alpha(0.05).Over(pal.Board))
+
+			// 5. Hovering a revealed empty cell leaves bare pal.Board.
+			emptyTile := moveToCell(4, 4)
+			assertColorNear(t, "empty revealed hover stays bare", sampleCanvasPixel(tt.Image(), emptyTile.X+emptyTile.W/2, emptyTile.Y+emptyTile.H/2, 2), pal.Board)
+
+			// 6. Hovering an unrevealed slip mixes pal.Slip toward pal.Sheet by 0.45.
+			slipTile := moveToCell(6, 0)
+			assertColorNear(t, "hovered slip", sampleCanvasPixel(tt.Image(), slipTile.X+slipTile.W/2, slipTile.Y+slipTile.H/2, 2), pal.Slip.Mix(pal.Sheet, 0.45))
+
+			// 7. Leaving the board clears hover and hint cleanly.
+			moveToCell(1, 1)
+			if v.LastHoverHint.Kind != HintChordable {
+				t.Fatalf("expected HintChordable before leaving board, got %+v", v.LastHoverHint)
+			}
+			resetBtn, ok := tt.Find("演奏中 · 重开 (R)")
+			if !ok {
+				t.Fatal("reset button missing")
+			}
+			tt.Move(resetBtn.X+resetBtn.W/2, resetBtn.Y+resetBtn.H/2)
+			tt.Frame()
+			if v.HoverRow != -1 || v.LastHoverHint.Kind != HintNone {
+				t.Fatalf("expected hover cleared off board, hover=(%d,%d) hint=%+v", v.HoverRow, v.HoverCol, v.LastHoverHint)
+			}
+			assertColorNear(t, "center restored after leaving board", sampleCanvasPixel(tt.Image(), centerTile.X+3, centerTile.Y+3, 2), pal.Board)
+
+			// 8. End-of-game (StatusLost) suppresses hover hint even while pointer sits on (1,1).
+			moveToCell(1, 1)
+			g.Status = StatusLost
+			tt.Frame()
+			if v.LastHoverHint.Kind != HintNone {
+				t.Fatalf("expected HintNone after StatusLost, got %+v", v.LastHoverHint)
+			}
+		})
+	}
+}
+
+// Classic flood-fill, chord, skill, and winning reveals play the bandColor
+// ripple wave (0.26 on empty cells, 0.22 on numbered cells, no stroke, no
+// duel EffectCell ring), yield to isHintCenter, expire under the virtual
+// clock, and clear immediately on reset.
+func TestClassicCanvasRippleWaveVisualAndLifecycle(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app := newMinesweeperApp(7)
+			app.darkMode = dark
+			app.memberID = MemberTomori
+			app.game = NewGame(Difficulty{
+				ID:           "classic-ripple-fx",
+				Gameplay:     GameplayClassic,
+				Rows:         8,
+				Cols:         8,
+				Mines:        1,
+				SkillCharges: 2,
+			}, true, MemberTomori, 7)
+			g := app.game
+			g.FirstClick = true
+			g.Status = StatusPlaying
+			// Single mine at (0,7): clicking (0,0) flood-fills left-to-right across
+			// depth 0..6, reaching numbered frontier (0,6) at depth 6.
+			g.Cell(0, 7).IsMine = true
+			g.RecomputeAdjacency()
+
+			tt := ui.NewTester(classicCanvasTestView(app), 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+
+			board, ok := tt.Find("经典棋盘")
+			if !ok {
+				t.Fatal("classic canvas board missing")
+			}
+			pal := paperFor(dark)
+			v := app.board
+
+			originTile := classicCanvasCellRect(board, v, 0, 0)
+			tt.ClickAt(originTile.X+originTile.W/2, originTile.Y+originTile.H/2)
+
+			if len(app.ripples) == 0 {
+				t.Fatal("expected classic flood-fill to populate ripples")
+			}
+			if v.EffectCell != -1 {
+				t.Fatalf("classic click must not set duel EffectCell, got %d", v.EffectCell)
+			}
+
+			// At t=0, depth-0 empty cell (0,0) paints bandColor.Alpha(0.26) with no stroke.
+			img := tt.Image()
+			wantEmptyRipple := bandColor.Alpha(0.26).Over(pal.Board)
+			assertColorNear(t, "depth-0 empty ripple interior", sampleCanvasPixel(img, originTile.X+originTile.W/2, originTile.Y+originTile.H/2, 2), wantEmptyRipple)
+			assertColorNear(t, "depth-0 empty ripple edge (no stroke)", sampleCanvasPixel(img, originTile.X+originTile.W/2, originTile.Y+0.5, 2), wantEmptyRipple)
+
+			// Depth-6 numbered cell (0,6) has not started yet at t=0.
+			numIdx := 0*g.Cols + 6
+			numRip, ok := app.ripples[numIdx]
+			if !ok || numRip.Delay == 0 {
+				t.Fatalf("expected delayed ripple on numbered frontier (0,6), got ok=%v rip=%+v", ok, numRip)
+			}
+			numTile := classicCanvasCellRect(board, v, 0, 6)
+			assertColorNear(t, "delayed numbered cell before wave", sampleCanvasPixel(img, numTile.X+3, numTile.Y+3, 2), pal.Board)
+
+			// Advance to the exact start of (0,6)'s wave and render: numbered cell paints bandColor.Alpha(0.22) with no stroke.
+			tt.Advance(numRip.Delay)
+			tt.Frame()
+			img = tt.Image()
+			wantNumRipple := bandColor.Alpha(0.22).Over(pal.Board)
+			assertColorNear(t, "numbered ripple interior", sampleCanvasPixel(img, numTile.X+3, numTile.Y+3, 2), wantNumRipple)
+			assertColorNear(t, "numbered ripple edge (no stroke)", sampleCanvasPixel(img, numTile.X+numTile.W/2, numTile.Y+0.5, 2), wantNumRipple)
+
+			// Advancing further without manual Frame() lets p.AnimationFrame() repaint the decaying wave.
+			tt.Advance(140 * time.Millisecond)
+			midGot := sampleCanvasPixel(tt.Image(), numTile.X+3, numTile.Y+3, 2)
+			if near(midGot.R, wantNumRipple.R) && near(midGot.G, wantNumRipple.G) && near(midGot.B, wantNumRipple.B) {
+				t.Errorf("numbered ripple did not decay over 140ms: still %s", hexOf(midGot))
+			}
+
+			// Advance past full wave lifetime: ripples expire and cells return to bare pal.Board.
+			tt.Advance(rippleMaxDelay + rippleDuration + 50*time.Millisecond)
+			if len(app.ripples) != 0 {
+				t.Fatalf("expected ripples expired cleanly, remaining=%d", len(app.ripples))
+			}
+			assertColorNear(t, "origin restored after ripple", sampleCanvasPixel(tt.Image(), originTile.X+originTile.W/2, originTile.Y+originTile.H/2, 2), pal.Board)
+			assertColorNear(t, "numbered restored after ripple", sampleCanvasPixel(tt.Image(), numTile.X+3, numTile.Y+3, 2), pal.Board)
+
+			// Hover hint precedence: when a chordable number also has an active ripple,
+			// isHintCenter (0.38 highlighter) wins over ripple (matching main.go).
+			g.Status = StatusPlaying
+			g.Cell(0, 7).Flagged = true
+			g.FlagsPlaced = 1
+			g.Cell(1, 7).Revealed = false
+			g.RevealedSafe--
+			app.ripples = map[int]tileRipple{
+				numIdx: {Start: tt.Now(), Delay: 0},
+			}
+			tt.Move(numTile.X+numTile.W/2, numTile.Y+numTile.H/2)
+			tt.Frame()
+			wantHintCenter := memberImage(MemberTomori).Alpha(0.38).Over(pal.Board)
+			assertColorNear(t, "hint center overrides ripple", sampleCanvasPixel(tt.Image(), numTile.X+3, numTile.Y+3, 2), wantHintCenter)
+
+			// Reset clears active ripples immediately, and skill reveal (KeyE) triggers ripples too.
+			tt.Key(0, ui.KeyR)
+			if len(app.ripples) != 0 {
+				t.Fatalf("expected KeyR to clear ripples, remaining=%d", len(app.ripples))
+			}
+			tt.ClickAt(originTile.X+originTile.W/2, originTile.Y+originTile.H/2)
+			tt.Advance(rippleMaxDelay + rippleDuration + 50*time.Millisecond)
+			if len(app.ripples) != 0 {
+				t.Fatalf("expected post-reset reveal ripples expired, remaining=%d", len(app.ripples))
+			}
+			tt.Key(0, ui.KeyE)
+			if len(app.ripples) == 0 {
+				t.Fatal("expected KeyE skill reveal on classic canvas to populate ripples")
+			}
+			tt.Key(0, ui.KeyR)
+			if len(app.ripples) != 0 {
+				t.Fatalf("expected KeyR to clear skill ripples, remaining=%d", len(app.ripples))
+			}
+		})
+	}
+}
+
+// Classic shield saves (4.5 / 220ms) and mine losses (9.0 / 320ms) shake the
+// rendered canvas pixels without shifting board or HUD hit-test bounds, decay
+// back to exact alignment under the virtual clock, and clear on reset.
+func TestClassicCanvasShakeVisualDecayAndHitTestStability(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app := newMinesweeperApp(7)
+			app.darkMode = dark
+			app.memberID = MemberSoyorin
+			app.game = NewGame(Difficulty{
+				ID:           "classic-shake-fx",
+				Gameplay:     GameplayClassic,
+				Rows:         6,
+				Cols:         6,
+				Mines:        2,
+				SkillCharges: 1,
+			}, true, MemberSoyorin, 7)
+			g := app.game
+			g.FirstClick = true
+			g.Status = StatusPlaying
+			g.Cell(0, 0).IsMine = true
+			g.Cell(5, 5).IsMine = true
+			g.RecomputeAdjacency()
+			// Reveal row 2..3 so row 1 (slips) -> row 2 (bare board) forms a crisp
+			// horizontal colour edge inside the viewport for pixel-shift checks.
+			for col := 0; col < g.Cols; col++ {
+				g.Cell(2, col).Revealed = true
+				g.Cell(3, col).Revealed = true
+				g.RevealedSafe += 2
+			}
+
+			tt := ui.NewTester(classicCanvasTestView(app), 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+
+			boardBefore, ok := tt.Find("经典棋盘")
+			if !ok {
+				t.Fatal("classic canvas board missing")
+			}
+			hudBefore, ok := tt.Find("演奏中 · 重开 (R)")
+			if !ok {
+				t.Fatal("reset HUD button missing")
+			}
+			pal := paperFor(dark)
+			v := app.board
+
+			// Probe the bottom pixel edge of slip (1,2) against revealed empty (2,2)
+			// so shake tests prove actual rendered pixel translation, not just interior hits.
+			emptyTile := classicCanvasCellRect(boardBefore, v, 2, 2)
+			slipTile := classicCanvasCellRect(boardBefore, v, 1, 2)
+			slipBottomEdgeY := func(img *image.RGBA) int {
+				px := int((slipTile.X + slipTile.W/2) * 2)
+				yMin := int((slipTile.Y - 12) * 2)
+				yMax := int((emptyTile.Y + emptyTile.H) * 2)
+				last := -1
+				for py := yMin; py <= yMax; py++ {
+					c := img.RGBAAt(px, py)
+					if near(c.R, pal.Slip.R) && near(c.G, pal.Slip.G) && near(c.B, pal.Slip.B) {
+						last = py
+					}
+				}
+				return last
+			}
+			baseEdgeY := slipBottomEdgeY(tt.Image())
+			if baseEdgeY < 0 {
+				t.Fatal("could not locate baseline slip bottom edge")
+			}
+
+			// 1. Trigger Soyorin shield on (0,0) -> lighter 4.5 / 220ms shake.
+			mine0 := classicCanvasCellRect(boardBefore, v, 0, 0)
+			tt.ClickAt(mine0.X+mine0.W/2, mine0.Y+mine0.H/2)
+			if !g.Cell(0, 0).ShieldSaved || app.shakeAmplitude != 4.5 || app.shakeDuration != 220*time.Millisecond {
+				t.Fatalf("expected shield 4.5/220ms shake, shield=%v amp=%v dur=%v", g.Cell(0, 0).ShieldSaved, app.shakeAmplitude, app.shakeDuration)
+			}
+			if v.EffectCell != -1 {
+				t.Fatalf("classic shield click must not set duel EffectCell, got %d", v.EffectCell)
+			}
+			if shieldEdge0 := slipBottomEdgeY(tt.Image()); shieldEdge0 <= baseEdgeY+2 {
+				t.Fatalf("expected immediate shield shake (+dy) to shift slip edge down: base=%d got=%d", baseEdgeY, shieldEdge0)
+			}
+
+			tt.Advance(30 * time.Millisecond)
+			sx, sy := app.currentShakeOffset(tt.Now())
+			if sx == 0 && sy == 0 {
+				t.Fatal("expected non-zero shield shake offset at 30ms")
+			}
+			boardDuring, _ := tt.Find("经典棋盘")
+			hudDuring, _ := tt.Find("演奏中 · 重开 (R)")
+			if boardDuring != boardBefore || hudDuring != hudBefore {
+				t.Fatalf("bounds shifted during shield shake: board=%+v/%+v hud=%+v/%+v", boardBefore, boardDuring, hudBefore, hudDuring)
+			}
+
+			// Decay past 220ms restores zero offset and exact unshifted pixel edge.
+			tt.Advance(250 * time.Millisecond)
+			if sx2, sy2 := app.currentShakeOffset(tt.Now()); sx2 != 0 || sy2 != 0 {
+				t.Fatalf("expected shield shake decayed to 0, got (%v,%v)", sx2, sy2)
+			}
+			if afterEdgeY := slipBottomEdgeY(tt.Image()); afterEdgeY != baseEdgeY {
+				t.Fatalf("slip edge did not restore after shield shake: base=%d got=%d", baseEdgeY, afterEdgeY)
+			}
+
+			// 2. Hit second mine (5,5) with shield spent -> heavier 9.0 / 320ms shake on StatusLost.
+			mine5 := classicCanvasCellRect(boardBefore, v, 5, 5)
+			tt.ClickAt(mine5.X+mine5.W/2, mine5.Y+mine5.H/2)
+			if g.Status != StatusLost || app.shakeAmplitude != 9.0 || app.shakeDuration != 320*time.Millisecond {
+				t.Fatalf("expected loss 9.0/320ms shake, status=%v amp=%v dur=%v", g.Status, app.shakeAmplitude, app.shakeDuration)
+			}
+			if lossEdge0 := slipBottomEdgeY(tt.Image()); lossEdge0 <= baseEdgeY+6 {
+				t.Fatalf("expected immediate 9.0 loss shake (+dy) to shift slip edge down: base=%d got=%d", baseEdgeY, lossEdge0)
+			}
+			tt.Advance(30 * time.Millisecond)
+			lsx, lsy := app.currentShakeOffset(tt.Now())
+			if lsx == 0 && lsy == 0 {
+				t.Fatal("expected active loss shake at 30ms")
+			}
+			boardLost, _ := tt.Find("经典棋盘")
+			if boardLost != boardBefore {
+				t.Fatalf("board rect shifted during loss shake: before=%+v during=%+v", boardBefore, boardLost)
+			}
+
+			// 3. KeyR immediately clears active shake state.
+			tt.Key(0, ui.KeyR)
+			if app.shakeAmplitude != 0 || !app.shakeStart.IsZero() {
+				t.Fatalf("expected immediate shake cleanup on KeyR, amp=%v start=%v", app.shakeAmplitude, app.shakeStart)
+			}
+		})
+	}
+}
