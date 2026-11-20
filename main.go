@@ -546,7 +546,7 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 	cur := a.game.Difficulty
 	trigger := ui.ButtonBase(c.Key("setlist-trigger")).
 		Padding(6, 12).Radius(6).Cursor(ui.CursorPointer).
-		Label("歌单").HasPopup(ui.PopupListBox).Expanded(a.setlistOpen)
+		Label("歌单").Value(cur.Song).HasPopup(ui.PopupListBox).Expanded(a.setlistOpen)
 
 	var triggerBg ui.Color
 	var triggerBorder ui.Color
@@ -582,11 +582,22 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 		})
 	})
 
-	if trigger.Clicked() {
+	focusSelected := false
+	openArrow := trigger.Shortcut(0, ui.KeyDown) || trigger.Shortcut(0, ui.KeyUp)
+	switch {
+	case trigger.Clicked():
 		a.setlistOpen = !a.setlistOpen
+		focusSelected = a.setlistOpen
+	case openArrow:
+		a.setlistOpen = true
+		focusSelected = true
+	case a.setlistOpen && trigger.Shortcut(0, ui.KeyEscape):
+		a.setlistOpen = false
 	}
 
-	ui.Popover(c.Key("setlist-popover"), trigger, &a.setlistOpen, func() {
+	var listbox ui.Element
+	restoreTriggerFocus := false
+	popover := ui.Popover(c.Key("setlist-popover"), trigger, &a.setlistOpen, func() {
 		selectedBg := t.Accent.Alpha(0.14).Over(t.Surface)
 		selectedInk := setlistAccentInk(pal, selectedBg)
 		groupInk := setlistAccentInk(pal, t.Surface)
@@ -601,20 +612,23 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 				ui.Textf(c, "%d 首", len(Difficulties)).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum")
 			})
 
-			ui.Column(c).FillWidth().Gap(6).Children(func() {
+			listbox = ui.Column(c.Key("setlist-listbox")).FillWidth().Gap(6).
+				Role(ui.RoleListBox).Label("排练歌单").FocusGroup(ui.Vertical)
+			listbox.Children(func() {
 				trackNo := 0
 				for gIdx, group := range groups {
-					section := ui.Column(c.Key(string(group.Gameplay))).FillWidth().Gap(2)
+					section := ui.Column(c.Key(string(group.Gameplay))).FillWidth().Gap(2).Role(ui.RoleGroup)
 					if gIdx > 0 {
 						section.Padding(6, 0, 0, 0).Draw(func(p *ui.Painter, r ui.Rect) {
 							p.Line(r.X+4, r.Y+0.5, r.X+r.W-4, r.Y+0.5, 1, pal.Rule)
 						})
 					}
+					var groupHeading ui.Element
 					section.Children(func() {
 						ui.Row(c).FillWidth().Padding(2, 6, 2, 6).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 							ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 								ui.Box(c).Size(3, 11).Radius(1.5).Background(groupInk)
-								ui.Text(c, group.Title).FontSize(11).Bold().TextColor(groupInk)
+								groupHeading = ui.Text(c, group.Title).FontSize(11).Bold().TextColor(groupInk)
 							})
 							ui.Textf(c, "%d 首", len(group.Entries)).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum")
 						})
@@ -624,7 +638,12 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 							d := entry.Diff
 							selected := entry.Index == a.diffIdx
 							item := ui.ButtonBase(c.Key(entry.Index)).FillWidth().Padding(6, 10).Radius(6).
-								Cursor(ui.CursorPointer).Label(d.Song).Checked(selected)
+								Cursor(ui.CursorPointer).Role(ui.RoleOption).Label(d.Song).
+								Description(setlistTrackSpec(d)).
+								AccessSelected(selected).PositionInSet(trackNo, len(Difficulties))
+							if focusSelected && selected {
+								item.Focus()
+							}
 
 							itemBg := t.Surface
 							if selected {
@@ -671,13 +690,33 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 									a.diffIdx = entry.Index
 									a.resetGame(false)
 								}
+								restoreTriggerFocus = true
+								c.Invalidate()
 							}
 						}
 					})
+					section.LabelledBy(groupHeading)
 				}
 			})
+
+			if listbox.Shortcut(0, ui.KeyEscape) {
+				a.setlistOpen = false
+				restoreTriggerFocus = true
+				c.Invalidate()
+			}
 		})
 	}).Background(t.Surface)
+
+	if popover.Valid() {
+		trigger.Controls(listbox)
+		if a.setlistOpen && popover.FocusLeft() {
+			a.setlistOpen = false
+			c.Invalidate()
+		}
+	}
+	if restoreTriggerFocus {
+		trigger.Focus()
+	}
 }
 
 func (a *minesweeperApp) duelHUD(c *ui.Context) {
