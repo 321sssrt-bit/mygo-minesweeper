@@ -1002,13 +1002,14 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						ui.Text(c, "排练完成度").FontSize(12).TextColor(t.TextMuted)
 						ui.Textf(c, "%.0f%%", a.game.Progress()*100).FontSize(12).Bold().TextColor(t.Accent)
 					})
-					hatchMeter(c, "排练完成度", a.game.Progress(), pal.InkOf(bandColor), pal)
+					hatchProgress(c, "排练完成度", a.game.Progress(), pal.InkOf(bandColor), pal)
 
+					gravityInk := pal.InkOf(memberImage(MemberSoyorin))
 					ui.Row(c).Justify(ui.SpaceBetween).Children(func() {
 						ui.Text(c, "乐队重力值").FontSize(12).TextColor(t.TextMuted)
-						ui.Textf(c, "%d%%", a.game.Gravity).FontSize(12).Bold().TextColor(pal.InkOf(memberImage(MemberSoyorin)))
+						ui.Textf(c, "%d%%", a.game.Gravity).FontSize(12).Bold().TextColor(gravityInk)
 					})
-					hatchMeter(c, "乐队重力值", float64(a.game.Gravity)/100, pal.InkOf(memberImage(MemberSoyorin)), pal)
+					hatchMeter(c, "乐队重力值", float64(a.game.Gravity), gravityInk, pal)
 				})
 
 				// Band Group Chat: sticky notes in each speaker's colour.

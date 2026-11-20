@@ -1121,8 +1121,11 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 			t.Errorf("classic view still contains retired copy %q", avoid)
 		}
 	}
-	if _, ok := tt.AccessByRole(ui.RoleGroup, "排练完成度"); !ok {
-		t.Error("progress meter missing 排练完成度 accessibility label")
+	if _, ok := tt.AccessByRole(ui.RoleProgress, "排练完成度"); !ok {
+		t.Error("progress meter missing 排练完成度 progress accessibility node")
+	}
+	if _, ok := tt.AccessByRole(ui.RoleMeter, "乐队重力值"); !ok {
+		t.Error("gravity meter missing 乐队重力值 meter accessibility node")
 	}
 	if _, ok := tt.Access("Live 完成度"); ok {
 		t.Error("progress meter still uses retired Live 完成度 label")
@@ -1417,6 +1420,218 @@ func TestHaruhikagePaperThemeContrastPixelsAndFlows(t *testing.T) {
 	}
 	if len(rep.Copy) != 0 || len(rep.Colors) != 0 {
 		t.Fatalf("expected zero scanreport findings, got:\n%s", rep)
+	}
+}
+
+func TestProgressAndGravityMeterA11yAndHatching(t *testing.T) {
+	setupBoard := func(dark bool) (*minesweeperApp, *ui.Tester) {
+		app := newMinesweeperApp(42)
+		app.darkMode = dark
+		app.game = NewGame(Difficulty{
+			ID:       "meter-test",
+			Song:     "迷星叫",
+			Gameplay: GameplayClassic,
+			Rows:     5,
+			Cols:     5,
+			Mines:    2,
+		}, false, MemberTomori, 7)
+		app.game.FirstClick = true
+		app.game.Status = StatusPlaying
+		app.game.Cell(0, 0).IsMine = true
+		app.game.Cell(4, 4).IsMine = true
+		app.game.RecomputeAdjacency()
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.UseScreenReader()
+		tt.Frame()
+		return app, tt
+	}
+
+	barHasColor := func(img image.Image, r ui.Rect, want ui.Color, tol int) bool {
+		b := img.Bounds()
+		minX := max(b.Min.X, int(r.X))
+		maxX := min(b.Max.X-1, int(r.X+r.W))
+		minY := max(b.Min.Y, int(r.Y))
+		maxY := min(b.Max.Y-1, int(r.Y+r.H))
+		for y := minY; y <= maxY; y++ {
+			for x := minX; x <= maxX; x++ {
+				if pixelNearColor(img.At(x, y), want, tol) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	for _, dark := range []bool{false, true} {
+		mode := "day"
+		if dark {
+			mode = "night"
+		}
+		t.Run(mode, func(t *testing.T) {
+			pal := paperFor(dark)
+			progInk := pal.InkOf(bandColor)
+			progWash := progInk.Alpha(0.22).Over(pal.Sheet)
+			gravInk := pal.InkOf(memberImage(MemberSoyorin))
+			gravWash := gravInk.Alpha(0.22).Over(pal.Sheet)
+
+			// 1. Initial state: Progress=0, Gravity starts at NewGame's baseline (>0); native roles exposed (not RoleGroup).
+			app, tt := setupBoard(dark)
+			if _, ok := tt.AccessByRole(ui.RoleGroup, "排练完成度"); ok {
+				t.Fatal("排练完成度 should not fall back to RoleGroup")
+			}
+			if _, ok := tt.AccessByRole(ui.RoleGroup, "乐队重力值"); ok {
+				t.Fatal("乐队重力值 should not fall back to RoleGroup")
+			}
+			prog, ok := tt.AccessByRole(ui.RoleProgress, "排练完成度")
+			if !ok {
+				t.Fatal("missing RoleProgress for 排练完成度")
+			}
+			if prog.Min != 0 || prog.Max != 1 || prog.Now != 0 {
+				t.Fatalf("initial progress range/value = [%.2f,%.2f] now=%.2f, want [0,1] now=0", prog.Min, prog.Max, prog.Now)
+			}
+			meter, ok := tt.AccessByRole(ui.RoleMeter, "乐队重力值")
+			if !ok {
+				t.Fatal("missing RoleMeter for 乐队重力值")
+			}
+			initGravity := float64(app.game.Gravity)
+			if initGravity <= 0 || initGravity >= 100 {
+				t.Fatalf("expected initial gravity in (0, 100), got %d", app.game.Gravity)
+			}
+			if meter.Min != 0 || meter.Max != 100 || meter.Now != initGravity {
+				t.Fatalf("initial gravity range/value = [%.0f,%.0f] now=%.0f, want [0,100] now=%.0f", meter.Min, meter.Max, meter.Now, initGravity)
+			}
+			initImg := tt.Image()
+			initGravFill := ui.Rect{
+				X: meter.Bounds.X + 3,
+				Y: meter.Bounds.Y + 2,
+				W: meter.Bounds.W*float32(initGravity/100) - 6,
+				H: meter.Bounds.H - 4,
+			}
+			if !barHasColor(initImg, initGravFill, gravInk, 18) {
+				t.Errorf("initial gravity meter missing pencil hatch ink %s in %+v", hexOf(gravInk), initGravFill)
+			}
+			initGravEmpty := ui.Rect{
+				X: meter.Bounds.X + meter.Bounds.W*float32(initGravity/100) + 6,
+				Y: meter.Bounds.Y + 2,
+				W: meter.Bounds.W*float32(1-initGravity/100) - 10,
+				H: meter.Bounds.H - 4,
+			}
+			if barHasColor(initImg, initGravEmpty, gravInk, 18) {
+				t.Errorf("initial gravity meter leaked hatch ink into unfilled span %+v", initGravEmpty)
+			}
+
+			// 2. Partial reveal: opening numbered cells (no flood-fill) advances Progress and draws pencil hatching only inside the filled span.
+			for _, label := range []string{"cell-0-1", "cell-1-0", "cell-1-1", "cell-3-3", "cell-3-4", "cell-4-3"} {
+				if err := tt.Click(label); err != nil {
+					t.Fatalf("click %s failed: %v", label, err)
+				}
+			}
+			tt.Frame()
+			wantProg := app.game.Progress()
+			if wantProg <= 0.2 || wantProg >= 1 {
+				t.Fatalf("expected partial progress in (0.2, 1), got %.4f", wantProg)
+			}
+			prog, ok = tt.AccessByRole(ui.RoleProgress, "排练完成度")
+			if !ok || prog.Now != wantProg {
+				t.Fatalf("mid-game progress access = %+v (ok=%v), want Now=%.4f", prog, ok, wantProg)
+			}
+			img := tt.Image()
+			filledSpan := ui.Rect{
+				X: prog.Bounds.X + 4,
+				Y: prog.Bounds.Y + 2,
+				W: prog.Bounds.W*float32(wantProg) - 8,
+				H: prog.Bounds.H - 4,
+			}
+			if !barHasColor(img, filledSpan, progInk, 18) {
+				t.Errorf("mid-game progress bar missing pencil hatch ink %s in %+v", hexOf(progInk), filledSpan)
+			}
+			if !barHasColor(img, filledSpan, progWash, 12) {
+				t.Errorf("mid-game progress bar missing translucent fill wash %s in %+v", hexOf(progWash), filledSpan)
+			}
+			unfilledSpan := ui.Rect{
+				X: prog.Bounds.X + prog.Bounds.W*float32(wantProg) + 6,
+				Y: prog.Bounds.Y + 2,
+				W: prog.Bounds.W*float32(1-wantProg) - 10,
+				H: prog.Bounds.H - 4,
+			}
+			if unfilledSpan.W > 4 && barHasColor(img, unfilledSpan, progInk, 18) {
+				t.Errorf("mid-game progress bar leaked hatch ink into unfilled span %+v", unfilledSpan)
+			}
+
+			// 3. Win state: Progress=1.0, Gravity=0; full progress bar hatched, gravity bar stays empty.
+			for i := range app.game.Cells {
+				cell := &app.game.Cells[i]
+				if !cell.IsMine && !cell.Revealed {
+					app.game.Reveal(cell.Row, cell.Col)
+				}
+			}
+			tt.Frame()
+			if app.game.Status != StatusWon || app.game.Progress() != 1 || app.game.Gravity != 0 {
+				t.Fatalf("expected won state (progress=1, gravity=0), got status=%v progress=%.2f gravity=%d",
+					app.game.Status, app.game.Progress(), app.game.Gravity)
+			}
+			prog, ok = tt.AccessByRole(ui.RoleProgress, "排练完成度")
+			if !ok || prog.Now != 1 {
+				t.Fatalf("won progress access = %+v (ok=%v), want Now=1", prog, ok)
+			}
+			meter, ok = tt.AccessByRole(ui.RoleMeter, "乐队重力值")
+			if !ok || meter.Now != 0 {
+				t.Fatalf("won gravity access = %+v (ok=%v), want Now=0", meter, ok)
+			}
+			winImg := tt.Image()
+			winTail := ui.Rect{
+				X: prog.Bounds.X + prog.Bounds.W - 24,
+				Y: prog.Bounds.Y + 2,
+				W: 18,
+				H: prog.Bounds.H - 4,
+			}
+			if !barHasColor(winImg, winTail, progInk, 18) {
+				t.Errorf("won progress bar tail %+v missing hatch ink %s", winTail, hexOf(progInk))
+			}
+			emptyMeter := ui.Rect{
+				X: meter.Bounds.X + 4,
+				Y: meter.Bounds.Y + 2,
+				W: meter.Bounds.W - 8,
+				H: meter.Bounds.H - 4,
+			}
+			if barHasColor(winImg, emptyMeter, gravInk, 18) {
+				t.Errorf("zero gravity meter unexpectedly drew hatch ink %s", hexOf(gravInk))
+			}
+
+			// 4. Mine hit (loss): Gravity=100; meter exposes 100/100 and draws Soyorin pencil hatching.
+			lostApp, lostTT := setupBoard(dark)
+			if err := lostTT.Click("cell-0-1"); err != nil {
+				t.Fatalf("click safe cell before mine hit failed: %v", err)
+			}
+			if err := lostTT.Click("cell-0-0"); err != nil {
+				t.Fatalf("click mine cell-0-0 failed: %v", err)
+			}
+			lostTT.Frame()
+			if lostApp.game.Status != StatusLost || lostApp.game.Gravity != 100 {
+				t.Fatalf("expected lost state with gravity=100, got status=%v gravity=%d", lostApp.game.Status, lostApp.game.Gravity)
+			}
+			lostProg, ok := lostTT.AccessByRole(ui.RoleProgress, "排练完成度")
+			if !ok || lostProg.Now != lostApp.game.Progress() {
+				t.Fatalf("lost progress access = %+v (ok=%v), want Now=%.4f", lostProg, ok, lostApp.game.Progress())
+			}
+			lostMeter, ok := lostTT.AccessByRole(ui.RoleMeter, "乐队重力值")
+			if !ok || lostMeter.Min != 0 || lostMeter.Max != 100 || lostMeter.Now != 100 {
+				t.Fatalf("lost gravity access = %+v (ok=%v), want [0,100] Now=100", lostMeter, ok)
+			}
+			lostImg := lostTT.Image()
+			gravInterior := ui.Rect{
+				X: lostMeter.Bounds.X + 4,
+				Y: lostMeter.Bounds.Y + 2,
+				W: lostMeter.Bounds.W - 8,
+				H: lostMeter.Bounds.H - 4,
+			}
+			if !barHasColor(lostImg, gravInterior, gravInk, 18) {
+				t.Errorf("lost gravity meter missing pencil hatch ink %s in %+v", hexOf(gravInk), gravInterior)
+			}
+			if !barHasColor(lostImg, gravInterior, gravWash, 12) {
+				t.Errorf("lost gravity meter missing translucent fill wash %s in %+v", hexOf(gravWash), gravInterior)
+			}
+		})
 	}
 }
 
