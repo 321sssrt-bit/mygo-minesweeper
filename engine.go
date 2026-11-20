@@ -208,6 +208,8 @@ type ActionResult struct {
 	QuoteEvent    string
 	NewMemes      []string
 	RevealWave    []RevealWaveEntry
+	// SkillTargets holds the row-major indices directly hit by a classic active skill, in action order.
+	SkillTargets []int
 }
 
 type Game struct {
@@ -661,10 +663,12 @@ func (g *Game) UseSkill() ActionResult {
 		g.UsedSkill = true
 		g.adjustGravity(-10)
 		res := g.Reveal(pick.Row, pick.Col)
-		if res.Kind == ActionWon {
-			return res
+		res.SkillTargets = []int{pick.Row*g.Cols + pick.Col}
+		if res.Kind != ActionWon {
+			res.Kind = ActionSkill
+			res.QuoteEvent = "skill"
 		}
-		return ActionResult{Kind: ActionSkill, RevealedCount: res.RevealedCount, QuoteEvent: "skill", RevealWave: res.RevealWave}
+		return res
 
 	case MemberAnon:
 		pool := g.safeUnrevealedCells(false)
@@ -675,6 +679,7 @@ func (g *Game) UseSkill() ActionResult {
 		g.UsedSkill = true
 		total := 0
 		var wave []RevealWaveEntry
+		var targets []int
 		for range 2 {
 			rem := g.safeUnrevealedCells(false)
 			if len(rem) == 0 {
@@ -682,13 +687,14 @@ func (g *Game) UseSkill() ActionResult {
 			}
 			pick := rem[g.rng.IntN(len(rem))]
 			res := g.Reveal(pick.Row, pick.Col)
+			targets = append(targets, pick.Row*g.Cols+pick.Col)
 			total += res.RevealedCount
 			wave = appendRevealWave(wave, res.RevealWave)
 			if res.Kind == ActionWon {
-				return ActionResult{Kind: ActionWon, RevealedCount: total, QuoteEvent: "won", NewMemes: g.winMemes(), RevealWave: wave}
+				return ActionResult{Kind: ActionWon, RevealedCount: total, QuoteEvent: "won", NewMemes: g.winMemes(), RevealWave: wave, SkillTargets: targets}
 			}
 		}
-		return ActionResult{Kind: ActionSkill, RevealedCount: total, QuoteEvent: "skill", RevealWave: wave}
+		return ActionResult{Kind: ActionSkill, RevealedCount: total, QuoteEvent: "skill", RevealWave: wave, SkillTargets: targets}
 
 	case MemberTaki:
 		pool := g.hiddenUnflaggedMines(true)
@@ -705,7 +711,7 @@ func (g *Game) UseSkill() ActionResult {
 		pick.Questioned = false
 		g.FlagsPlaced++
 		g.adjustGravity(5)
-		return ActionResult{Kind: ActionSkill, QuoteEvent: "skill"}
+		return ActionResult{Kind: ActionSkill, QuoteEvent: "skill", SkillTargets: []int{pick.Row*g.Cols + pick.Col}}
 
 	case MemberRana:
 		var zeros []*Cell
@@ -727,15 +733,15 @@ func (g *Game) UseSkill() ActionResult {
 		g.UsedSkill = true
 		g.adjustGravity(-12)
 		res := g.Reveal(pick.Row, pick.Col)
-		var memes []string
+		res.SkillTargets = []int{pick.Row*g.Cols + pick.Col}
 		if res.RevealedCount >= 12 {
-			memes = append(memes, MemeMatcha)
+			res.NewMemes = append(res.NewMemes, MemeMatcha)
 		}
-		if res.Kind == ActionWon {
-			res.NewMemes = append(res.NewMemes, memes...)
-			return res
+		if res.Kind != ActionWon {
+			res.Kind = ActionSkill
+			res.QuoteEvent = "skill"
 		}
-		return ActionResult{Kind: ActionSkill, RevealedCount: res.RevealedCount, QuoteEvent: "skill", NewMemes: memes, RevealWave: res.RevealWave}
+		return res
 	}
 
 	return ActionResult{Kind: ActionNoop}
