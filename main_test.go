@@ -927,6 +927,7 @@ func TestHaruhikageMovedToDuelAndKageiromaiLossIsPlain(t *testing.T) {
 	duelApp.game.duel.AIScore = 120
 	duelApp.game.duel.NextAI = duelApp.game.duel.Duration + 10
 	duelApp.game.duel.Elapsed = duelApp.game.duel.Duration - 0.5
+	dtt.Frame()
 	dtt.Advance(600 * time.Millisecond)
 	if !duelApp.duelEnded || !duelApp.haruhikageIntro || duelApp.haruhikageAlert || !dtt.HasText("……为什么要演奏春日影？！") {
 		t.Fatalf("expected Haruhikage drama overlay on 《春日影》 duel loss, ended=%v intro=%v alert=%v",

@@ -40,7 +40,11 @@ func TestSetlistPopoverSelectBySongName(t *testing.T) {
 
 	// Select every track in Difficulties by its song name, including
 	// returning to the first track and re-selecting the active track.
-	order := []int{1, 2, 3, 4, 0}
+	order := make([]int, 0, len(Difficulties))
+	for i := 1; i < len(Difficulties); i++ {
+		order = append(order, i)
+	}
+	order = append(order, 0)
 	for _, wantIdx := range order {
 		want := Difficulties[wantIdx]
 		if err := tt.Click("歌单"); err != nil {
@@ -407,6 +411,18 @@ func focusSetlistTriggerByTab(t *testing.T, tt *ui.Tester) {
 }
 
 func TestSetlistKeyboardNavigationAndSelection(t *testing.T) {
+	var displayOrder []setlistEntry
+	for _, group := range groupSetlistTracks(Difficulties) {
+		displayOrder = append(displayOrder, group.Entries...)
+	}
+	if len(displayOrder) < 3 {
+		t.Fatalf("expected at least 3 tracks in Difficulties, got %d", len(displayOrder))
+	}
+	first := displayOrder[0]
+	second := displayOrder[1]
+	penultimate := displayOrder[len(displayOrder)-2]
+	last := displayOrder[len(displayOrder)-1]
+
 	app := newMinesweeperApp(12345)
 	tt := ui.NewTester(app.view, 1280, 900)
 
@@ -416,68 +432,68 @@ func TestSetlistKeyboardNavigationAndSelection(t *testing.T) {
 	if !app.setlistOpen {
 		t.Fatal("Enter on focused setlist trigger should open popover")
 	}
-	if !tt.Focused("迷星叫") {
-		t.Fatal("opening setlist with Enter should focus the active track 迷星叫")
+	if !tt.Focused(first.Diff.Song) {
+		t.Fatalf("opening setlist with Enter should focus the active track %q", first.Diff.Song)
 	}
 
 	// ArrowDown traverses all tracks in display order across groups and wraps around.
-	wantDown := []string{"碧天伴走", "影色舞", "诗超绊", "春日影", "迷星叫"}
-	for _, want := range wantDown {
+	for step := 1; step <= len(displayOrder); step++ {
+		want := displayOrder[step%len(displayOrder)].Diff.Song
 		tt.Key(0, ui.KeyDown)
 		if !tt.Focused(want) {
-			t.Fatalf("ArrowDown did not focus %q", want)
+			t.Fatalf("ArrowDown step %d did not focus %q", step, want)
 		}
 	}
 
 	// ArrowUp wraps backwards from first to last, then steps up.
 	tt.Key(0, ui.KeyUp)
-	if !tt.Focused("春日影") {
-		t.Fatal("ArrowUp from first track should wrap to 春日影")
+	if !tt.Focused(last.Diff.Song) {
+		t.Fatalf("ArrowUp from first track should wrap to %q", last.Diff.Song)
 	}
 	tt.Key(0, ui.KeyUp)
-	if !tt.Focused("诗超绊") {
-		t.Fatal("ArrowUp from 春日影 should focus 诗超绊")
+	if !tt.Focused(penultimate.Diff.Song) {
+		t.Fatalf("ArrowUp from %q should focus %q", last.Diff.Song, penultimate.Diff.Song)
 	}
 
 	// Home and End jump to first and last track.
 	tt.Key(0, ui.KeyHome)
-	if !tt.Focused("迷星叫") {
-		t.Fatal("Home should focus first track 迷星叫")
+	if !tt.Focused(first.Diff.Song) {
+		t.Fatalf("Home should focus first track %q", first.Diff.Song)
 	}
 	tt.Key(0, ui.KeyEnd)
-	if !tt.Focused("春日影") {
-		t.Fatal("End should focus last track 春日影")
+	if !tt.Focused(last.Diff.Song) {
+		t.Fatalf("End should focus last track %q", last.Diff.Song)
 	}
 
-	// Move to 碧天伴走 and confirm with Enter; closes popover and returns focus to trigger.
+	// Move to second track and confirm with Enter; closes popover and returns focus to trigger.
 	tt.Key(0, ui.KeyHome)
 	tt.Key(0, ui.KeyDown)
-	if !tt.Focused("碧天伴走") {
-		t.Fatal("expected focus on 碧天伴走 before Enter")
+	if !tt.Focused(second.Diff.Song) {
+		t.Fatalf("expected focus on %q before Enter", second.Diff.Song)
 	}
 	tt.Key(0, ui.KeyEnter)
 	if app.setlistOpen {
 		t.Fatal("Enter on option should close setlist popover")
 	}
-	if app.diffIdx != 1 || app.game.Difficulty.Song != "碧天伴走" {
-		t.Fatalf("Enter selected idx=%d song=%q, want 1 / 碧天伴走", app.diffIdx, app.game.Difficulty.Song)
+	if app.diffIdx != second.Index || app.game.Difficulty.Song != second.Diff.Song {
+		t.Fatalf("Enter selected idx=%d song=%q, want %d / %q", app.diffIdx, app.game.Difficulty.Song, second.Index, second.Diff.Song)
 	}
 	if !tt.Focused("歌单") {
 		t.Fatal("selecting a track via Enter should return focus to setlist trigger")
 	}
 
-	// Space opens popover on the newly active track, and Space selects another track.
+	// Space opens popover on the newly active track, and Space selects the last track.
 	tt.Key(0, ui.KeySpace)
-	if !app.setlistOpen || !tt.Focused("碧天伴走") {
-		t.Fatalf("Space should open setlist focused on active 碧天伴走: open=%v focused=%v", app.setlistOpen, tt.Focused("碧天伴走"))
+	if !app.setlistOpen || !tt.Focused(second.Diff.Song) {
+		t.Fatalf("Space should open setlist focused on active %q: open=%v focused=%v", second.Diff.Song, app.setlistOpen, tt.Focused(second.Diff.Song))
 	}
 	tt.Key(0, ui.KeyEnd)
 	tt.Key(0, ui.KeySpace)
 	if app.setlistOpen {
 		t.Fatal("Space on option should close setlist popover")
 	}
-	if !app.isDuel() || app.game.Difficulty.Song != "春日影" {
-		t.Fatalf("Space failed to select 春日影 duel: duel=%v song=%q", app.isDuel(), app.game.Difficulty.Song)
+	if app.diffIdx != last.Index || (last.Diff.Gameplay == GameplayDuel) != app.isDuel() || app.game.Difficulty.Song != last.Diff.Song {
+		t.Fatalf("Space failed to select %q: idx=%d duel=%v song=%q", last.Diff.Song, app.diffIdx, app.isDuel(), app.game.Difficulty.Song)
 	}
 	if !tt.Focused("歌单") {
 		t.Fatal("selecting a track via Space should return focus to setlist trigger")
@@ -487,18 +503,18 @@ func TestSetlistKeyboardNavigationAndSelection(t *testing.T) {
 	// and Escape dismisses it without changing track while returning focus to trigger.
 	for _, key := range []ui.Key{ui.KeyDown, ui.KeyUp} {
 		tt.Key(0, key)
-		if !app.setlistOpen || !tt.Focused("春日影") {
-			t.Fatalf("key %v on closed trigger did not open focused on 春日影: open=%v focused=%v", key, app.setlistOpen, tt.Focused("春日影"))
+		if !app.setlistOpen || !tt.Focused(last.Diff.Song) {
+			t.Fatalf("key %v on closed trigger did not open focused on %q: open=%v focused=%v", key, last.Diff.Song, app.setlistOpen, tt.Focused(last.Diff.Song))
 		}
 		tt.Key(0, ui.KeyUp)
-		if !tt.Focused("诗超绊") {
-			t.Fatalf("expected focus on 诗超绊 before Escape")
+		if !tt.Focused(penultimate.Diff.Song) {
+			t.Fatalf("expected focus on %q before Escape", penultimate.Diff.Song)
 		}
 		tt.Key(0, ui.KeyEscape)
 		if app.setlistOpen {
 			t.Fatal("Escape should close setlist popover")
 		}
-		if app.game.Difficulty.Song != "春日影" {
+		if app.game.Difficulty.Song != last.Diff.Song {
 			t.Fatalf("Escape changed active track to %q", app.game.Difficulty.Song)
 		}
 		if !tt.Focused("歌单") {
@@ -510,8 +526,8 @@ func TestSetlistKeyboardNavigationAndSelection(t *testing.T) {
 	tt.Key(0, ui.KeyDown)
 	tt.Key(0, ui.KeyHome)
 	tt.Key(0, ui.KeyEnter)
-	if app.diffIdx != 0 {
-		t.Fatalf("expected reset to track 0, got %d", app.diffIdx)
+	if app.diffIdx != first.Index {
+		t.Fatalf("expected reset to track %d, got %d", first.Index, app.diffIdx)
 	}
 	if err := tt.Click("cell-4-4"); err != nil {
 		t.Fatalf("start classic game: %v", err)
@@ -536,7 +552,7 @@ func TestSetlistKeyboardNavigationAndSelection(t *testing.T) {
 	if app.setlistOpen {
 		t.Fatal("Tab leaving setlist popover should close it")
 	}
-	if _, ok := tt.Find("碧天伴走"); ok {
+	if _, ok := tt.Find(second.Diff.Song); ok {
 		t.Fatal("popover options should be unmounted immediately after Tab closes popover")
 	}
 	if app.game != beforeGame || app.game.Status != StatusPlaying {
@@ -568,12 +584,12 @@ func TestSetlistKeyboardNavigationAndSelection(t *testing.T) {
 		}
 	}
 	// Arrow navigation still works after clicking non-button areas inside the popover.
-	if !tt.Focused("迷星叫") {
-		t.Fatal("expected focus on 迷星叫 after clicking 经典 header and whitespace")
+	if !tt.Focused(first.Diff.Song) {
+		t.Fatalf("expected focus on %q after clicking 经典 header and whitespace", first.Diff.Song)
 	}
 	tt.Key(0, ui.KeyDown)
 	tt.Key(0, ui.KeyEnter)
-	if app.setlistOpen || app.diffIdx != 1 || app.game.Difficulty.Song != "碧天伴走" {
+	if app.setlistOpen || app.diffIdx != second.Index || app.game.Difficulty.Song != second.Diff.Song {
 		t.Fatalf("mouse-open + header clicks + ArrowDown + Enter failed: open=%v idx=%d song=%q", app.setlistOpen, app.diffIdx, app.game.Difficulty.Song)
 	}
 

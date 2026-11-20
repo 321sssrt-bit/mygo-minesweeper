@@ -11,7 +11,7 @@ import (
 )
 
 func TestDuelBoardIsFullMillionAndFirstClickSafe(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[findDifficultyIdx("duel")], true, MemberAnon, 42)
 	if g.Rows != 1000 || g.Cols != 1000 || len(g.Cells) != 1000000 {
 		t.Fatalf("duel dimensions: %dx%d cells=%d", g.Rows, g.Cols, len(g.Cells))
 	}
@@ -34,7 +34,7 @@ func TestDuelBoardIsFullMillionAndFirstClickSafe(t *testing.T) {
 }
 
 func TestDuelMinePenalizesAndStunsInsteadOfEnding(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[findDifficultyIdx("duel")], true, MemberAnon, 42)
 	g.Reveal(500, 500)
 	mine := -1
 	for i := range g.Cells {
@@ -57,7 +57,7 @@ func TestDuelMinePenalizesAndStunsInsteadOfEnding(t *testing.T) {
 }
 
 func TestDuelFlagHidesAnswerAndUnflag(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberTaki, 42)
+	g := NewGame(Difficulties[findDifficultyIdx("duel")], true, MemberTaki, 42)
 	g.Reveal(500, 500)
 	index := -1
 	for i := range g.Cells {
@@ -78,7 +78,7 @@ func TestDuelFlagHidesAnswerAndUnflag(t *testing.T) {
 }
 
 func TestDuelTimerAndBoardNavigation(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberAnon, 42)
+	g := NewGame(Difficulties[findDifficultyIdx("duel")], true, MemberAnon, 42)
 	g.Reveal(500, 500)
 	tick := g.TickDuel(300)
 	if !tick.Finished || g.Status != StatusWon || g.duel.remaining() != 0 {
@@ -101,7 +101,7 @@ func TestDuelTimerAndBoardNavigation(t *testing.T) {
 
 func TestDuelNativeCanvasInput(t *testing.T) {
 	app := newMinesweeperApp(42)
-	app.diffIdx = 4
+	app.diffIdx = findDifficultyIdx("duel")
 	app.resetGame(false)
 	tt := ui.NewTester(app.view, 1280, 900)
 	if !tt.HasText("春日影 Live") || !tt.HasText("《春日影》") || !tt.HasText("灯 (AI) 0") {
@@ -140,7 +140,7 @@ func TestDuelNativeCanvasInput(t *testing.T) {
 }
 
 func TestDuelMinimapTerritoryAggregationAndPersistence(t *testing.T) {
-	g := NewGame(Difficulties[4], true, MemberSoyorin, 42)
+	g := NewGame(Difficulties[findDifficultyIdx("duel")], true, MemberSoyorin, 42)
 	pTot, aiTot := g.duel.MinimapTotals()
 	if pTot != 0 || aiTot != 0 || g.duel.LastCell != -1 || g.duel.LastAI != -1 {
 		t.Fatalf("expected clean initial minimap, got p=%d ai=%d last=(%d,%d)", pTot, aiTot, g.duel.LastCell, g.duel.LastAI)
@@ -227,7 +227,7 @@ func TestDuelMinimapTerritoryAggregationAndPersistence(t *testing.T) {
 
 func TestDuelMinimapLiveMarkersAndReset(t *testing.T) {
 	app := newMinesweeperApp(42)
-	app.diffIdx = 4
+	app.diffIdx = findDifficultyIdx("duel")
 	app.resetGame(false)
 	tt := ui.NewTester(app.view, 1280, 900)
 
@@ -327,7 +327,7 @@ func TestNewGameBuildsByGameplayNotTrackID(t *testing.T) {
 }
 
 func TestDuelDurationAndAIPaceComeFromTrack(t *testing.T) {
-	std := NewGame(Difficulties[4], true, MemberAnon, 42)
+	std := NewGame(Difficulties[findDifficultyIdx("duel")], true, MemberAnon, 42)
 	if std.duel.Duration != 300 || std.duel.AIInterval != 0.72 {
 		t.Fatalf("standard duel keeps 5min/0.72s: duration=%v interval=%v", std.duel.Duration, std.duel.AIInterval)
 	}
@@ -540,7 +540,7 @@ func TestDuelHoverHintsPriorityPublicOnlyAndStun(t *testing.T) {
 
 	// Headless UI Duel canvas hover + flagMode toggle + claim click consistency.
 	app := newMinesweeperApp(42)
-	app.diffIdx = 4
+	app.diffIdx = findDifficultyIdx("duel")
 	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 6, Cols: 6, Mines: 1}, true, MemberAnon, 42)
 	app.game.FirstClick = true
 	app.game.Status = StatusPlaying
@@ -582,7 +582,7 @@ func TestDuelHoverHintsPriorityPublicOnlyAndStun(t *testing.T) {
 
 func TestDuelHoverSyncsAfterZoomAndDrag(t *testing.T) {
 	app := newMinesweeperApp(42)
-	app.diffIdx = 4
+	app.diffIdx = findDifficultyIdx("duel")
 	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 60, Cols: 60, Mines: 2}, true, MemberAnon, 42)
 	app.game.FirstClick = true
 	app.game.Status = StatusPlaying
@@ -669,7 +669,7 @@ func TestDuelHoverSyncsAfterZoomAndDrag(t *testing.T) {
 
 func TestDuelFloatingScorePopupsAndRippleLifecycle(t *testing.T) {
 	app := newMinesweeperApp(42)
-	app.diffIdx = 4
+	app.diffIdx = findDifficultyIdx("duel")
 	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 12, Cols: 12, Mines: 1}, true, MemberAnon, 42)
 	app.game.Cell(11, 11).IsMine = true
 	app.game.FirstClick = true
@@ -747,7 +747,7 @@ func TestDuelFloatingScorePopupsAndRippleLifecycle(t *testing.T) {
 
 func TestDuelShakeBoundsAndStunWarningHUD(t *testing.T) {
 	app := newMinesweeperApp(42)
-	app.diffIdx = 4
+	app.diffIdx = findDifficultyIdx("duel")
 	app.memberID = MemberTomori
 	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 8, Cols: 8, Mines: 2, SkillCharges: 1}, true, MemberTomori, 42)
 	app.game.FirstClick = true
@@ -869,7 +869,7 @@ func TestDuelRecenterUsesBoardCenter(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newMinesweeperApp(42)
-			app.diffIdx = 4
+			app.diffIdx = findDifficultyIdx("duel")
 			app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: tc.rows, Cols: tc.cols, Mines: 10}, true, MemberAnon, 42)
 			tt := ui.NewTester(app.view, 1280, 900)
 			tt.Frame()
@@ -905,7 +905,7 @@ func TestDuelRecenterUsesBoardCenter(t *testing.T) {
 
 	// Small board fully inside viewport clamps cleanly to (0,0) without panic or negative offsets.
 	app := newMinesweeperApp(42)
-	app.diffIdx = 4
+	app.diffIdx = findDifficultyIdx("duel")
 	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 12, Cols: 12, Mines: 1}, true, MemberAnon, 42)
 	tt := ui.NewTester(app.view, 1280, 900)
 	tt.Frame()
@@ -1039,7 +1039,7 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newMinesweeperApp(42)
-			app.diffIdx = 4
+			app.diffIdx = findDifficultyIdx("duel")
 			app.game = NewGame(Difficulty{
 				ID:       "test-" + tc.name,
 				Gameplay: GameplayDuel,
@@ -1156,7 +1156,7 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 
 func TestDuel1000FirstFrameParity(t *testing.T) {
 	app := newMinesweeperApp(42)
-	app.diffIdx = 4
+	app.diffIdx = findDifficultyIdx("duel")
 	app.resetGame(false)
 
 	tt := ui.NewTester(app.view, 1280, 900)
