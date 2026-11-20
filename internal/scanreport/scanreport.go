@@ -1,8 +1,8 @@
 // Package scanreport audits Go source literals for the notebook art
 // direction's copy and colour constraints (issue #5): banned wording,
 // technical terms, duel lines hardcoding board size or duration, and raw
-// colour values outside the palette. It only reports — findings never fail
-// the gate; the report is the checklist the copy ticket works from.
+// colour values outside the palette. The source test fails on copy
+// violations. Raw colours remain report-only until issue #24.
 package scanreport
 
 import (
