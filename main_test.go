@@ -162,17 +162,23 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 		t.Fatalf("expected title and MINES 010 badge in initial view")
 	}
 
-	// Segmented control switches difficulty to RiNG 排练室
-	if err := tt.Click("RiNG 排练室"); err != nil {
-		t.Fatalf("failed clicking segmented difficulty: %v", err)
+	// Setlist popover switches track to 碧天伴走 (RiNG 排练室)
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("failed opening setlist popover: %v", err)
+	}
+	if err := tt.Click("碧天伴走"); err != nil {
+		t.Fatalf("failed selecting 碧天伴走 from setlist popover: %v", err)
 	}
 	if app.diffIdx != 1 || app.game.Cols != 16 || !tt.HasText("MINES 40") {
-		t.Fatalf("expected 16x16 board after clicking RiNG 排练室, got cols=%d", app.game.Cols)
+		t.Fatalf("expected 16x16 board after selecting 碧天伴走, got cols=%d", app.game.Cols)
 	}
 
-	// Switch back to 羽丘天文部
-	if err := tt.Click("羽丘天文部"); err != nil {
-		t.Fatalf("failed clicking 羽丘天文部: %v", err)
+	// Switch back to 迷星叫 (羽丘天文部)
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("failed reopening setlist popover: %v", err)
+	}
+	if err := tt.Click("迷星叫"); err != nil {
+		t.Fatalf("failed selecting 迷星叫 from setlist popover: %v", err)
 	}
 
 	// Click member 椎名立希 (after Tomori -> triggers special banter)

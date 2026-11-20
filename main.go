@@ -51,6 +51,7 @@ type minesweeperApp struct {
 	flagMode        bool
 	allowQuestion   bool
 	showMemes       bool
+	setlistOpen     bool
 	haruhikageAlert bool
 	haruhikageIntro bool
 
@@ -152,6 +153,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.pendingCol = -1
 	a.duelEnded = false
 	a.duelNoticeAt = time.Time{}
+	a.classicSize = 0
 	a.board = newBoardView()
 	a.ripples = nil
 	a.duelPopups = nil
@@ -161,6 +163,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.haruhikageAlert = false
 	a.haruhikageIntro = false
 	a.haruhikageIntroStart = time.Time{}
+	a.setlistOpen = false
 	a.classicHoverRow = -1
 	a.classicHoverCol = -1
 	a.classicHoverHint = HoverHint{}
@@ -452,6 +455,108 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 	}
 }
 
+var (
+	setlistChevronDown = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3.5 6L8 10.5L12.5 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+	setlistChevronUp   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3.5 10L8 5.5L12.5 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+	setlistCheckIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3 8.5L6.5 12L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+)
+
+func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme) {
+	cur := a.game.Difficulty
+	trigger := ui.ButtonBase(c.Key("setlist-trigger")).
+		Padding(6, 12).Radius(6).Cursor(ui.CursorPointer).
+		Label("歌单").HasPopup(ui.PopupListBox).Expanded(a.setlistOpen)
+
+	if a.setlistOpen {
+		trigger.Background(t.Accent.Alpha(0.14).Over(t.Surface)).Border(1, t.Accent.Alpha(0.7))
+	} else if trigger.Hovered() {
+		trigger.Background(pal.Slip.Alpha(0.85).Over(t.Surface)).Border(1, pal.Rule)
+	} else {
+		trigger.Background(pal.Slip.Alpha(0.45).Over(t.Surface)).Border(1, pal.Rule)
+	}
+	trigger.Shadow(0, 1, 2, 0, pal.SlipShade.Alpha(0.45))
+
+	trigger.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(8).PassThrough().Children(func() {
+			ui.Box(c).Size(3, 14).Radius(2).Background(t.Accent).PassThrough()
+			ui.Text(c, "歌单").FontSize(12).Bold().TextColor(t.Accent).PassThrough()
+			ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()
+			ui.Text(c, fmt.Sprintf("《%s》", cur.Song)).FontSize(13).Bold().TextColor(t.Text).PassThrough()
+			if cur.Label != "" && cur.Label != cur.Song {
+				ui.Text(c, cur.Label).FontSize(11).TextColor(t.TextMuted).PassThrough()
+			}
+			chevron, chevronColor := setlistChevronDown, pal.InkMuted
+			if a.setlistOpen {
+				chevron, chevronColor = setlistChevronUp, t.Accent
+			}
+			ui.Icon(c, chevron).Size(13, 13).TextColor(chevronColor).PassThrough()
+		})
+	})
+
+	if trigger.Clicked() {
+		a.setlistOpen = !a.setlistOpen
+	}
+
+	ui.Popover(c.Key("setlist-popover"), trigger, &a.setlistOpen, func() {
+		ui.Column(c).Width(316).Gap(4).Children(func() {
+			ui.Row(c).FillWidth().Padding(2, 6, 6, 6).AlignItems(ui.Center).Justify(ui.SpaceBetween).
+				Draw(func(p *ui.Painter, r ui.Rect) {
+					p.Line(r.X, r.Y+r.H-0.5, r.X+r.W, r.Y+r.H-0.5, 1, pal.Rule)
+				}).Children(func() {
+				ui.Text(c, "排练歌单").FontSize(12).Bold().TextColor(t.TextMuted)
+				ui.Textf(c, "%d 首", len(Difficulties)).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum")
+			})
+
+			ui.Column(c).FillWidth().Gap(2).Children(func() {
+				for i, d := range Difficulties {
+					selected := i == a.diffIdx
+					item := ui.ButtonBase(c.Key(i)).FillWidth().Padding(7, 10).Radius(6).
+						Cursor(ui.CursorPointer).Label(d.Song).Selected(selected)
+
+					if selected {
+						item.Background(t.Accent.Alpha(0.14).Over(t.Surface))
+					} else if item.Hovered() {
+						item.Background(pal.Slip.Alpha(0.6).Over(t.Surface))
+					}
+
+					if i < len(Difficulties)-1 {
+						item.Draw(func(p *ui.Painter, r ui.Rect) {
+							p.Line(r.X+6, r.Y+r.H-0.5, r.X+r.W-6, r.Y+r.H-0.5, 1, pal.Grid)
+						})
+					}
+
+					item.Children(func() {
+						ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).PassThrough().Children(func() {
+							ui.Textf(c, "%02d", i+1).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum").PassThrough()
+							songEl := ui.Text(c, d.Song).FontSize(13).PassThrough()
+							if selected {
+								songEl.Bold().TextColor(t.Accent)
+							} else {
+								songEl.TextColor(t.Text)
+							}
+							if d.Label != "" && d.Label != d.Song {
+								ui.Text(c, d.Label).FontSize(11).TextColor(t.TextMuted).PassThrough()
+							}
+							ui.Spacer(c)
+							if selected {
+								ui.Icon(c, setlistCheckIcon).Size(13, 13).TextColor(t.Accent).PassThrough()
+							}
+						})
+					})
+
+					if item.Clicked() {
+						a.setlistOpen = false
+						if i != a.diffIdx {
+							a.diffIdx = i
+							a.resetGame(false)
+						}
+					}
+				}
+			})
+		})
+	})
+}
+
 func (a *minesweeperApp) duelHUD(c *ui.Context) {
 	d := a.game.duel
 	ui.Row(c).Grow(0).Padding(8, 10).Gap(12).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
@@ -633,15 +738,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		// Setlist & Toolbar Row
 		ui.Row(c).Padding(8, 12).Radius(10).Background(t.Surface).Border(1, t.Border).
 			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Wrap().Children(func() {
-			if ui.Segmented(c, &a.diffIdx,
-				Difficulties[0].Label,
-				Difficulties[1].Label,
-				Difficulties[2].Label,
-				Difficulties[3].Label,
-				Difficulties[4].Label,
-			).Label("排练曲目难度").Changed() {
-				a.resetGame(false)
-			}
+			a.setlistControl(c, pal, t)
 
 			ui.ToggleGroup(c, func() {
 				ui.Toggle(c, &a.flagMode, "标旗模式 (F)").Tooltip("开启后左键直接贴创可贴/插旗")
