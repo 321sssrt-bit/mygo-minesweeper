@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"image/png"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -943,28 +942,5 @@ func TestHaruhikageMovedToDuelAndKageiromaiLossIsPlain(t *testing.T) {
 	if duelApp.haruhikageIntro || !duelApp.haruhikageAlert || !dtt.HasText("为什么要演奏春日影？！") {
 		t.Fatalf("expected Haruhikage dialog after drama overlay, intro=%v alert=%v",
 			duelApp.haruhikageIntro, duelApp.haruhikageAlert)
-	}
-}
-
-// TestSnapshotShippedSetlistPopover renders the shipped Difficulties setlist
-// popover expanded in the default 1280x900 viewport for both day and night
-// themes when MYGO_SNAPSHOT_DIR is set.
-func TestSnapshotShippedSetlistPopover(t *testing.T) {
-	dir := os.Getenv("MYGO_SNAPSHOT_DIR")
-	if dir == "" {
-		t.Skip("set MYGO_SNAPSHOT_DIR to render snapshots")
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, dark := range []bool{false, true} {
-		suffix := "day"
-		if dark {
-			suffix = "night"
-		}
-		app := stageLiveScene(dark)
-		app.setlistOpen = true
-		name := fmt.Sprintf("setlist-shipped-default-%s.png", suffix)
-		writeSnapshot(t, app, 1280, 900, filepath.Join(dir, name))
 	}
 }
