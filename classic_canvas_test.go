@@ -1279,16 +1279,29 @@ func TestClassicCanvasRippleWaveVisualAndLifecycle(t *testing.T) {
 			wantHintCenter := memberImage(MemberTomori).Alpha(0.38).Over(pal.Board)
 			assertColorNear(t, "hint center overrides ripple", sampleCanvasPixel(tt.Image(), numTile.X+3, numTile.Y+3, 2), wantHintCenter)
 
-			// Reset clears active ripples immediately, and skill reveal (KeyE) triggers ripples too.
+			// Reset clears active ripples immediately.
 			tt.Key(0, ui.KeyR)
 			if len(app.ripples) != 0 {
 				t.Fatalf("expected KeyR to clear ripples, remaining=%d", len(app.ripples))
 			}
-			tt.ClickAt(originTile.X+originTile.W/2, originTile.Y+originTile.H/2)
-			tt.Advance(rippleMaxDelay + rippleDuration + 50*time.Millisecond)
-			if len(app.ripples) != 0 {
-				t.Fatalf("expected post-reset reveal ripples expired, remaining=%d", len(app.ripples))
-			}
+
+			// Skill reveal (KeyE) on a deterministic in-progress classic board also populates ripples and clears on KeyR.
+			skillGame := NewGame(Difficulty{
+				ID:           "classic-skill-ripple-fx",
+				Gameplay:     GameplayClassic,
+				Rows:         6,
+				Cols:         6,
+				Mines:        1,
+				SkillCharges: 1,
+			}, true, MemberTomori, 7)
+			skillGame.FirstClick = true
+			skillGame.Status = StatusPlaying
+			skillGame.Cell(5, 5).IsMine = true
+			skillGame.RecomputeAdjacency()
+			skillGame.Cell(0, 0).Revealed = true
+			skillGame.RevealedSafe = 1
+			app.game = skillGame
+			tt.Frame()
 			tt.Key(0, ui.KeyE)
 			if len(app.ripples) == 0 {
 				t.Fatal("expected KeyE skill reveal on classic canvas to populate ripples")
