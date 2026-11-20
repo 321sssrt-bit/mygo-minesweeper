@@ -874,19 +874,20 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	}
 
 	// 春日影名场面弹窗
-	if a.haruhikageAlert {
-		c.SetTheme(haruhikageFor(pal.Dark).dialogTheme(baseTheme))
-	}
-	switch ui.AlertDialog(c, &a.haruhikageAlert,
-		"为什么要演奏春日影？！",
-		"「明明说好不再弹这首曲子的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
-		"对不起，我错了", "一辈子重开") {
-	case 0:
-		a.pushChat("长崎爽世", FindMember(MemberSoyorin).ColorHex, "「道歉的话，下次别再擅自演奏这首曲子了呢。」")
-	case 1:
-		a.resetGame(false)
-	}
-	c.SetTheme(baseTheme)
+	// Scope AlertDialog via a zero-size ui.Themed container so mygo/ui's
+	// overlay binds the dialog theme (focus ring, text, buttons) locally
+	// instead of falling back to the window theme.
+	ui.Themed(c, haruhikageFor(pal.Dark).dialogTheme(baseTheme)).Absolute().Size(0, 0).Children(func() {
+		switch ui.AlertDialog(c, &a.haruhikageAlert,
+			"为什么要演奏春日影？！",
+			"「明明说好不再弹这首曲子的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
+			"对不起，我错了", "一辈子重开") {
+		case 0:
+			a.pushChat("长崎爽世", FindMember(MemberSoyorin).ColorHex, "「道歉的话，下次别再擅自演奏这首曲子了呢。」")
+		case 1:
+			a.resetGame(false)
+		}
+	})
 
 	root := ui.Column(c).Fill().Padding(14).Gap(10)
 	if pal.Lamp.A > 0 {

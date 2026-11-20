@@ -1364,8 +1364,24 @@ func TestHaruhikagePaperThemeContrastPixelsAndFlows(t *testing.T) {
 			if forgiveRect, ok := tt.Find("对不起，我错了"); !ok || !rectContainsColor(dlgImg, forgiveRect, drama.DialogSurface, 4) {
 				t.Errorf("AlertDialog secondary button %+v (found=%v) did not render palette DialogSurface %s", forgiveRect, ok, hexOf(drama.DialogSurface))
 			}
-			if restartRect, ok := tt.Find("一辈子重开"); !ok || !rectContainsColor(dlgImg, restartRect, drama.DialogAccent, 4) {
+			restartRect, ok := tt.Find("一辈子重开")
+			if !ok || !rectContainsColor(dlgImg, restartRect, drama.DialogAccent, 4) {
 				t.Errorf("AlertDialog primary button %+v (found=%v) did not render palette DialogAccent %s", restartRect, ok, hexOf(drama.DialogAccent))
+			}
+
+			// Verify keyboard focus stays scoped to the dialog theme (not baseTheme.Focus).
+			tt.Key(0, ui.KeyTab)
+			tt.Frame()
+			focusImg := tt.Image()
+			forgiveRect, _ := tt.Find("对不起，我错了")
+			ringBand := ui.Rect{
+				X: min(forgiveRect.X, restartRect.X) - 6,
+				Y: min(forgiveRect.Y, restartRect.Y) - 6,
+				W: max(forgiveRect.X+forgiveRect.W, restartRect.X+restartRect.W) - min(forgiveRect.X, restartRect.X) + 12,
+				H: max(forgiveRect.Y+forgiveRect.H, restartRect.Y+restartRect.H) - min(forgiveRect.Y, restartRect.Y) + 12,
+			}
+			if rectContainsColor(focusImg, ringBand, baseTheme.Focus, 6) {
+				t.Errorf("AlertDialog keyboard focus ring leaked baseTheme.Focus %s instead of dialog theme focus %s", hexOf(baseTheme.Focus), hexOf(dlgTheme.Focus))
 			}
 
 			if err := tt.Click("对不起，我错了"); err != nil {
@@ -1412,9 +1428,9 @@ func TestSnapshotHaruhikage(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeHaruhikage := func(dark, showDialog bool, filename string) {
+	writeHaruhikage := func(dark, showDialog bool, width, height int, filename string) {
 		app := stageDuelScene(dark)
-		tt := ui.NewTester(app.view, 1280, 900)
+		tt := ui.NewTester(app.view, width, height)
 		tt.SetScale(2)
 		elapsed := app.game.duel.Elapsed
 		app.game.duel.NextAI = 1e9
@@ -1447,7 +1463,9 @@ func TestSnapshotHaruhikage(t *testing.T) {
 		if dark {
 			suffix = "night"
 		}
-		writeHaruhikage(dark, false, fmt.Sprintf("haruhikage-overlay-default-%s.png", suffix))
-		writeHaruhikage(dark, true, fmt.Sprintf("haruhikage-dialog-default-%s.png", suffix))
+		for _, vp := range snapshotViewports {
+			writeHaruhikage(dark, false, vp.width, vp.height, fmt.Sprintf("haruhikage-overlay-%s-%s.png", vp.name, suffix))
+			writeHaruhikage(dark, true, vp.width, vp.height, fmt.Sprintf("haruhikage-dialog-%s-%s.png", vp.name, suffix))
+		}
 	}
 }
