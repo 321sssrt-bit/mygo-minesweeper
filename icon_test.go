@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"io"
 	"os"
@@ -250,5 +251,148 @@ func TestAppIconMarksFollowBandOrder(t *testing.T) {
 			t.Fatalf("%s's mark (centre x %.0f) is not right of %s's (%.0f); want band order %v", id, x, prevID, prev, iconOrder)
 		}
 		prev, prevID = x, id
+	}
+}
+
+func compositeOver(bg ui.Color, fg *image.RGBA) *image.RGBA {
+	out := image.NewRGBA(fg.Bounds())
+	draw.Draw(out, out.Bounds(), image.NewUniform(color.NRGBA{R: bg.R, G: bg.G, B: bg.B, A: bg.A}), image.Point{}, draw.Src)
+	draw.Draw(out, out.Bounds(), fg, fg.Bounds().Min, draw.Over)
+	return out
+}
+
+func maxChannelDiff(a, b color.Color) int {
+	ca := color.RGBA64Model.Convert(a).(color.RGBA64)
+	cb := color.RGBA64Model.Convert(b).(color.RGBA64)
+	worst := 0
+	for _, d := range [][2]uint16{{ca.R, cb.R}, {ca.G, cb.G}, {ca.B, cb.B}, {ca.A, cb.A}} {
+		diff := int(d[0]>>8) - int(d[1]>>8)
+		worst = max(worst, diff, -diff)
+	}
+	return worst
+}
+
+// TestHeaderMiniIconMatchesAppIcon checks that bandMark and the top-left header
+// icon in minesweeperApp.view render from the same resources/icon.svg source as
+// the shipped app icon, staying on the day paper in both themes.
+func TestHeaderMiniIconMatchesAppIcon(t *testing.T) {
+	const (
+		logicalSize = 40
+		scale       = 2
+		pxSize      = logicalSize * scale
+		nudge       = 2
+		maxDiff     = 8
+	)
+	svg, err := ui.ParseSVG(readIconSource(t))
+	if err != nil {
+		t.Fatalf("parse %s: %v", iconSource, err)
+	}
+	wantRaw := svg.Image(pxSize, pxSize, nil)
+	opaqueCount := 0
+	for y := 0; y < pxSize; y++ {
+		for x := 0; x < pxSize; x++ {
+			if wantRaw.RGBAAt(x, y).A == 255 {
+				opaqueCount++
+			}
+		}
+	}
+	if opaqueCount == 0 {
+		t.Fatalf("%s rendered no opaque pixels", iconSource)
+	}
+
+	for _, pal := range []*palette{dayPaper, nightPaper} {
+		name := "day"
+		if pal.Dark {
+			name = "night"
+		}
+		t.Run("bandMark/"+name, func(t *testing.T) {
+			tt := ui.NewTester(func(c *ui.Context) {
+				if pal.Dark {
+					c.SetTheme(ui.DarkTheme())
+				} else {
+					c.SetTheme(ui.LightTheme())
+				}
+				ui.Box(c).Size(logicalSize, logicalSize).Background(pal.Desk).Children(func() {
+					bandMark(c, logicalSize)
+				})
+			}, logicalSize, logicalSize)
+			tt.SetScale(scale)
+			tt.Frame()
+
+			got := tt.Image()
+			want := compositeOver(pal.Desk, wantRaw)
+			if got.Bounds() != want.Bounds() {
+				t.Fatalf("bandMark rendered %v, want %v", got.Bounds(), want.Bounds())
+			}
+			off := 0
+			for y := 0; y < pxSize; y++ {
+				for x := 0; x < pxSize; x++ {
+					worst := maxChannelDiff(got.At(x, y), want.At(x, y))
+					if worst > maxDiff {
+						t.Fatalf("bandMark differs from %s at (%d, %d) by %d/255", iconSource, x, y, worst)
+					}
+					if worst > nudge {
+						off++
+					}
+				}
+			}
+			if limit := pxSize * pxSize / 50; off > limit {
+				t.Fatalf("bandMark differs from %s at %d pixels (limit %d)", iconSource, off, limit)
+			}
+		})
+
+		t.Run("header/"+name, func(t *testing.T) {
+			app := newMinesweeperApp(1)
+			app.darkMode = pal.Dark
+			tt := ui.NewTester(app.view, 1280, 900)
+			tt.SetScale(scale)
+			tt.Frame()
+
+			img := tt.Image()
+			want := compositeOver(pal.Desk, wantRaw)
+
+			// Search the top-left header area for the 80x80 icon patch.
+			// In night mode the desk lamp gradient sits behind the transparent
+			// outer margin, so compare opaque interior pixels in night mode and
+			// all pixels in day mode.
+			foundX, foundY := -1, -1
+			for oy := 0; oy <= 60 && foundX < 0; oy++ {
+				for ox := 0; ox <= 60; ox++ {
+					off := 0
+					limit := pxSize * pxSize / 50
+					if pal.Dark {
+						limit = opaqueCount / 50
+					}
+					ok := true
+					for y := 0; y < pxSize && ok; y++ {
+						for x := 0; x < pxSize; x++ {
+							if pal.Dark && wantRaw.RGBAAt(x, y).A != 255 {
+								continue
+							}
+							worst := maxChannelDiff(img.At(ox+x, oy+y), want.At(x, y))
+							if worst > maxDiff {
+								ok = false
+								break
+							}
+							if worst > nudge {
+								off++
+								if off > limit {
+									ok = false
+									break
+								}
+							}
+						}
+					}
+					if ok {
+						foundX, foundY = ox, oy
+						break
+					}
+				}
+			}
+			if foundX < 0 {
+				t.Fatalf("top-left header in %s mode does not contain the %dx%d render of %s", name, pxSize, pxSize, iconSource)
+			}
+			t.Logf("matched %s (%dx%d) in %s header at physical (%d, %d)", iconSource, pxSize, pxSize, name, foundX, foundY)
+		})
 	}
 }
