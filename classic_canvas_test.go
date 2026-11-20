@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image"
 	"testing"
 	"time"
 
@@ -661,5 +662,371 @@ func TestClassicCanvasPanZoomMinimapAndBoundsSafety(t *testing.T) {
 	ttSmall.RightClickAt(outsideX, outsideY)
 	if appSmall.game.FirstClick || appSmall.game.FlagsPlaced != 0 || appSmall.game.Moves != 0 {
 		t.Fatal("clicking outside 9x9 board cells mutated game state")
+	}
+}
+
+func classicCanvasCellRect(board ui.Rect, v *boardView, row, col int) ui.Rect {
+	x := board.X + float32(col)*v.Cell - v.X
+	y := board.Y + float32(row)*v.Cell - v.Y
+	return ui.Rect{X: x + 1, Y: y + 1, W: v.Cell - 2, H: v.Cell - 2}
+}
+
+func countMatchingPixels(img *image.RGBA, r ui.Rect, scale float32, want ui.Color, tol int) int {
+	x0, y0 := int(r.X*scale), int(r.Y*scale)
+	x1, y1 := int((r.X+r.W)*scale), int((r.Y+r.H)*scale)
+	count := 0
+	for py := y0; py < y1; py++ {
+		for px := x0; px < x1; px++ {
+			got := img.RGBAAt(px, py)
+			if absInt(int(got.R)-int(want.R)) <= tol &&
+				absInt(int(got.G)-int(want.G)) <= tol &&
+				absInt(int(got.B)-int(want.B)) <= tol {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func stageClassicCanvasAllStatesBoard(dark bool) (*minesweeperApp, map[string][2]int) {
+	app := newMinesweeperApp(7)
+	app.darkMode = dark
+	app.memberID = MemberSoyorin
+	app.allowQuestion = true
+	app.game = NewGame(Difficulty{
+		ID:           "classic-paper-test",
+		Label:        "经典画布测试",
+		Song:         "迷星叫",
+		Gameplay:     GameplayClassic,
+		Rows:         6,
+		Cols:         6,
+		Mines:        4,
+		SkillCharges: 1,
+	}, true, MemberSoyorin, 7)
+	g := app.game
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	// Mines at (0,0), (0,2), (0,4), (5,5): keeps bottom-left area open and
+	// lets us stage every single classic visual state via public Game API.
+	g.Cell(0, 0).IsMine = true // right flag (art.Flag)
+	g.Cell(0, 2).IsMine = true // Soyorin shield (art.Shield)
+	g.Cell(0, 4).IsMine = true // unhit mine revealed on loss (art.Knot)
+	g.Cell(5, 5).IsMine = true // hit mine triggering loss (art.KnotHit)
+	g.RecomputeAdjacency()
+
+	// Reveal safe empty (3,0) -> flood-fills open empty ground and numbered border.
+	g.Reveal(3, 0)
+	// Flag mine (0,0) -> normal band-aid.
+	g.ToggleFlag(0, 0, false)
+	// Trigger Soyorin shield on mine (0,2) -> golden shield band-aid.
+	g.Reveal(0, 2)
+	// Misflag safe (0,1) -> becomes WrongFlag on loss.
+	g.ToggleFlag(0, 1, false)
+	// Mark safe (0,3) with ? -> stays Questioned on loss.
+	g.ToggleFlag(0, 3, true)
+	g.ToggleFlag(0, 3, true)
+	// Leave safe (0,5) unrevealed as a plain paper slip.
+	// Step on mine (5,5) with shield spent -> StatusLost, revealing (0,4) and (5,5).
+	g.Reveal(5, 5)
+
+	coords := map[string][2]int{
+		"flag":     {0, 0},
+		"wrong":    {0, 1},
+		"shield":   {0, 2},
+		"question": {0, 3},
+		"knot":     {0, 4},
+		"slip":     {0, 5},
+		"number":   {1, 0},
+		"empty":    {3, 0},
+		"hit":      {5, 5},
+	}
+	return app, coords
+}
+
+// Classic cells drawn on the shared canvas reuse the notebook paper style in
+// both day and night themes, covering every classic cell state without picking
+// up duel territory washes or duel flag outlines.
+func TestClassicCanvasPaintsPaperCellsDayAndNight(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app, coords := stageClassicCanvasAllStatesBoard(dark)
+			if app.game.Status != StatusLost {
+				t.Fatalf("expected StatusLost, got %v", app.game.Status)
+			}
+			tt := ui.NewTester(classicCanvasTestView(app), 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+
+			board, ok := tt.Find("经典棋盘")
+			if !ok {
+				t.Fatal("classic canvas board missing")
+			}
+			img := tt.Image()
+			pal := paperFor(dark)
+			v := app.board
+
+			sampleCenter := func(name string) ui.Color {
+				at := coords[name]
+				tile := classicCanvasCellRect(board, v, at[0], at[1])
+				px := img.RGBAAt(int((tile.X+tile.W/2)*2), int((tile.Y+tile.H/2)*2))
+				return ui.Color{R: px.R, G: px.G, B: px.B, A: px.A}
+			}
+
+			// Plain paper slip paints pal.Slip; bare empty revealed cell paints pal.Board.
+			if got := sampleCenter("slip"); !near(got.R, pal.Slip.R) || !near(got.G, pal.Slip.G) || !near(got.B, pal.Slip.B) {
+				t.Errorf("slip center painted %s, want %s", hexOf(got), hexOf(pal.Slip))
+			}
+			if got := sampleCenter("empty"); !near(got.R, pal.Board.R) || !near(got.G, pal.Board.G) || !near(got.B, pal.Board.B) {
+				t.Errorf("empty revealed cell painted %s, want %s", hexOf(got), hexOf(pal.Board))
+			}
+
+			// Number cell uses bare paper + classic numberInk (no duel territory wash).
+			numAt := coords["number"]
+			numCell := app.game.Cell(numAt[0], numAt[1])
+			if !numCell.Revealed || numCell.Adjacent <= 0 {
+				t.Fatalf("expected revealed number at %v, got %+v", numAt, numCell)
+			}
+			numTile := classicCanvasCellRect(board, v, numAt[0], numAt[1])
+			numInk := numberInk(numCell.Adjacent, dark)
+			if got := countMatchingPixels(img, numTile, 2, numInk, 18); got < 12 {
+				t.Errorf("number %d cell had only %d pixels near ink %s", numCell.Adjacent, got, hexOf(numInk))
+			}
+			if corner := img.RGBAAt(int((numTile.X+2)*2), int((numTile.Y+2)*2)); !near(corner.R, pal.Board.R) || !near(corner.G, pal.Board.G) || !near(corner.B, pal.Board.B) {
+				t.Errorf("number cell background painted #%02X%02X%02X, want bare paper %s", corner.R, corner.G, corner.B, hexOf(pal.Board))
+			}
+
+			// Normal classic flag draws band-aid without duel owner outline.
+			flagTile := classicCanvasCellRect(board, v, coords["flag"][0], coords["flag"][1])
+			if got := countMatchingPixels(img, flagTile, 2, pal.BandAid, 18); got < 20 {
+				t.Errorf("normal flag had only %d pixels near band-aid %s", got, hexOf(pal.BandAid))
+			}
+			if duelBorder := countMatchingPixels(img, flagTile, 2, duelOwnerColor(DuelPlayer), 16); duelBorder > 0 {
+				t.Errorf("classic flag picked up %d duel player outline pixels", duelBorder)
+			}
+
+			// Soyorin shield flag draws golden shield band-aid without duel owner outline.
+			shieldTile := classicCanvasCellRect(board, v, coords["shield"][0], coords["shield"][1])
+			soyoGold := memberImage(MemberSoyorin)
+			if got := countMatchingPixels(img, shieldTile, 2, soyoGold, 18); got < 20 {
+				t.Errorf("shield flag had only %d pixels near Soyorin gold %s", got, hexOf(soyoGold))
+			}
+			if duelBorder := countMatchingPixels(img, shieldTile, 2, duelOwnerColor(DuelPlayer), 16); duelBorder > 0 {
+				t.Errorf("classic shield flag picked up %d duel player outline pixels", duelBorder)
+			}
+
+			// Wrong flag draws red cross ink over the band-aid.
+			wrongTile := classicCanvasCellRect(board, v, coords["wrong"][0], coords["wrong"][1])
+			if got := countMatchingPixels(img, wrongTile, 2, pal.BoomInk, 24); got < 16 {
+				t.Errorf("wrong flag had only %d pixels near boom ink %s", got, hexOf(pal.BoomInk))
+			}
+
+			// ? mark draws a graphite ? glyph on the paper slip (distinct from blank slip).
+			qTile := classicCanvasCellRect(board, v, coords["question"][0], coords["question"][1])
+			if got := countMatchingPixels(img, qTile, 2, pal.Graphite, 24); got < 12 {
+				t.Errorf("questioned cell had only %d pixels near graphite %s", got, hexOf(pal.Graphite))
+			}
+			slipTile := classicCanvasCellRect(board, v, coords["slip"][0], coords["slip"][1])
+			if got := countMatchingPixels(img, slipTile, 2, pal.Graphite, 24); got != 0 {
+				t.Errorf("blank slip unexpectedly had %d graphite pixels", got)
+			}
+
+			// Revealed unhit mine draws graphite knot on bare paper.
+			knotTile := classicCanvasCellRect(board, v, coords["knot"][0], coords["knot"][1])
+			if got := countMatchingPixels(img, knotTile, 2, pal.Graphite, 24); got < 20 {
+				t.Errorf("unhit mine had only %d knot pixels near %s", got, hexOf(pal.Graphite))
+			}
+
+			// Hit exploded mine paints pal.Boom wash over pal.Board + pal.BoomInk knot.
+			hitTile := classicCanvasCellRect(board, v, coords["hit"][0], coords["hit"][1])
+			boomBg := pal.Boom.Over(pal.Board)
+			if corner := img.RGBAAt(int((hitTile.X+2)*2), int((hitTile.Y+2)*2)); !near(corner.R, boomBg.R) || !near(corner.G, boomBg.G) || !near(corner.B, boomBg.B) {
+				t.Errorf("hit mine background painted #%02X%02X%02X, want %s", corner.R, corner.G, corner.B, hexOf(boomBg))
+			}
+			if got := countMatchingPixels(img, hitTile, 2, pal.BoomInk, 24); got < 20 {
+				t.Errorf("hit mine had only %d knot pixels near %s", got, hexOf(pal.BoomInk))
+			}
+		})
+	}
+}
+
+// Zoomed out below the prop/glyph detail threshold (Cell=10), every classic
+// mark and mine keeps a distinct ink dot so flags, shields, wrong flags, ?
+// marks, and mines never collapse into blank slips or empty ground.
+func TestClassicCanvasZoomedOutMarksStayReadable(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app, coords := stageClassicCanvasAllStatesBoard(dark)
+			tt := ui.NewTester(classicCanvasTestView(app), 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+			app.board.Cell = 10
+			app.board.clamp(app.game)
+			tt.Frame()
+
+			board, ok := tt.Find("经典棋盘")
+			if !ok {
+				t.Fatal("classic canvas board missing")
+			}
+			img := tt.Image()
+			pal := paperFor(dark)
+			v := app.board
+
+			wantCenter := map[string]ui.Color{
+				"slip":     pal.Slip,
+				"empty":    pal.Board,
+				"flag":     pal.BandAidEdge,
+				"shield":   pal.InkOf(memberImage(MemberSoyorin)),
+				"wrong":    pal.BoomInk,
+				"question": pal.Graphite,
+				"knot":     pal.Graphite,
+				"hit":      pal.BoomInk,
+			}
+			for kind, want := range wantCenter {
+				at := coords[kind]
+				tile := classicCanvasCellRect(board, v, at[0], at[1])
+				got := img.RGBAAt(int((tile.X+tile.W/2)*2), int((tile.Y+tile.H/2)*2))
+				if !near(got.R, want.R) || !near(got.G, want.G) || !near(got.B, want.B) {
+					t.Errorf("zoomed-out %s (%d,%d) center painted #%02X%02X%02X, want %s",
+						kind, at[0], at[1], got.R, got.G, got.B, hexOf(want))
+				}
+			}
+		})
+	}
+}
+
+// Zoomed-out state dots are classic-only: in duel mode, shield flags and
+// settled wrong flags keep their side's outline without adding center dots.
+func TestDuelZoomedOutShieldAndWrongFlagStayDotFree(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			app := newMinesweeperApp(7)
+			app.darkMode = dark
+			app.memberID = MemberSoyorin
+			app.diffIdx = 4
+			app.game = NewGame(Difficulty{
+				ID:           "duel-zoom-test",
+				Gameplay:     GameplayDuel,
+				Rows:         8,
+				Cols:         8,
+				Mines:        2,
+				SkillCharges: 1,
+				DuelDuration: 60,
+				AIInterval:   100,
+			}, true, MemberSoyorin, 7)
+			g := app.game
+			g.FirstClick = true
+			g.Status = StatusPlaying
+			g.Cell(0, 0).IsMine = true
+			g.Cell(7, 7).IsMine = true
+			g.RecomputeAdjacency()
+			// Trigger Soyorin shield on (0,0) and plant a wrong flag on safe (0,1), then settle.
+			g.Reveal(0, 0)
+			g.ToggleFlag(0, 1, false)
+			g.TickDuel(60)
+			if !g.Cell(0, 0).ShieldSaved || !g.Cell(0, 1).WrongFlag {
+				t.Fatalf("expected duel shield and wrong flag, got shield=%+v wrong=%+v", g.Cell(0, 0), g.Cell(0, 1))
+			}
+
+			tt := ui.NewTester(app.view, 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+			app.board.Cell = 11
+			app.board.clamp(g)
+			tt.Frame()
+
+			board, ok := tt.Find("百万格决斗战场")
+			if !ok {
+				t.Fatal("duel board missing")
+			}
+			img := tt.Image()
+			pal := paperFor(dark)
+			v := app.board
+			for name, at := range map[string][2]int{"shield": {0, 0}, "wrong": {0, 1}} {
+				tile := classicCanvasCellRect(board, v, at[0], at[1])
+				got := img.RGBAAt(int((tile.X+tile.W/2)*2), int((tile.Y+tile.H/2)*2))
+				if !near(got.R, pal.Slip.R) || !near(got.G, pal.Slip.G) || !near(got.B, pal.Slip.B) {
+					t.Errorf("duel zoomed-out %s center painted #%02X%02X%02X, want pure slip %s",
+						name, got.R, got.G, got.B, hexOf(pal.Slip))
+				}
+			}
+		})
+	}
+}
+
+func TestClassicCanvasSnapshotScenesCoverAllStates(t *testing.T) {
+	inStageWindow := func(row, col int) bool {
+		return row >= classicCanvasStageRow-6 && row <= classicCanvasStageRow+6 &&
+			col >= classicCanvasStageCol-8 && col <= classicCanvasStageCol+8
+	}
+
+	live := stageClassicCanvasLiveScene(false)
+	if live.game.Status != StatusPlaying {
+		t.Fatalf("classic-canvas-live status=%v, want StatusPlaying", live.game.Status)
+	}
+	if !inStageWindow(live.classicHoverRow, live.classicHoverCol) ||
+		live.game.InspectNumberHover(live.classicHoverRow, live.classicHoverCol, false).Kind != HintChordable {
+		t.Fatalf("classic-canvas-live missing centered chordable hover cell: (%d,%d)", live.classicHoverRow, live.classicHoverCol)
+	}
+	var liveSlips, liveNums, liveFlags, liveShield, liveQ int
+	for i := range live.game.Cells {
+		c := &live.game.Cells[i]
+		if !inStageWindow(c.Row, c.Col) {
+			continue
+		}
+		switch {
+		case c.Revealed && c.Adjacent > 0:
+			liveNums++
+		case c.Flagged && c.ShieldSaved:
+			liveShield++
+		case c.Flagged:
+			liveFlags++
+		case c.Questioned:
+			liveQ++
+		case !c.Revealed:
+			liveSlips++
+		}
+	}
+	if liveSlips == 0 || liveNums == 0 || liveFlags == 0 || liveShield == 0 || liveQ == 0 {
+		t.Fatalf("classic-canvas-live missing centered state: slips=%d nums=%d flags=%d shield=%d q=%d",
+			liveSlips, liveNums, liveFlags, liveShield, liveQ)
+	}
+
+	won := stageClassicCanvasWonScene(false)
+	if won.game.Status != StatusWon || won.game.FlagsPlaced != won.game.Mines {
+		t.Fatalf("classic-canvas-won invalid: status=%v flags=%d mines=%d", won.game.Status, won.game.FlagsPlaced, won.game.Mines)
+	}
+
+	lost := stageClassicCanvasLostScene(false)
+	if lost.game.Status != StatusLost {
+		t.Fatalf("classic-canvas-lost status=%v, want StatusLost", lost.game.Status)
+	}
+	var lostSlips, lostNums, lostFlags, lostShield, lostWrong, lostQ, lostKnots, lostHit int
+	for i := range lost.game.Cells {
+		c := &lost.game.Cells[i]
+		if !inStageWindow(c.Row, c.Col) {
+			continue
+		}
+		switch {
+		case c.Exploded:
+			lostHit++
+		case c.Revealed && c.IsMine:
+			lostKnots++
+		case c.Revealed && c.Adjacent > 0:
+			lostNums++
+		case c.WrongFlag:
+			lostWrong++
+		case c.Flagged && c.ShieldSaved:
+			lostShield++
+		case c.Flagged:
+			lostFlags++
+		case c.Questioned:
+			lostQ++
+		case !c.Revealed:
+			lostSlips++
+		}
+	}
+	if lostSlips == 0 || lostNums == 0 || lostFlags == 0 || lostShield == 0 || lostWrong == 0 || lostQ == 0 || lostKnots == 0 || lostHit == 0 {
+		t.Fatalf("classic-canvas-lost missing centered state: slips=%d nums=%d flags=%d shield=%d wrong=%d q=%d knots=%d hit=%d",
+			lostSlips, lostNums, lostFlags, lostShield, lostWrong, lostQ, lostKnots, lostHit)
 	}
 }

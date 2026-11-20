@@ -330,7 +330,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 			} else {
 				v.clamp(a.game)
 			}
-			a.paintDuelBoard(p, r)
+			a.paintBoard(p, r)
 		})
 
 		if a.game != nil && a.game.duel != nil && a.game.Status == StatusPlaying && a.game.duel.playerStunned() {
@@ -357,7 +357,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 	})
 }
 
-func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
+func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	v, g := a.board, a.game
 	t := p.Theme()
 	now := p.Now()
@@ -367,7 +367,7 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 	if hoverHint.Kind == HintClaimable {
 		hintColor = ui.Hex("#E8A849")
 	} else if hoverHint.Kind == HintChordable {
-		hintColor = ui.Hex(FindMember(a.memberID).ColorHex)
+		hintColor = memberImage(a.memberID)
 	}
 	shakeX, shakeY := a.currentShakeOffset(now)
 	if shakeX != 0 || shakeY != 0 {
@@ -377,10 +377,15 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 	pal, art, inks := paperFor(a.darkMode), artFor(a.darkMode), duelInksFor(a.darkMode)
 	radius := min(4, v.Cell/7)
 	// Numbers, props and slip shadows only once a cell is big enough to
-	// show them; zoomed out, the board is flat slips and washes.
+	// show them; zoomed out, the board is flat slips, washes and state dots.
 	detail := v.Cell >= 16
+	var shieldDot ui.Color
+	if !detail && g.duel == nil {
+		shieldDot = pal.InkOf(memberImage(MemberSoyorin))
+	}
 	numberSize := v.Cell * 0.55
 	var numberW, numberH [len(cellDigits)]float32
+	var questionW, questionH float32
 
 	p.Clip(r, 8, func() {
 		// The canvas is graph paper, as under the classic grid.
@@ -416,15 +421,23 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 					// Flags (a shielded mine included) and unopened cells are
 					// paper slips stuck on the page; opened cells are the page.
 					if cell.Flagged || !cell.Revealed {
-						bg, outline := pal.Slip, ui.Color{}
+						bg, outline, dot := pal.Slip, ui.Color{}, ui.Color{}
 						var prop *ui.SVG
+						question := false
 						switch {
 						case cell.WrongFlag:
-							prop = art.WrongFlag
+							prop, dot = art.WrongFlag, pal.BoomInk
 						case cell.Flagged && cell.ShieldSaved:
-							prop = art.Shield
+							prop, dot = art.Shield, shieldDot
 						case cell.Flagged:
-							prop = art.Flag
+							prop, dot = art.Flag, pal.BandAidEdge
+						case cell.Questioned:
+							question, dot = true, pal.Graphite
+						}
+						// Duel flags already carry their side's outline when
+						// zoomed out; state dots are classic-only.
+						if g.duel != nil {
+							dot = ui.Color{}
 						}
 						// A duel flag is outlined in its side's colour; classic
 						// flags on the canvas belong to no side.
@@ -436,7 +449,14 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 						} else if hoverHint.Kind == HintNone && row == v.HoverRow && col == v.HoverCol {
 							bg = pal.Slip.Mix(pal.Sheet, 0.45)
 						}
-						paintSlip(p, tile, radius, bg, pal.SlipShade, outline, prop, detail)
+						paintSlip(p, tile, radius, bg, pal.SlipShade, outline, prop, dot, detail)
+						if detail && question {
+							mark := ui.Span{Text: "?", Size: numberSize, Weight: 700, Color: pal.Graphite}
+							if questionW == 0 {
+								questionW, questionH = p.MeasureText(0, mark)
+							}
+							p.RichText(tile.X+(tile.W-questionW)/2, tile.Y+(tile.H-questionH)/2, 0, mark)
+						}
 						continue
 					}
 
@@ -471,8 +491,7 @@ func (a *minesweeperApp) paintDuelBoard(p *ui.Painter, r ui.Rect) {
 							if cell.Exploded {
 								ink = pal.BoomInk
 							}
-							s := tile.W * 0.5
-							p.Fill(ui.Rect{X: tile.X + (tile.W-s)/2, Y: tile.Y + (tile.H-s)/2, W: s, H: s}, ink, s/2)
+							paintCellDot(p, tile, ink, 0.5)
 						}
 						continue
 					}
@@ -669,12 +688,19 @@ func propRect(tile ui.Rect) ui.Rect {
 	return ui.Rect{X: tile.X + (tile.W-s)/2, Y: tile.Y + (tile.H-s)/2, W: s, H: s}
 }
 
+// paintCellDot draws a centered circular marker inside tile when zoomed out
+// past the prop/glyph detail threshold.
+func paintCellDot(p *ui.Painter, tile ui.Rect, ink ui.Color, scale float32) {
+	s := min(tile.W, tile.H) * scale
+	p.Fill(ui.Rect{X: tile.X + (tile.W-s)/2, Y: tile.Y + (tile.H-s)/2, W: s, H: s}, ink, s/2)
+}
+
 // paintSlip paints a paper slip stuck on the page, with an optional
-// outline and prop on it; without detail, only a thinner outline. Unlike
-// the classic grid's slips these stay square: the canvas repaints
-// thousands a frame, the tilt is under a pixel at canvas sizes, and
-// turned shadows cost far more to draw.
-func paintSlip(p *ui.Painter, tile ui.Rect, radius float32, bg, shade, outline ui.Color, prop *ui.SVG, detail bool) {
+// outline and prop on it; without detail, only a thinner outline and an
+// optional state dot. Unlike the classic grid's slips these stay square:
+// the canvas repaints thousands a frame, the tilt is under a pixel at
+// canvas sizes, and turned shadows cost far more to draw.
+func paintSlip(p *ui.Painter, tile ui.Rect, radius float32, bg, shade, outline ui.Color, prop *ui.SVG, dot ui.Color, detail bool) {
 	if detail {
 		p.Shadow(tile, radius, 0, 1, 1.5, 0, shade)
 	}
@@ -686,8 +712,14 @@ func paintSlip(p *ui.Painter, tile ui.Rect, radius float32, bg, shade, outline u
 		}
 		p.Stroke(tile, outline, radius, width)
 	}
-	if detail && prop != nil {
-		p.Image(prop, propRect(tile), ui.Contain)
+	if detail {
+		if prop != nil {
+			p.Image(prop, propRect(tile), ui.Contain)
+		}
+		return
+	}
+	if dot.A > 0 {
+		paintCellDot(p, tile, dot, 0.45)
 	}
 }
 
