@@ -122,6 +122,16 @@ func (a *minesweeperApp) bandMode() bool {
 	return a.modeIdx == 0
 }
 
+// classicGridMaxSide is the widest classic board, 《影色舞》's 30×30, that
+// is still laid out as one widget per cell.
+const classicGridMaxSide = 30
+
+// classicOnCanvas reports whether the current classic board is too large
+// for per-cell widgets and plays on the shared pan/zoom canvas instead.
+func (a *minesweeperApp) classicOnCanvas() bool {
+	return !a.isDuel() && max(a.game.Rows, a.game.Cols) > classicGridMaxSide
+}
+
 func (a *minesweeperApp) pushChat(speaker, colorHex, text string) {
 	a.chatLog = append(a.chatLog, chatMessage{
 		Speaker:  speaker,
@@ -1119,6 +1129,10 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					if a.isDuel() {
 						a.duelHUD(c)
 						a.duelBoard(c)
+						return
+					}
+					if a.classicOnCanvas() {
+						a.classicBoard(c)
 						return
 					}
 					// Minesweeper Grid

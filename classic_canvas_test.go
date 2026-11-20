@@ -1671,3 +1671,111 @@ func TestClassicMinimap100x100CornersAndEdgeFlagsStayVisible(t *testing.T) {
 		}
 	}
 }
+
+// classicSurfaceCellAt returns where the real app shell shows a classic
+// cell: its widget on the grid, or its spot on the canvas, panned into view.
+func classicSurfaceCellAt(t *testing.T, tt *ui.Tester, app *minesweeperApp, row, col int) (float32, float32) {
+	t.Helper()
+	if r, ok := tt.Find(fmt.Sprintf("cell-%d-%d", row, col)); ok {
+		return r.X + r.W/2, r.Y + r.H/2
+	}
+	r, ok := tt.Find("经典棋盘")
+	if !ok {
+		t.Fatalf("neither cell-%d-%d nor the classic canvas is on screen", row, col)
+	}
+	v := app.board
+	v.center(app.game, row, col)
+	tt.Frame()
+	return r.X + (float32(col)+0.5)*v.Cell - v.X, r.Y + (float32(row)+0.5)*v.Cell - v.Y
+}
+
+// TestClassicBoardSurfaceFollowsThreshold mounts the real app shell: every
+// shipped classic track and anything up to 《影色舞》's 30×30 keeps one widget
+// per cell, while a board wider or taller than that plays on the shared
+// canvas, where flags, mine counts and losses work the same way.
+func TestClassicBoardSurfaceFollowsThreshold(t *testing.T) {
+	type surfaceCase struct {
+		name   string
+		diff   Difficulty
+		canvas bool
+	}
+	var cases []surfaceCase
+	for _, d := range Difficulties {
+		if d.Gameplay == GameplayClassic {
+			cases = append(cases, surfaceCase{"shipped " + d.ID, d, false})
+		}
+	}
+	cases = append(cases,
+		surfaceCase{"30x30 at the threshold", TrackKageiromai, false},
+		surfaceCase{"30x31 one column past", Difficulty{ID: "wide", Gameplay: GameplayClassic, Rows: 30, Cols: 31, Mines: 150}, true},
+		surfaceCase{"31x30 one row past", Difficulty{ID: "tall", Gameplay: GameplayClassic, Rows: 31, Cols: 30, Mines: 150}, true},
+		surfaceCase{"50x50 utakotoba", TrackUtakotoba, true},
+		surfaceCase{"100x100 mayoiuta", TrackMayoiuta, true},
+	)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newMinesweeperApp(7)
+			app.game = NewGame(tc.diff, app.bandMode(), app.memberID, 7)
+			tt := ui.NewTester(app.view, 1280, 900)
+			g := app.game
+
+			_, onCanvas := tt.Find("经典棋盘")
+			_, onGrid := tt.Find("cell-0-0")
+			if onCanvas != tc.canvas || onGrid == tc.canvas {
+				t.Fatalf("%dx%d board: canvas=%v grid=%v, want canvas=%v", g.Rows, g.Cols, onCanvas, onGrid, tc.canvas)
+			}
+
+			g.FirstClick = true
+			g.Status = StatusPlaying
+			g.Cell(0, 0).IsMine = true
+			g.RecomputeAdjacency()
+			x, y := classicSurfaceCellAt(t, tt, app, 0, 1)
+			tt.RightClickAt(x, y)
+			wantMines := "MINES " + formatDigits(g.Mines-1)
+			if !g.Cell(0, 1).Flagged || !tt.HasText(wantMines) {
+				t.Fatalf("right-click (0,1): flagged=%v, want flag and %q on screen", g.Cell(0, 1).Flagged, wantMines)
+			}
+			x, y = classicSurfaceCellAt(t, tt, app, 0, 0)
+			tt.ClickAt(x, y)
+			if g.Status != StatusLost || !tt.HasText("炸团危机！……要假装无事发生重开吗？") {
+				t.Fatalf("click on mine (0,0): status=%v, want loss and the defeat toast", g.Status)
+			}
+		})
+	}
+}
+
+// TestSetlistSwitchesClassicSurfaceAcrossThreshold picks tracks from the
+// setlist on the seven-track ladder: the board surface follows each pick,
+// both onto the canvas and back to the widget grid.
+func TestSetlistSwitchesClassicSurfaceAcrossThreshold(t *testing.T) {
+	orig := Difficulties
+	Difficulties = sevenTrackSetlist()
+	defer func() { Difficulties = orig }()
+
+	app := newMinesweeperApp(42)
+	tt := ui.NewTester(app.view, 1280, 900)
+	for _, step := range []struct {
+		track  Difficulty
+		canvas bool
+	}{
+		{TrackMayoiuta, true},
+		{TrackKageiromai, false},
+		{TrackUtakotoba, true},
+		{Difficulties[0], false},
+	} {
+		if err := tt.Click("歌单"); err != nil {
+			t.Fatalf("open setlist before %s: %v", step.track.ID, err)
+		}
+		if err := tt.Click(step.track.Song); err != nil {
+			t.Fatalf("pick %s: %v", step.track.ID, err)
+		}
+		if app.game.Difficulty.ID != step.track.ID {
+			t.Fatalf("picked %q, playing %q", step.track.ID, app.game.Difficulty.ID)
+		}
+		_, onCanvas := tt.Find("经典棋盘")
+		_, onGrid := tt.Find("cell-0-0")
+		if onCanvas != step.canvas || onGrid == step.canvas {
+			t.Fatalf("%s: canvas=%v grid=%v, want canvas=%v", step.track.ID, onCanvas, onGrid, step.canvas)
+		}
+	}
+}
