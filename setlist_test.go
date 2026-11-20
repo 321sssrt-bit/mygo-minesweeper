@@ -419,6 +419,6 @@ func TestSnapshotSetlistPopover(t *testing.T) {
 		app := stageLiveScene(dark)
 		app.setlistOpen = true
 		name := fmt.Sprintf("setlist-popover-default-%s.png", suffix)
-		writeSnapshot(t, app, 1280, 900, filepath.Join(dir, name))
+		writeSnapshot(t, app, false, 1280, 900, filepath.Join(dir, name))
 	}
 }
