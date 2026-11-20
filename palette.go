@@ -615,15 +615,16 @@ func bandMark(c *ui.Context, size float32) {
 	ui.Image(c, appIconSVG).Size(size, size)
 }
 
-// drawHatchOverlay paints pencil diagonal hatching over a bar's filled span
-// and strokes its notebook outline. Callers attach it via DrawOver so the
-// widget's native fill stays intact and the outline is not clipped in half.
-func drawHatchOverlay(p *ui.Painter, r ui.Rect, frac float64, col ui.Color, pal *palette) {
+// drawHatchBar paints the notebook pencil-hatched fill and outline via Draw,
+// replacing the widget's fixed-radius solid fill so the 5 DIP capsule matches
+// the notebook style while keeping the widget's accessibility role and value.
+func drawHatchBar(p *ui.Painter, r ui.Rect, frac float64, col ui.Color, pal *palette) {
 	frac = math.Max(0, math.Min(1, frac))
 	w := r.W * float32(frac)
 	if w > 0 {
 		fill := ui.Rect{X: r.X, Y: r.Y, W: w, H: r.H}
 		p.Clip(fill, 5, func() {
+			p.Fill(fill, col.Alpha(0.22), 5)
 			for x := r.X - r.H; x < r.X+w; x += 4.5 {
 				p.Line(x, r.Y+r.H, x+r.H*0.75, r.Y, 1.4, col)
 			}
@@ -632,29 +633,20 @@ func drawHatchOverlay(p *ui.Painter, r ui.Rect, frac float64, col ui.Color, pal 
 	p.Stroke(r, pal.Rule.Alpha(1.6), 5, 1.2)
 }
 
-// hatchProgress renders a ui.Progress bar with notebook pencil hatching
-// overlaid on its native fill so assistive technology reads its progress role
-// and value.
+// hatchProgress renders a ui.Progress bar with notebook pencil hatching so
+// assistive technology reads its progress role and value.
 func hatchProgress(c *ui.Context, label string, frac float64, col ui.Color, pal *palette) {
-	ui.Progress(c, frac).Height(10).FillWidth().Radius(5).
-		ClipInset(0, 0, 0, 0, 5).
-		Background(ui.Transparent).TextColor(col.Alpha(0.22)).
-		Label(label).
-		DrawOver(func(p *ui.Painter, r ui.Rect) {
-			drawHatchOverlay(p, r, frac, col, pal)
+	ui.Progress(c, frac).Height(10).FillWidth().Background(ui.Transparent).Label(label).
+		Draw(func(p *ui.Painter, r ui.Rect) {
+			drawHatchBar(p, r, frac, col, pal)
 		})
 }
 
 // hatchMeter renders a ui.Meter bar in [0, 100] with notebook pencil hatching
-// overlaid on its native fill so assistive technology reads its meter role
-// and value.
+// so assistive technology reads its meter role and value.
 func hatchMeter(c *ui.Context, label string, value float64, col ui.Color, pal *palette) {
-	ui.Meter(c, value, 0, 100, &ui.MeterLevels{NormalColor: col.Alpha(0.22)}).
-		Height(10).FillWidth().Radius(5).
-		ClipInset(0, 0, 0, 0, 5).
-		Background(ui.Transparent).
-		Label(label).
-		DrawOver(func(p *ui.Painter, r ui.Rect) {
-			drawHatchOverlay(p, r, value/100, col, pal)
+	ui.Meter(c, value, 0, 100, nil).Height(10).FillWidth().Background(ui.Transparent).Label(label).
+		Draw(func(p *ui.Painter, r ui.Rect) {
+			drawHatchBar(p, r, value/100, col, pal)
 		})
 }
