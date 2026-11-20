@@ -176,15 +176,19 @@ func TestSetlistAccentContrastMeetsWCAGAA(t *testing.T) {
 		cases := []struct {
 			name string
 			bg   ui.Color
+			base ui.Color
 		}{
-			{"trigger-idle", pal.Slip.Alpha(0.45).Over(theme.Surface)},
-			{"trigger-hover", pal.Slip.Alpha(0.85).Over(theme.Surface)},
-			{"trigger-open", theme.Accent.Alpha(0.14).Over(theme.Surface)},
-			{"popover-selected", theme.Accent.Alpha(0.14).Over(theme.Surface)},
-			{"popover-group-header", theme.Surface},
+			{"trigger-idle", pal.Slip.Alpha(0.45).Over(theme.Surface), bandColor},
+			{"trigger-hover", pal.Slip.Alpha(0.85).Over(theme.Surface), bandColor},
+			{"trigger-open", theme.Accent.Alpha(0.14).Over(theme.Surface), bandColor},
+			{"popover-selected", theme.Accent.Alpha(0.14).Over(theme.Surface), bandColor},
+			{"popover-group-header", theme.Surface, bandColor},
+			{"popover-item-idle-muted", theme.Surface, theme.TextMuted},
+			{"popover-item-hover-muted", pal.Slip.Alpha(0.6).Over(theme.Surface), theme.TextMuted},
+			{"popover-item-selected-muted", theme.Accent.Alpha(0.14).Over(theme.Surface), theme.TextMuted},
 		}
 		for _, tc := range cases {
-			ink := setlistAccentInk(pal, tc.bg)
+			ink := setlistInk(pal, tc.bg, tc.base)
 			ratio := contrast(ink, tc.bg)
 			if ratio < minInkContrast {
 				t.Errorf("dark=%v %s: contrast %.2f < %.1f", dark, tc.name, ratio, minInkContrast)
@@ -260,8 +264,12 @@ func TestSetlistPopoverSevenTracksFitDefaultWindow(t *testing.T) {
 			}
 		}
 		wantSpec := setlistTrackSpec(d)
-		if !tt.HasText(wantSpec) {
+		specRect, ok := tt.Find(wantSpec)
+		if !ok {
 			t.Fatalf("track %d (%q) missing spec text %q in open popover", i, d.Song, wantSpec)
+		}
+		if specRect.X < r.X || specRect.Y < r.Y || specRect.X+specRect.W > r.X+r.W || specRect.Y+specRect.H > r.Y+r.H {
+			t.Fatalf("track %d (%q) spec %q rect %+v lies outside track row %+v", i, d.Song, wantSpec, specRect, r)
 		}
 	}
 
@@ -359,8 +367,12 @@ func TestSetlistGroupsFromGameplayFieldAndDisplaysSpecs(t *testing.T) {
 				t.Fatalf("classic track %q rendered outside classic group: track=%+v classicHdr=%+v duelHdr=%+v", d.Song, r, classicHdr, duelHdr)
 			}
 		}
-		if !tt.HasText(wantSpecs[d.Song]) {
+		specRect, ok := tt.Find(wantSpecs[d.Song])
+		if !ok {
 			t.Fatalf("missing spec %q for %q", wantSpecs[d.Song], d.Song)
+		}
+		if specRect.X < r.X || specRect.Y < r.Y || specRect.X+specRect.W > r.X+r.W || specRect.Y+specRect.H > r.Y+r.H {
+			t.Fatalf("spec %q rect %+v lies outside track row %q %+v", wantSpecs[d.Song], specRect, d.Song, r)
 		}
 	}
 

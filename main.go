@@ -464,13 +464,19 @@ var (
 	setlistCheckIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3 8.5L6.5 12L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 )
 
-// setlistAccentInk derives a WCAG-AA (4.5:1+) ink from the 乐队色 against
-// the exact composited background a setlist control paints beneath its text.
-func setlistAccentInk(pal *palette, bg ui.Color) ui.Color {
+// setlistInk derives a WCAG-AA (4.5:1+) ink from base against the exact
+// composited background a setlist control paints beneath its text.
+func setlistInk(pal *palette, bg, base ui.Color) ui.Color {
 	under := *pal
 	under.Board = bg
 	under.Sheet = bg
-	return under.InkOf(bandColor)
+	return under.InkOf(base)
+}
+
+// setlistAccentInk derives a WCAG-AA (4.5:1+) ink from the 乐队色 against
+// the exact composited background a setlist control paints beneath its text.
+func setlistAccentInk(pal *palette, bg ui.Color) ui.Color {
+	return setlistInk(pal, bg, bandColor)
 }
 
 type setlistEntry struct {
@@ -620,11 +626,15 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 							item := ui.ButtonBase(c.Key(entry.Index)).FillWidth().Padding(6, 10).Radius(6).
 								Cursor(ui.CursorPointer).Label(d.Song).Checked(selected)
 
+							itemBg := t.Surface
 							if selected {
+								itemBg = selectedBg
 								item.Background(selectedBg)
 							} else if item.Hovered() {
-								item.Background(pal.Slip.Alpha(0.6).Over(t.Surface))
+								itemBg = pal.Slip.Alpha(0.6).Over(t.Surface)
+								item.Background(itemBg)
 							}
+							itemMutedInk := setlistInk(pal, itemBg, t.TextMuted)
 
 							if j < len(group.Entries)-1 {
 								item.Draw(func(p *ui.Painter, r ui.Rect) {
@@ -634,7 +644,7 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 
 							item.Children(func() {
 								ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).PassThrough().Children(func() {
-									ui.Textf(c, "%02d", trackNo).Width(18).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum").PassThrough()
+									ui.Textf(c, "%02d", trackNo).Width(18).FontSize(11).TextColor(itemMutedInk).FontFeatures("tnum").PassThrough()
 									ui.Column(c).Grow(1).Gap(2).PassThrough().Children(func() {
 										ui.Row(c).FillWidth().AlignItems(ui.Baseline).Gap(6).PassThrough().Children(func() {
 											songEl := ui.Text(c, d.Song).FontSize(13).PassThrough()
@@ -644,10 +654,10 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 												songEl.TextColor(t.Text)
 											}
 											if d.Label != "" && d.Label != d.Song {
-												ui.Text(c, d.Label).FontSize(11).TextColor(t.TextMuted).PassThrough()
+												ui.Text(c, d.Label).FontSize(11).TextColor(itemMutedInk).PassThrough()
 											}
 										})
-										ui.Text(c, setlistTrackSpec(d)).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum").PassThrough()
+										ui.Text(c, setlistTrackSpec(d)).FontSize(11).TextColor(itemMutedInk).FontFeatures("tnum").PassThrough()
 									})
 									if selected {
 										ui.Icon(c, setlistCheckIcon).Size(13, 13).TextColor(selectedInk).PassThrough()
