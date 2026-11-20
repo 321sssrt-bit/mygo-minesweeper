@@ -17,8 +17,8 @@ type Difficulty struct {
 	Song     string
 	Subtitle string
 	Gameplay Gameplay
-	// Haruhikage marks a 春日影演出 track: a classic loss on it plays
-	// the 「为什么要演奏春日影！？」 scene instead of the plain defeat.
+	// Haruhikage marks a 春日影演出 track: a classic loss or a duel score loss
+	// on it plays the 「为什么要演奏春日影！？」 scene instead of a plain defeat.
 	Haruhikage   bool
 	Rows         int
 	Cols         int
@@ -56,18 +56,7 @@ var Difficulties = []Difficulty{
 		Mines:        40,
 		SkillCharges: 2,
 	},
-	{
-		ID:           "hard",
-		Label:        "春日影 Live",
-		Song:         "春日影 (Crychic Ver.)",
-		Subtitle:     "30×16 · 99雷",
-		Gameplay:     GameplayClassic,
-		Haruhikage:   true,
-		Rows:         16,
-		Cols:         30,
-		Mines:        99,
-		SkillCharges: 3,
-	},
+	TrackKageiromai,
 	{
 		ID:           "forever",
 		Label:        "一辈子契约",
@@ -81,10 +70,11 @@ var Difficulties = []Difficulty{
 	},
 	{
 		ID:           "duel",
-		Label:        "百万格决斗",
-		Song:         "诗超绊 · 决斗 Live",
+		Label:        "春日影 Live",
+		Song:         "春日影",
 		Subtitle:     "1000×1000 · 180000雷 · 05:00",
 		Gameplay:     GameplayDuel,
+		Haruhikage:   true,
 		Rows:         1000,
 		Cols:         1000,
 		Mines:        180000,
@@ -95,8 +85,8 @@ var Difficulties = []Difficulty{
 }
 
 // TrackKageiromai is the 30x30 classic track of the seven-track ladder (spec
-// #1): ~65% no-skill clear rate per the win-rate simulation. Defined here but
-// deliberately absent from Difficulties until its setlist ticket lands.
+// #1): ~65% no-skill clear rate per the win-rate simulation. Listed as the
+// third classic track in Difficulties (#37).
 var TrackKageiromai = Difficulty{
 	ID:           "kageiromai",
 	Label:        "影色舞",

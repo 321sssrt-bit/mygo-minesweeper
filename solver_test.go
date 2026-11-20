@@ -292,11 +292,11 @@ func TestWinRateSimulation(t *testing.T) {
 			t.Fatalf("MYGO_SIM_SEED: %v", err)
 		}
 	}
-	// Spec-measured rates that motivate the seven-track ladder (#1).
-	want := map[string]float64{"hard": 0.24, "forever": 0.44}
+	// Spec-measured rates for the classic tracks in Difficulties (#1, #37).
+	want := map[string]float64{"kageiromai": 0.65, "forever": 0.44}
 	rates := map[string]float64{}
 	for _, diff := range Difficulties {
-		if diff.ID == "duel" {
+		if diff.Gameplay == GameplayDuel {
 			continue
 		}
 		wins, guesses := simulate(diff, games, seed)
@@ -316,13 +316,6 @@ func TestWinRateSimulation(t *testing.T) {
 		if tol := 0.05 + 4*math.Sqrt(p*(1-p)/float64(games)); math.Abs(rate-p) > tol {
 			t.Errorf("%s win rate %.1f%% outside tolerance of %v%% ± %.1fpp", id, rate*100, p*100, tol*100)
 		}
-	}
-	hard, ok1 := rates["hard"]
-	forever, ok2 := rates["forever"]
-	// Ordering only means something once the sample resolves a gap the
-	// size of the cliff: ~500 games puts four joint sigmas inside it.
-	if ok1 && ok2 && games >= 500 && hard >= forever {
-		t.Errorf("ladder cliff missing: hard %.1f%% not below forever %.1f%%", hard*100, forever*100)
 	}
 }
 
@@ -447,7 +440,7 @@ func TestSolverPicksLeastLikelyGuess(t *testing.T) {
 
 func TestSolverTerminates(t *testing.T) {
 	for _, diff := range Difficulties {
-		if diff.ID == "duel" {
+		if diff.Gameplay == GameplayDuel {
 			continue
 		}
 		g := NewGame(diff, false, MemberTomori, 42)
