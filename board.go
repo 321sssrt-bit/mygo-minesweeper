@@ -1040,7 +1040,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		if classic {
 			plot := classicMinimapPlot(mini)
 			view := minimapViewportRect(plot, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
-			paintClassicMinimap(p, g, mini, plot, view, pal, classicMinimapFor(pal.Dark))
+			paintClassicMinimap(p, g, mini, plot, view, pal, classicMinimapForPaper(pal))
 		} else {
 			view := minimapViewportRect(mini, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
 			paintDuelMinimap(p, g, mini, view, t.Border)

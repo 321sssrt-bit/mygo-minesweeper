@@ -86,7 +86,7 @@ func (s *smoothScalar) snap(v float64) {
 }
 
 func (s *smoothScalar) update(target float64, now time.Time, dur time.Duration, reduced bool) (float64, bool) {
-	if !s.init || reduced || dur <= 0 {
+	if !s.init || reduced {
 		s.snap(target)
 		return target, false
 	}
@@ -295,14 +295,15 @@ type minesweeperApp struct {
 	classicHoverCol      int
 	classicHoverHint     HoverHint
 
-	viewMounted         bool
-	lastFrameNow        time.Time
-	popoverEnterKind    appPopover
-	popoverEnterStart   time.Time
-	popoverExitKind     appPopover
-	popoverExitStart    time.Time
-	popoverExitDur      time.Duration
-	suppressPopoverExit bool
+	viewMounted       bool
+	lastFrameNow      time.Time
+	popoverEnterKind  appPopover
+	popoverEnterStart time.Time
+	popoverExitKind   appPopover
+	popoverExitStart  time.Time
+	popoverExitDur    time.Duration
+	popoverExitRect   ui.Rect
+	popoverRects      [3]ui.Rect
 
 	memeDrawerInit   bool
 	memeDrawerOpen   bool
@@ -505,41 +506,59 @@ func (a *minesweeperApp) setActivePopover(kind appPopover) {
 	prev := a.activePopover
 	a.activePopover = kind
 	a.setlistOpen = kind == popoverSetlist
+	startExit := func(closing appPopover) {
+		if closing == popoverNone {
+			return
+		}
+		r := a.popoverRects[closing]
+		if r.W <= 0 || r.H <= 0 {
+			return
+		}
+		a.popoverExitKind = closing
+		a.popoverExitRect = r
+		a.popoverExitStart = a.lastFrameNow
+		a.popoverExitDur = popoverExitDuration
+		if a.motionReducedActive {
+			a.popoverExitDur = popoverReducedFadeDuration
+		}
+	}
 	switch {
 	case kind == prev:
 	case kind == popoverNone:
 		if a.viewMounted {
-			a.popoverExitKind = prev
-			a.popoverExitStart = a.lastFrameNow
-			a.popoverExitDur = popoverExitDuration
-			if a.motionReducedActive {
-				a.popoverExitDur = popoverReducedFadeDuration
-			}
+			startExit(prev)
 			a.popoverEnterKind = popoverNone
 			a.popoverEnterStart = time.Time{}
 		}
 		a.playSound(SoundPopoverClose, 1, 0)
 	default:
 		if a.viewMounted {
+			if prev != popoverNone {
+				startExit(prev)
+			} else if a.popoverExitKind == kind {
+				a.popoverExitKind = popoverNone
+				a.popoverExitStart = time.Time{}
+				a.popoverExitRect = ui.Rect{}
+			}
 			a.popoverEnterKind = kind
 			a.popoverEnterStart = a.lastFrameNow
-			a.popoverExitKind = popoverNone
-			a.popoverExitStart = time.Time{}
 		}
 		a.playSound(SoundPopoverOpen, 1, 0)
 	}
 }
 
 func (a *minesweeperApp) popoverExiting(now time.Time) bool {
-	if a.popoverExitKind == popoverNone || a.popoverExitStart.IsZero() || a.popoverExitDur <= 0 {
+	if a.popoverExitKind == popoverNone || a.popoverExitStart.IsZero() {
 		a.popoverExitKind = popoverNone
 		a.popoverExitStart = time.Time{}
+		a.popoverExitRect = ui.Rect{}
 		return false
 	}
 	elapsed := now.Sub(a.popoverExitStart)
 	if elapsed < 0 || elapsed >= a.popoverExitDur {
 		a.popoverExitKind = popoverNone
 		a.popoverExitStart = time.Time{}
+		a.popoverExitRect = ui.Rect{}
 		return false
 	}
 	return true
@@ -550,54 +569,146 @@ func (a *minesweeperApp) clearPopoverMotion() {
 	a.popoverEnterStart = time.Time{}
 	a.popoverExitKind = popoverNone
 	a.popoverExitStart = time.Time{}
+	a.popoverExitRect = ui.Rect{}
 }
 
 func (a *minesweeperApp) applyPopoverMotion(c *ui.Context, popover ui.Element, kind appPopover, now time.Time) {
-	if !popover.Valid() {
+	if a.popoverEnterKind != kind || a.popoverEnterStart.IsZero() {
 		return
 	}
-	if a.popoverEnterKind == kind && !a.popoverEnterStart.IsZero() {
-		dur := popoverEnterDuration
-		if a.motionReducedActive {
-			dur = popoverReducedFadeDuration
-		}
-		elapsed := now.Sub(a.popoverEnterStart)
-		if elapsed < 0 {
-			elapsed = 0
-		}
-		if elapsed < dur {
-			u := float32(elapsed) / float32(dur)
-			ease := 1 - (1-u)*(1-u)*(1-u)
-			if a.motionReducedActive {
-				popover.Opacity(0.35 + 0.65*u)
-			} else {
-				scale := 0.96 + 0.04*ease
-				offsetY := -8 * (1 - ease)
-				popover.Opacity(0.18 + 0.82*ease).
-					Transform(ui.Scaling(scale, scale).Then(ui.Translation(0, offsetY)))
-			}
-			c.AnimationFrame()
-		} else {
-			a.popoverEnterKind = popoverNone
-			a.popoverEnterStart = time.Time{}
-		}
-	}
-
-	exitMotion := &ui.Motion{Y: -8, Scale: 0.96, Opacity: 0, Flip: true}
-	exitDur := popoverExitDuration
+	dur := popoverEnterDuration
 	if a.motionReducedActive {
-		exitMotion = &ui.Motion{Opacity: 0}
-		exitDur = popoverReducedFadeDuration
+		dur = popoverReducedFadeDuration
 	}
-	if a.suppressPopoverExit {
-		exitDur = -1
-		a.suppressPopoverExit = false
+	elapsed := now.Sub(a.popoverEnterStart)
+	if elapsed < 0 {
+		elapsed = 0
 	}
-	popover.Transition(ui.ElementTransition{
-		Duration:     -1,
-		Exit:         exitMotion,
-		ExitDuration: exitDur,
-		ExitEase:     ui.EaseIn,
+	if elapsed < dur {
+		u := float32(elapsed) / float32(dur)
+		ease := 1 - (1-u)*(1-u)*(1-u)
+		if a.motionReducedActive {
+			popover.Opacity(0.35 + 0.65*u)
+		} else {
+			scale := 0.96 + 0.04*ease
+			offsetY := -8 * (1 - ease)
+			popover.Opacity(0.18 + 0.82*ease).
+				Transform(ui.Scaling(scale, scale).Then(ui.Translation(0, offsetY)))
+		}
+		c.AnimationFrame()
+		return
+	}
+	a.popoverEnterKind = popoverNone
+	a.popoverEnterStart = time.Time{}
+}
+
+// renderPopoverExitGhost draws an inert fading sheet for the popover that just
+// closed, driven directly by app three-state motion rather than mygo's
+// system-only Element.Transition so motionStandard overrides system
+// ReduceMotion, mid-exit switches to motionReduced drop displacement on the
+// same frame, and resetGame/settleDuel clear the ghost immediately.
+func (a *minesweeperApp) renderPopoverExitGhost(c *ui.Context, pal *palette, t *ui.Theme, now time.Time) {
+	if !a.popoverExiting(now) {
+		return
+	}
+	r := a.popoverExitRect
+	if r.W <= 0 || r.H <= 0 {
+		return
+	}
+	u := float32(now.Sub(a.popoverExitStart)) / float32(a.popoverExitDur)
+	ease := u * u
+	kind := a.popoverExitKind
+	c.AnimationFrame()
+	ui.Overlay(c, func() {
+		ghost := ui.Box(c.Key("popover-exit-ghost")).
+			Absolute().Left(r.X).Top(r.Y).Size(r.W, r.H).
+			Radius(t.Radius + 2).
+			Background(t.Surface).
+			Border(1, t.Border).
+			Shadow(0, 6, 20, 0, popoverExitShadow).
+			IgnoreInput(true).AccessHidden(true).PassThrough()
+		if a.motionReducedActive {
+			ghost.Opacity(1 - u)
+		} else {
+			scale := 1 - 0.04*ease
+			offsetY := -8 * ease
+			ghost.Opacity(1 - ease).
+				Transform(ui.Scaling(scale, scale).Then(ui.Translation(0, offsetY)))
+		}
+		ghost.Draw(func(p *ui.Painter, box ui.Rect) {
+			a.paintPopoverExitContents(p, box, kind, pal, t)
+		})
+	})
+}
+
+func (a *minesweeperApp) paintPopoverExitContents(p *ui.Painter, box ui.Rect, kind appPopover, pal *palette, t *ui.Theme) {
+	pad := t.Space(1)
+	inner := ui.Rect{X: box.X + pad, Y: box.Y + pad, W: max(0, box.W-pad*2), H: max(0, box.H-pad*2)}
+	p.Clip(box, t.Radius+2, func() {
+		switch kind {
+		case popoverSetlist:
+			y := inner.Y + 4
+			p.Text(inner.X+6, y, "排练歌单", 12, t.TextMuted)
+			p.Line(inner.X, y+20, inner.X+inner.W, y+20, 1, pal.Rule)
+			y += 28
+			groupInk := setlistAccentInk(pal, t.Surface)
+			selectedBg := t.Accent.Alpha(0.14).Over(t.Surface)
+			selectedInk := setlistAccentInk(pal, selectedBg)
+			for gIdx, group := range groupSetlistTracks(Difficulties) {
+				if gIdx > 0 {
+					p.Line(inner.X+4, y, inner.X+inner.W-4, y, 1, pal.Rule)
+					y += 8
+				}
+				p.Fill(ui.Rect{X: inner.X + 6, Y: y + 2, W: 3, H: 11}, groupInk, 1.5)
+				p.Text(inner.X+15, y, group.Title, 11, groupInk)
+				y += 20
+				for _, entry := range group.Entries {
+					rowH := float32(36)
+					if y+rowH > inner.Y+inner.H {
+						return
+					}
+					if entry.Index == a.diffIdx {
+						p.Fill(ui.Rect{X: inner.X, Y: y, W: inner.W, H: rowH}, selectedBg, 6)
+						p.Text(inner.X+30, y+5, entry.Diff.Song, 13, selectedInk)
+					} else {
+						p.Text(inner.X+30, y+5, entry.Diff.Song, 13, t.Text)
+					}
+					p.Text(inner.X+30, y+21, setlistTrackSpec(entry.Diff), 11, t.TextMuted)
+					y += rowH + 2
+				}
+			}
+		case popoverSettings:
+			sc := settingsColorsForPaper(pal)
+			y := inner.Y + 4
+			p.Text(inner.X+6, y, "偏好设置", 12, sc.MutedInk)
+			p.Line(inner.X, y+20, inner.X+inner.W, y+20, 1, pal.Rule)
+			y += 30
+			sections := []struct {
+				heading string
+				rows    []string
+			}{
+				{"画面与动效", []string{"夜间台灯", "动效"}},
+				{"声音", []string{"音效", "音量"}},
+				{"扫雷操作", []string{"右键 ? 标记"}},
+			}
+			for sIdx, sec := range sections {
+				if sIdx > 0 {
+					p.Line(inner.X+4, y, inner.X+inner.W-4, y, 1, pal.Rule)
+					y += 10
+				}
+				p.Fill(ui.Rect{X: inner.X + 4, Y: y + 2, W: 3, H: 11}, sc.GroupInk, 1.5)
+				p.Text(inner.X+13, y, sec.heading, 11, sc.GroupInk)
+				y += 22
+				for _, row := range sec.rows {
+					if y+24 > inner.Y+inner.H {
+						return
+					}
+					p.Text(inner.X+6, y+3, row, 13, sc.LabelInk)
+					p.Fill(ui.Rect{X: inner.X + inner.W - 58, Y: y + 4, W: 48, H: 16}, sc.SegTrackBg, 8)
+					y += 32
+				}
+			}
+		}
 	})
 }
 
@@ -676,6 +787,9 @@ func (a *minesweeperApp) bindPopover(
 				closeWithFocus()
 			}
 		}).Background(c.Theme().Surface).KeepFocus()
+		popover.DrawOver(func(_ *ui.Painter, r ui.Rect) {
+			a.popoverRects[kind] = r
+		})
 		a.applyPopoverMotion(c, popover, kind, now)
 	}
 
@@ -698,11 +812,6 @@ func (a *minesweeperApp) bindPopover(
 // the board immediately playable once a popover is dismissed (such as via
 // Escape) as its inert exit ghost finishes fading out.
 func (a *minesweeperApp) popoverWorkspaceShield(c *ui.Context) {
-	now := c.Now()
-	a.lastFrameNow = now
-	if a.popoverExiting(now) && !a.hasOpenPopover() {
-		c.AnimationFrame()
-	}
 	if !a.hasOpenPopover() {
 		return
 	}
@@ -811,9 +920,6 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.focusDuelSettlement = false
 	a.dismissPopovers()
 	a.clearPopoverMotion()
-	if closing {
-		a.suppressPopoverExit = true
-	}
 	a.classicHoverRow = -1
 	a.classicHoverCol = -1
 	a.classicHoverHint = HoverHint{}
@@ -1932,11 +2038,12 @@ func (a *minesweeperApp) stepNightBlend(now time.Time) (*palette, bool) {
 }
 
 func (a *minesweeperApp) themeFor(p *palette) *ui.Theme {
+	accent := bandColor.Mix(nightPaper.InkOf(bandColor), p.nightFrac)
 	var t *ui.Theme
 	if p.Dark {
-		t = ui.DarkTheme().WithAccent(p.InkOf(bandColor))
+		t = ui.DarkTheme().WithAccent(accent)
 	} else {
-		t = ui.LightTheme().WithAccent(bandColor)
+		t = ui.LightTheme().WithAccent(accent)
 	}
 	t.Background = p.Desk
 	t.Surface = p.Sheet
@@ -1960,6 +2067,7 @@ func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string)
 	a.duelEnded = true
 	posted := a.chatPosted
 	a.dismissPopovers()
+	a.clearPopoverMotion()
 	a.focusDuelSettlement = true
 	a.pushChat("决斗结算", hexOf(goldHighlighter), result)
 	a.applyQuote(d.QuoteEvent)
@@ -2050,6 +2158,9 @@ var (
 // setlistInk derives a WCAG-AA (4.5:1+) ink from base against the exact
 // composited background a setlist control paints beneath its text.
 func setlistInk(pal *palette, bg, base ui.Color) ui.Color {
+	if pal.nightFrac > 0 && pal.nightFrac < 1 {
+		return autoInkOn(bg, dayPaper.InkMuted, nightPaper.InkMuted)
+	}
 	under := *pal
 	under.Board = bg
 	under.Sheet = bg
@@ -2059,6 +2170,9 @@ func setlistInk(pal *palette, bg, base ui.Color) ui.Color {
 // setlistAccentInk derives a WCAG-AA (4.5:1+) ink from the 乐队色 against
 // the exact composited background a setlist control paints beneath its text.
 func setlistAccentInk(pal *palette, bg ui.Color) ui.Color {
+	if pal.nightFrac > 0 && pal.nightFrac < 1 {
+		return pal.blendInkOf(bandColor)
+	}
 	return setlistInk(pal, bg, bandColor)
 }
 
@@ -2639,10 +2753,11 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	// memberColor is the leader's 代表色, used as a highlighter; memberInk
 	// is it as ink, for text and the skill button on this paper.
 	memberColor := ui.Hex(member.ColorHex)
-	memberInk := pal.InkOf(memberColor)
+	memberInk := pal.blendInkOf(memberColor)
 	memberTheme := baseTheme.WithAccent(memberInk)
 
 	a.haruhikageOverlay(c, pal, baseTheme, now)
+	a.renderPopoverExitGhost(c, pal, t, now)
 
 	root := ui.Column(c).Fill().Padding(14).Gap(10)
 	if pal.Lamp.A > 0 {
@@ -2704,7 +2819,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				ui.Column(c).Gap(6).Children(func() {
 					for _, m := range Members {
 						mc := ui.Hex(m.ColorHex)
-						mInk := pal.InkOf(mc)
+						mInk := pal.blendInkOf(mc)
 						selected := m.ID == a.memberID
 						item := ui.Box(c.Key(string(m.ID))).Padding(7, 9).Radius(9).
 							Cursor(ui.CursorPointer).Label(m.Name).Tooltip(m.SkillDesc)
@@ -2845,10 +2960,10 @@ func (a *minesweeperApp) view(c *ui.Context) {
 										Shadow(0, 2, 4, 0, pal.SlipShade.Alpha(0.6))
 									if animating {
 										if a.motionReducedActive {
-											u := min(float32(1), max(float32(0), float32(now.Sub(start))/float32(chatNoteReducedFade)))
+											u := float32(now.Sub(start)) / float32(chatNoteReducedFade)
 											note.Rotate(tilt).Opacity(0.30 + 0.70*u)
 										} else {
-											u := min(float32(1), max(float32(0), float32(now.Sub(start))/float32(chatNoteEnterDuration)))
+											u := float32(now.Sub(start)) / float32(chatNoteEnterDuration)
 											ease := 1 - (1-u)*(1-u)
 											scale := 0.96 + 0.04*ease
 											rot := tilt + 2.5*(1-ease)
@@ -2860,13 +2975,13 @@ func (a *minesweeperApp) view(c *ui.Context) {
 										note.Rotate(tilt)
 									}
 									note.Children(func() {
-										ui.Text(c, msg.Speaker).FontSize(11).Bold().TextColor(pal.InkOf(speaker))
+										ui.Text(c, msg.Speaker).FontSize(11).Bold().TextColor(pal.blendInkOf(speaker))
 										ui.Text(c, msg.Text).FontSize(12)
 									})
 								})
 							})
 							if animating && !a.motionReducedActive {
-								u := min(float32(1), max(float32(0), float32(now.Sub(start))/float32(chatNoteEnterDuration)))
+								u := float32(now.Sub(start)) / float32(chatNoteEnterDuration)
 								ease := 1 - (1-u)*(1-u)
 								slot.ClipY().Height(ease * inner.Bounds().H)
 							}
@@ -2960,7 +3075,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					}
 				}
 				drawerAnimating := false
-				if !a.memeDrawerStart.IsZero() && a.memeDrawerDur > 0 {
+				if !a.memeDrawerStart.IsZero() {
 					elapsed := now.Sub(a.memeDrawerStart)
 					target := float32(0)
 					if a.memeDrawerOpen {

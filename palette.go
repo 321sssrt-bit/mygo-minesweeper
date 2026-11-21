@@ -19,7 +19,8 @@ var goldHighlighter = ui.Hex("#E8A849")
 
 // palette is one paper: the day notebook or the night desk-lamp notebook.
 type palette struct {
-	Dark bool
+	Dark      bool
+	nightFrac float32
 	// Desk is the window behind the sheets; Sheet the panels; Board the
 	// graph paper the cells sit on; Grid its ruled lines.
 	Desk, Sheet, Board, Grid ui.Color
@@ -42,7 +43,7 @@ var dayPaper = &palette{
 }
 
 var nightPaper = &palette{
-	Dark: true,
+	Dark: true, nightFrac: 1,
 	Desk: ui.Hex("#1C1814"), Sheet: ui.Hex("#26211B"), Board: ui.Hex("#2A241E"), Grid: ui.Hex("#FFD6A0").Alpha(0.08),
 	Slip: ui.Hex("#3D352C"), SlipShade: ui.Hex("#000000").Alpha(0.5),
 	Ink: ui.Hex("#EDE3D3"), InkMuted: ui.Hex("#A8998A"), Rule: ui.Hex("#EDE3D3").Alpha(0.12), Graphite: ui.Hex("#CFC6B8"),
@@ -50,6 +51,15 @@ var nightPaper = &palette{
 	Lamp:    ui.Hex("#FFBE6E").Alpha(0.16),
 	BandAid: ui.Hex("#D9B488"), BandAidPad: ui.Hex("#EBD3B2"), BandAidEdge: ui.Hex("#A27A52"),
 }
+
+// popoverExitShadow matches ui.Popover's soft drop shadow while an exiting
+// popover sheet fades out.
+var popoverExitShadow = ui.RGBA(0, 0, 0, 0.18)
+
+// darkPaperLuminanceCutoff is the WCAG relative luminance where pure black and
+// pure white reach equal contrast (4.58:1), ensuring neutral inks keep >=4.5:1
+// on either side of a day-night lamp transition without flashing prematurely.
+const darkPaperLuminanceCutoff = 0.1791
 
 func paperFor(dark bool) *palette {
 	if dark {
@@ -102,7 +112,9 @@ func scaleColorAlpha(c ui.Color, scale float32) ui.Color {
 }
 
 // blendPaper returns the exact dayPaper at 0, exact nightPaper at 1, and a
-// smoothly interpolated notebook palette in between.
+// smoothly interpolated notebook palette in between. Surfaces blend linearly
+// while neutral inks stay on the high-contrast side of the perceptual
+// luminance midpoint (>=4.5:1 against both Sheet and Board on every frame).
 func blendPaper(nightFrac float32) *palette {
 	if nightFrac <= 0 {
 		return dayPaper
@@ -110,25 +122,63 @@ func blendPaper(nightFrac float32) *palette {
 	if nightFrac >= 1 {
 		return nightPaper
 	}
-	return &palette{
-		Dark:        nightFrac >= 0.5,
+	sheet := dayPaper.Sheet.Mix(nightPaper.Sheet, nightFrac)
+	board := dayPaper.Board.Mix(nightPaper.Board, nightFrac)
+	dark := (luminance(sheet)+luminance(board))/2 < darkPaperLuminanceCutoff
+	p := &palette{
+		Dark:        dark,
+		nightFrac:   nightFrac,
 		Desk:        dayPaper.Desk.Mix(nightPaper.Desk, nightFrac),
-		Sheet:       dayPaper.Sheet.Mix(nightPaper.Sheet, nightFrac),
-		Board:       dayPaper.Board.Mix(nightPaper.Board, nightFrac),
+		Sheet:       sheet,
+		Board:       board,
 		Grid:        mixColorPremul(dayPaper.Grid, nightPaper.Grid, nightFrac),
 		Slip:        dayPaper.Slip.Mix(nightPaper.Slip, nightFrac),
 		SlipShade:   mixColorPremul(dayPaper.SlipShade, nightPaper.SlipShade, nightFrac),
-		Ink:         dayPaper.Ink.Mix(nightPaper.Ink, nightFrac),
-		InkMuted:    dayPaper.InkMuted.Mix(nightPaper.InkMuted, nightFrac),
 		Rule:        mixColorPremul(dayPaper.Rule, nightPaper.Rule, nightFrac),
-		Graphite:    dayPaper.Graphite.Mix(nightPaper.Graphite, nightFrac),
 		Boom:        mixColorPremul(dayPaper.Boom, nightPaper.Boom, nightFrac),
-		BoomInk:     dayPaper.BoomInk.Mix(nightPaper.BoomInk, nightFrac),
 		Lamp:        scaleColorAlpha(nightPaper.Lamp, nightFrac),
 		BandAid:     dayPaper.BandAid.Mix(nightPaper.BandAid, nightFrac),
 		BandAidPad:  dayPaper.BandAidPad.Mix(nightPaper.BandAidPad, nightFrac),
 		BandAidEdge: dayPaper.BandAidEdge.Mix(nightPaper.BandAidEdge, nightFrac),
 	}
+	if dark {
+		p.Ink = p.InkOf(nightPaper.Ink)
+		p.InkMuted = p.InkOf(nightPaper.InkMuted)
+		p.Graphite = p.InkOf(nightPaper.Graphite)
+		p.BoomInk = p.InkOf(nightPaper.BoomInk)
+	} else {
+		p.Ink = p.InkOf(dayPaper.Ink)
+		p.InkMuted = p.InkOf(dayPaper.InkMuted)
+		p.Graphite = p.InkOf(dayPaper.Graphite)
+		p.BoomInk = p.InkOf(dayPaper.BoomInk)
+	}
+	return p
+}
+
+// blendInkOf returns p.InkOf(c) at exact day/night endpoints and smoothly
+// interpolates between dayPaper.InkOf(c) and nightPaper.InkOf(c) mid-transition
+// so chromatic accents (member highlighters, skill buttons, pencil hatching)
+// preserve their hue without flashing black or white across mid-grey paper.
+func (p *palette) blendInkOf(c ui.Color) ui.Color {
+	if p.nightFrac <= 0 {
+		return dayPaper.InkOf(c)
+	}
+	if p.nightFrac >= 1 {
+		return nightPaper.InkOf(c)
+	}
+	return dayPaper.InkOf(c).Mix(nightPaper.InkOf(c), p.nightFrac)
+}
+
+// autoInkOn picks whichever of dayBase or nightBase matches bg's perceptual
+// luminance polarity and adjusts it to keep >= minInkContrast against bg.
+func autoInkOn(bg, dayBase, nightBase ui.Color) ui.Color {
+	dark := luminance(bg) < darkPaperLuminanceCutoff
+	base := dayBase
+	if dark {
+		base = nightBase
+	}
+	under := palette{Dark: dark, Board: bg, Sheet: bg}
+	return under.InkOf(base)
 }
 
 // minimapColors are the notebook colours of a classic board's minimap:
@@ -146,6 +196,24 @@ func classicMinimapFor(dark bool) *minimapColors {
 		return nightMinimap
 	}
 	return dayMinimap
+}
+
+func classicMinimapForPaper(p *palette) *minimapColors {
+	if p.nightFrac <= 0 {
+		return dayMinimap
+	}
+	if p.nightFrac >= 1 {
+		return nightMinimap
+	}
+	f := p.nightFrac
+	return &minimapColors{
+		Bg:       dayMinimap.Bg.Mix(nightMinimap.Bg, f),
+		Border:   mixColorPremul(dayMinimap.Border, nightMinimap.Border, f),
+		Opened:   dayMinimap.Opened.Mix(nightMinimap.Opened, f),
+		Flag:     dayMinimap.Flag.Mix(nightMinimap.Flag, f),
+		Boom:     dayMinimap.Boom.Mix(nightMinimap.Boom, f),
+		Viewport: p.Ink,
+	}
 }
 
 func newMinimapColors(p *palette) *minimapColors {
@@ -844,13 +912,39 @@ func settingsColorsFor(dark bool) *settingsColors {
 }
 
 func settingsColorsForPaper(p *palette) *settingsColors {
-	if p == dayPaper {
+	if p.nightFrac <= 0 {
 		return daySettings
 	}
-	if p == nightPaper {
+	if p.nightFrac >= 1 {
 		return nightSettings
 	}
-	return newSettingsColors(p)
+	f := p.nightFrac
+	idleBg := daySettings.TriggerIdleBg.Mix(nightSettings.TriggerIdleBg, f)
+	hoverBg := daySettings.TriggerHoverBg.Mix(nightSettings.TriggerHoverBg, f)
+	openBg := daySettings.TriggerOpenBg.Mix(nightSettings.TriggerOpenBg, f)
+	keyBg := daySettings.KeyBg.Mix(nightSettings.KeyBg, f)
+	segTrackBg := daySettings.SegTrackBg.Mix(nightSettings.SegTrackBg, f)
+	return &settingsColors{
+		TriggerIdleBg:     idleBg,
+		TriggerHoverBg:    hoverBg,
+		TriggerOpenBg:     openBg,
+		TriggerBorder:     mixColorPremul(daySettings.TriggerBorder, nightSettings.TriggerBorder, f),
+		TriggerOpenBorder: mixColorPremul(daySettings.TriggerOpenBorder, nightSettings.TriggerOpenBorder, f),
+		TriggerIdleInk:    daySettings.TriggerIdleInk.Mix(nightSettings.TriggerIdleInk, f),
+		TriggerHoverInk:   daySettings.TriggerHoverInk.Mix(nightSettings.TriggerHoverInk, f),
+		TriggerOpenInk:    daySettings.TriggerOpenInk.Mix(nightSettings.TriggerOpenInk, f),
+		TriggerIdleText:   autoInkOn(idleBg, dayPaper.Ink, nightPaper.Ink),
+		TriggerHoverText:  autoInkOn(hoverBg, dayPaper.Ink, nightPaper.Ink),
+		TriggerIdleIcon:   autoInkOn(idleBg, dayPaper.InkMuted, nightPaper.InkMuted),
+		TriggerHoverIcon:  autoInkOn(hoverBg, dayPaper.InkMuted, nightPaper.InkMuted),
+		GroupInk:          daySettings.GroupInk.Mix(nightSettings.GroupInk, f),
+		LabelInk:          p.Ink,
+		MutedInk:          p.InkMuted,
+		KeyBg:             keyBg,
+		KeyInk:            autoInkOn(keyBg, dayPaper.InkMuted, nightPaper.InkMuted),
+		SegTrackBg:        segTrackBg,
+		SegIdleInk:        autoInkOn(segTrackBg, dayPaper.Ink, nightPaper.Ink),
+	}
 }
 
 func newSettingsColors(p *palette) *settingsColors {

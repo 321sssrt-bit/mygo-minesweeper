@@ -5,11 +5,46 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 )
+
+func diffBoundsInRect(a, b *image.RGBA, r ui.Rect, tol uint8) (minX, minY, maxX, maxY, count int) {
+	const scale = 2
+	x0 := max(a.Bounds().Min.X, int(r.X*scale))
+	x1 := min(a.Bounds().Max.X-1, int((r.X+r.W)*scale))
+	y0 := max(a.Bounds().Min.Y, int(r.Y*scale))
+	y1 := min(a.Bounds().Max.Y-1, int((r.Y+r.H)*scale))
+	minX, minY = x1+1, y1+1
+	maxX, maxY = x0-1, y0-1
+	for y := y0; y <= y1; y++ {
+		for x := x0; x <= x1; x++ {
+			o := a.PixOffset(x, y)
+			dr := absInt(int(a.Pix[o]) - int(b.Pix[o]))
+			dg := absInt(int(a.Pix[o+1]) - int(b.Pix[o+1]))
+			db := absInt(int(a.Pix[o+2]) - int(b.Pix[o+2]))
+			if dr > int(tol) || dg > int(tol) || db > int(tol) {
+				count++
+				if x < minX {
+					minX = x
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	return minX, minY, maxX, maxY, count
+}
 
 func uiColorNear(a, b ui.Color, tol int) bool {
 	return absInt(int(a.R)-int(b.R)) <= tol &&
@@ -227,7 +262,8 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 					app.game.Moves, app.game.FirstClick, app.game.FlagsPlaced)
 			}
 
-			// 5. Re-open second popover mid-exit, close via Escape, verify focus restoration
+			// 5. Re-open second popover mid-exit, close via Escape, verify focus restoration,
+			// immediate board playability & clean screen reader tree while ghost is fading,
 			// and full convergence (FramePending() == false).
 			tt.Advance(45 * time.Millisecond)
 			if err := tt.Click(tc.secondTrig); err != nil {
@@ -237,13 +273,108 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 			if !tt.Focused(tc.secondTrig) {
 				t.Fatalf("Escape did not restore focus to %s", tc.secondTrig)
 			}
-			tt.Advance(popoverExitDuration + 40*time.Millisecond)
+			tt.Advance(45 * time.Millisecond)
+			if !app.popoverExiting(tt.Now()) {
+				t.Fatalf("expected %s exit ghost still visible at 45ms after Escape", tc.secondTrig)
+			}
+			tt.UseScreenReader()
+			for _, node := range tt.AccessAll() {
+				if node.Name == "排练歌单" || node.Name == "偏好设置" || node.Name == "夜间台灯" {
+					t.Fatalf("exiting popover leaked into screen reader tree: %+v", node)
+				}
+			}
+			// Clicking a board cell immediately after Escape while the inert ghost is fading must work on frame 0.
+			tt.ClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
+			if !app.game.FirstClick || app.game.Moves == 0 {
+				t.Fatalf("board was not immediately playable after Escape while exit ghost faded: first=%v moves=%d",
+					app.game.FirstClick, app.game.Moves)
+			}
+			tt.Advance(popoverExitDuration + rippleMaxDelay + rippleDuration + 40*time.Millisecond)
 			if app.hasOpenPopover() || app.popoverExiting(tt.Now()) || tt.FramePending() {
 				t.Fatalf("popover exit did not settle cleanly: open=%v exiting=%v pending=%v",
 					app.hasOpenPopover(), app.popoverExiting(tt.Now()), tt.FramePending())
 			}
 		})
 	}
+
+	// 6. Reset paths (KeyR, setlist track switch, mode switch) and duel settlement must cancel
+	// popover exit ghosts immediately with FramePending()==false and zero leaked suppression.
+	t.Run("reset-and-settle-cancel-exit-ghost-immediately", func(t *testing.T) {
+		app := newMinesweeperApp(42)
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.Frame()
+
+		// Open settings, settle enter, press R -> zero exit ghost and zero pending frames.
+		if err := tt.Click("设置"); err != nil {
+			t.Fatalf("open settings: %v", err)
+		}
+		tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		tt.Key(0, ui.KeyR)
+		if app.hasOpenPopover() || app.popoverExiting(tt.Now()) || tt.FramePending() {
+			t.Fatalf("KeyR with open settings left ghost or pending frame: open=%v exiting=%v pending=%v",
+				app.hasOpenPopover(), app.popoverExiting(tt.Now()), tt.FramePending())
+		}
+
+		// Re-open settings and press Escape -> normal exit MUST still play (no stale suppression).
+		if err := tt.Click("设置"); err != nil {
+			t.Fatalf("reopen settings after KeyR: %v", err)
+		}
+		tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		tt.Key(0, ui.KeyEscape)
+		if !app.popoverExiting(tt.Now()) || !tt.FramePending() {
+			t.Fatalf("Escape after prior KeyR lost normal exit transition: exiting=%v pending=%v",
+				app.popoverExiting(tt.Now()), tt.FramePending())
+		}
+		tt.Advance(popoverExitDuration + 20*time.Millisecond)
+
+		// Setlist track switch closes popover immediately with no ghost and no pending frames on the new board.
+		tt.Move(10, 10)
+		if err := tt.Click("歌单"); err != nil {
+			t.Fatalf("open setlist: %v", err)
+		}
+		tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		setlistRect := app.popoverRects[popoverSetlist]
+		// Pick the second track via keyboard so pointer hover over the sidebar does not start a member hover tint.
+		tt.Key(0, ui.KeyDown)
+		tt.Key(0, ui.KeyEnter)
+		if app.diffIdx != 1 || app.hasOpenPopover() || app.popoverExiting(tt.Now()) || tt.FramePending() {
+			t.Fatalf("setlist track switch left ghost or pending frame: diffIdx=%d open=%v exiting=%v pending=%v",
+				app.diffIdx, app.hasOpenPopover(), app.popoverExiting(tt.Now()), tt.FramePending())
+		}
+		afterSwitch := image.NewRGBA(tt.Image().Bounds())
+		copy(afterSwitch.Pix, tt.Image().Pix)
+		tt.Advance(popoverExitDuration + 20*time.Millisecond)
+		if diff := diffPixelCountInRect(afterSwitch, tt.Image(), setlistRect, 2); diff != 0 {
+			t.Fatalf("setlist track switch left lingering exit ghost pixels: diff=%d", diff)
+		}
+
+		// Duel settlement with open settings popover cancels exit ghost immediately.
+		duelIdx := -1
+		for i, d := range Difficulties {
+			if d.Gameplay == GameplayDuel {
+				duelIdx = i
+				break
+			}
+		}
+		duelApp := newMinesweeperApp(42)
+		duelApp.diffIdx = duelIdx
+		duelApp.resetGame(true)
+		dtt := ui.NewTester(duelApp.view, 1280, 900)
+		dtt.Frame()
+		if err := dtt.Click("设置"); err != nil {
+			t.Fatalf("open settings in duel: %v", err)
+		}
+		dtt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		duelApp.game.Status = StatusPlaying
+		duelApp.game.duel.Elapsed = duelApp.game.duel.Duration - 0.01
+		duelApp.lastTick = dtt.Now()
+		dtt.Frame()
+		dtt.Advance(60 * time.Millisecond)
+		if !duelApp.duelEnded || duelApp.hasOpenPopover() || duelApp.popoverExiting(dtt.Now()) {
+			t.Fatalf("duel settlement left popover open or exiting: ended=%v open=%v exiting=%v",
+				duelApp.duelEnded, duelApp.hasOpenPopover(), duelApp.popoverExiting(dtt.Now()))
+		}
+	})
 }
 
 func TestMemeDrawerSmoothOpenCloseAndConvergence(t *testing.T) {
@@ -292,6 +423,16 @@ func TestMemeDrawerSmoothOpenCloseAndConvergence(t *testing.T) {
 	if !(boardMidClose.Y < boardFullOpen.Y && boardMidClose.Y > boardTopClosed.Y) {
 		t.Fatalf("expected board to rise smoothly during drawer close: open=%.2f mid=%.2f closed=%.2f",
 			boardFullOpen.Y, boardMidClose.Y, boardTopClosed.Y)
+	}
+	// Mid-close drawer must be hidden from screen readers and ignore clicks.
+	for _, node := range tt.AccessAll() {
+		if strings.Contains(node.Name, "名场面图鉴（") || strings.Contains(node.Name, AllMemes[0].Title) {
+			t.Fatalf("closing meme drawer leaked into screen reader tree at 55ms: %+v", node)
+		}
+	}
+	tt.ClickAt(boardMidClose.X+boardMidClose.W/2, boardMidClose.Y-8)
+	if app.showMemes {
+		t.Fatal("clicking closing meme drawer area unexpectedly reopened or intercepted input")
 	}
 	tt.Advance(drawerCloseDuration)
 	boardAfterClose, _ := tt.Find("迷子出发 (R)")
@@ -397,6 +538,55 @@ func TestMemberHighlightAndLampWarmthSmoothBlend(t *testing.T) {
 	}
 	if app.nightBlendValue != 1 || tt.FramePending() {
 		t.Fatalf("expected lamp transition converged: blend=%.3f pending=%v", app.nightBlendValue, tt.FramePending())
+	}
+
+	// 4. Sweep blended palette across nightFrac in [0, 1]: neutral text keeps >=4.5:1 WCAG AA
+	// contrast on both Sheet and Board at every frame, chromatic accents keep hue without
+	// flashing pure black/white across 0.5, and classic minimap paper interpolates smoothly.
+	var prevGroup, prevMember, prevMini ui.Color
+	pureBlack := ui.Color{A: 255}
+	pureWhite := ui.Color{R: 255, G: 255, B: 255, A: 255}
+	for step := 0; step <= 50; step++ {
+		f := float32(step) / 50
+		p := blendPaper(f)
+		if c := contrast(p.Ink, p.Sheet); c < minInkContrast {
+			t.Fatalf("nightFrac=%.2f pal.Ink (%s) on Sheet (%s) contrast=%.2f < %.1f",
+				f, hexOf(p.Ink), hexOf(p.Sheet), c, minInkContrast)
+		}
+		if c := contrast(p.Ink, p.Board); c < minInkContrast {
+			t.Fatalf("nightFrac=%.2f pal.Ink (%s) on Board (%s) contrast=%.2f < %.1f",
+				f, hexOf(p.Ink), hexOf(p.Board), c, minInkContrast)
+		}
+		sc := settingsColorsForPaper(p)
+		if c := contrast(sc.LabelInk, p.Sheet); c < minInkContrast {
+			t.Fatalf("nightFrac=%.2f settings LabelInk (%s) on Sheet (%s) contrast=%.2f < %.1f",
+				f, hexOf(sc.LabelInk), hexOf(p.Sheet), c, minInkContrast)
+		}
+		mInk := p.blendInkOf(memberImage(MemberTomori))
+		mini := classicMinimapForPaper(p)
+		if sc.GroupInk == pureBlack || sc.GroupInk == pureWhite || mInk == pureBlack || mInk == pureWhite {
+			t.Fatalf("nightFrac=%.2f chromatic ink collapsed to black/white: group=%s member=%s",
+				f, hexOf(sc.GroupInk), hexOf(mInk))
+		}
+		if step > 0 {
+			for _, pair := range []struct {
+				name string
+				a, b ui.Color
+				maxD int
+			}{
+				{"settings GroupInk", prevGroup, sc.GroupInk, 12},
+				{"member Tomori ink", prevMember, mInk, 12},
+				{"classic minimap Bg", prevMini, mini.Bg, 12},
+			} {
+				dr := absInt(int(pair.a.R) - int(pair.b.R))
+				dg := absInt(int(pair.a.G) - int(pair.b.G))
+				db := absInt(int(pair.a.B) - int(pair.b.B))
+				if dr > pair.maxD || dg > pair.maxD || db > pair.maxD {
+					t.Fatalf("nightFrac=%.2f %s jumped abruptly %s -> %s", f, pair.name, hexOf(pair.a), hexOf(pair.b))
+				}
+			}
+		}
+		prevGroup, prevMember, prevMini = sc.GroupInk, mInk, mini.Bg
 	}
 }
 
@@ -567,6 +757,35 @@ func TestPeripheralThreeStateMotionBidirectionalAndMidFlightReduce(t *testing.T)
 		if app.progressVisual.value != app.game.Progress() {
 			t.Fatalf("progress did not settle to real value: visual=%.3f real=%.3f", app.progressVisual.value, app.game.Progress())
 		}
+
+		// Popover exit MUST still play upward shift + scale under motionStandard even when system ReduceMotion=true.
+		tt.SetScale(2)
+		tt.Frame()
+		baseImg := image.NewRGBA(tt.Image().Bounds())
+		copy(baseImg.Pix, tt.Image().Pix)
+		if err := tt.Click("设置"); err != nil {
+			t.Fatalf("open settings under motionStandard: %v", err)
+		}
+		tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		openImg := image.NewRGBA(tt.Image().Bounds())
+		copy(openImg.Pix, tt.Image().Pix)
+		popRect := app.popoverRects[popoverSettings]
+		scanRect := ui.Rect{X: popRect.X - 24, Y: popRect.Y - 24, W: popRect.W + 48, H: popRect.H + 48}
+		openMinX, _, openMaxX, openMaxY, openCnt := diffBoundsInRect(baseImg, openImg, scanRect, 12)
+		if openCnt == 0 {
+			t.Fatal("open settings popover produced no pixel diff")
+		}
+		tt.Key(0, ui.KeyEscape)
+		tt.Advance(75 * time.Millisecond)
+		midMinX, _, midMaxX, midMaxY, midCnt := diffBoundsInRect(baseImg, tt.Image(), scanRect, 12)
+		if midCnt == 0 {
+			t.Fatal("expected visible exiting settings popover at 75ms under motionStandard + system ReduceMotion=true")
+		}
+		if midMaxY >= openMaxY-2 || (midMaxX-midMinX) >= (openMaxX-openMinX)-2 {
+			t.Fatalf("motionStandard popover exit lost shift/scale under system ReduceMotion=true: open=(w=%d maxY=%d) mid=(w=%d maxY=%d)",
+				openMaxX-openMinX, openMaxY, midMaxX-midMinX, midMaxY)
+		}
+		tt.Advance(popoverExitDuration + 20*time.Millisecond)
 	})
 
 	// Case B: User motionReduced under system ReduceMotion == false skips all displacement/stretch delays
@@ -676,6 +895,44 @@ func TestPeripheralThreeStateMotionBidirectionalAndMidFlightReduce(t *testing.T)
 		tt.Advance(chatNoteEnterDuration + drawerOpenDuration + 40*time.Millisecond)
 		if tt.FramePending() {
 			t.Fatal("expected FramePending()==false after mid-flight reduced transition settles")
+		}
+
+		// Mid-exit system ReduceMotion toggle under motionSystem drops exit displacement/scale on the same frame.
+		renderExitAt55ms := func(startReduced bool) (*minesweeperApp, *ui.Tester, ui.Rect) {
+			a := newMinesweeperApp(7)
+			a.darkMode = false
+			pinStartQuote(a)
+			ttr := ui.NewTester(a.view, 1280, 900)
+			ttr.SetScale(2)
+			ttr.SetPreferences(ui.Preferences{ReduceMotion: startReduced})
+			ttr.Frame()
+			if err := ttr.Click("设置"); err != nil {
+				t.Fatalf("open settings: %v", err)
+			}
+			ttr.Advance(popoverEnterDuration + 20*time.Millisecond)
+			pr := a.popoverRects[popoverSettings]
+			ttr.Key(0, ui.KeyEscape)
+			ttr.Advance(55 * time.Millisecond)
+			ttr.Frame()
+			return a, ttr, pr
+		}
+		_, refTT, _ := renderExitAt55ms(true)
+		reducedRefImg := image.NewRGBA(refTT.Image().Bounds())
+		copy(reducedRefImg.Pix, refTT.Image().Pix)
+
+		sysApp, stt, popRect := renderExitAt55ms(false)
+		scanRect := ui.Rect{X: popRect.X - 24, Y: popRect.Y - 24, W: popRect.W + 48, H: popRect.H + 48}
+		if diff := diffPixelCountInRect(stt.Image(), reducedRefImg, scanRect, 2); diff < 500 {
+			t.Fatalf("expected standard exit ghost at 55ms to visibly differ (shift/scale) from reduced fade: diff=%d", diff)
+		}
+		stt.SetPreferences(ui.Preferences{ReduceMotion: true})
+		if diff := diffPixelCountInRect(stt.Image(), reducedRefImg, scanRect, 2); diff != 0 {
+			t.Fatalf("mid-exit ReduceMotion=true did not match fade-only reduced frame on same frame: diff=%d", diff)
+		}
+		stt.Advance(popoverExitDuration + 20*time.Millisecond)
+		if sysApp.popoverExiting(stt.Now()) || stt.FramePending() {
+			t.Fatalf("mid-exit reduced popover did not settle: exiting=%v pending=%v",
+				sysApp.popoverExiting(stt.Now()), stt.FramePending())
 		}
 	})
 }
