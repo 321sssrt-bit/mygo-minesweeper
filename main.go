@@ -101,8 +101,6 @@ type minesweeperApp struct {
 	chatLog              []chatMessage
 	chatPosted           int
 	chatHeard            int
-	cuesPlayed           int
-	cuesHeard            int
 	seed                 uint64
 	board                *boardView
 	lastTick             time.Time
@@ -158,8 +156,6 @@ func newMinesweeperAppWith(opts appOptions) *minesweeperApp {
 	}
 	app.applyPrefs(p)
 	app.resetGame(true)
-	// The opening notes are already on the wall when the window appears.
-	app.chatHeard = app.chatPosted
 	return app
 }
 
@@ -430,6 +426,7 @@ func (a *minesweeperApp) pushChat(speaker, colorHex, text string) {
 }
 
 func (a *minesweeperApp) resetGame(initial bool) {
+	posted, closing := a.chatPosted, a.hasOpenPopover()
 	prevDiffID := ""
 	if a.game != nil {
 		prevDiffID = a.game.Difficulty.ID
@@ -483,6 +480,11 @@ func (a *minesweeperApp) resetGame(initial bool) {
 		a.pushChat("MyGO!!!!! 决斗室", hexOf(bandColor), "同盘限时抢地：开安全格 +1，踩雷 −100；手动插旗终局结算对错，不提前露底。")
 	}
 	a.pushChat(m.Name, m.ColorHex, a.quote)
+	// The opening notes are on the wall before anyone listens, and a restart
+	// that puts a popover away makes that sound for its notes.
+	if initial || closing {
+		a.chatVoicedSince(posted)
+	}
 }
 
 func (a *minesweeperApp) enqueueRipple(now time.Time, wave []RevealWaveEntry) {
@@ -730,6 +732,7 @@ func (a *minesweeperApp) activeTheme() *ui.Theme {
 func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string) {
 	d := a.game.duel
 	a.duelEnded = true
+	posted, closing := a.chatPosted, a.hasOpenPopover()
 	a.dismissPopovers()
 	a.pushChat("决斗结算", hexOf(goldHighlighter), result)
 	a.applyQuote(d.QuoteEvent)
@@ -737,6 +740,9 @@ func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string)
 	if slices.Contains(d.NewMemes, MemeHaruhikage) {
 		a.haruhikageIntro = true
 		a.haruhikageIntroStart = now
+	}
+	if closing {
+		a.chatVoicedSince(posted)
 	}
 	c.ToastAction(result, "再战一局", func() { a.resetGame(false) })
 }
@@ -1101,7 +1107,12 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	if a.pendingResult.Kind != ActionNoop {
 		res := a.pendingResult
 		a.pendingResult = ActionResult{}
+		// Only canvas cell moves queue a result; their foley already played.
+		posted := a.chatPosted
 		a.handleAction(c, res, now)
+		if _, voiced := cellActionSound(res.Kind); voiced {
+			a.chatVoicedSince(posted)
+		}
 	}
 	if a.isDuel() {
 		a.tickDuel(c, now)
@@ -1677,9 +1688,9 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									}
 
 									if tile.RightClicked() {
-										a.handleAction(c, a.applyCellAction(row, col, 1), now)
+										a.cellMove(c, row, col, 1, now)
 									} else if tile.Clicked() {
-										a.handleAction(c, a.applyCellAction(row, col, 0), now)
+										a.cellMove(c, row, col, 0, now)
 									}
 								}
 							})

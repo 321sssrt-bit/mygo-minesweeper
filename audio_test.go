@@ -271,16 +271,9 @@ func TestSoundClassicGridFoley(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := rec.take()
-	if !g.Cell(4, 4).Revealed || slices.Index(soundIDs(got), SoundPaperLift) < 0 {
-		t.Fatalf("reveal sounds = %v", soundIDs(got))
-	}
-	for _, c := range got {
-		if c.ID != SoundPaperLift && c.ID != SoundChatNote {
-			t.Fatalf("reveal played %v", c.ID)
-		}
-	}
-	if n := countSound(got, SoundPaperLift); n != 1 {
-		t.Fatalf("reveal lifted %d slips, want 1", n)
+	assertSoundIDs(t, "reveal", got, SoundPaperLift)
+	if !g.Cell(4, 4).Revealed {
+		t.Fatal("cell-4-4 should be revealed")
 	}
 	if got[0].Pan != 0 {
 		t.Fatalf("center column pan = %v", got[0].Pan)
@@ -313,16 +306,6 @@ func TestSoundClassicGridFoley(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSoundIDs(t, "flag-mode click", rec.take(), SoundBandageOn)
-}
-
-func countSound(cues []soundCue, id SoundID) int {
-	n := 0
-	for _, c := range cues {
-		if c.ID == id {
-			n++
-		}
-	}
-	return n
 }
 
 func firstHiddenUnflagged(t *testing.T, g *Game) *Cell {
@@ -372,8 +355,9 @@ func TestSoundClassicCanvasFoley(t *testing.T) {
 
 	x, y := canvasCellAt(t, tt, app, "经典棋盘", g.Rows/2, g.Cols/2)
 	tt.ClickAt(x, y)
-	if got := rec.take(); countSound(got, SoundPaperLift) != 1 || !g.Cell(g.Rows/2, g.Cols/2).Revealed {
-		t.Fatalf("canvas reveal sounds = %v", soundIDs(got))
+	assertSoundIDs(t, "canvas reveal", rec.take(), SoundPaperLift)
+	if !g.Cell(g.Rows/2, g.Cols/2).Revealed {
+		t.Fatal("canvas reveal did not open the cell")
 	}
 	tt.RightClickAt(x, y)
 	assertSoundIDs(t, "canvas right-click revealed", rec.take())
@@ -409,11 +393,34 @@ func TestSoundDuelCanvasFoley(t *testing.T) {
 		t.Fatal("duel flag should be peeled off")
 	}
 
+	// Hold back the duel's timed chatter, which would otherwise post its
+	// first line as the opening reveal starts the clock.
+	app.duelNoticeAt = tt.Now()
 	x, y = canvasCellAt(t, tt, app, "决斗棋盘", 20, 20)
 	tt.ClickAt(x, y)
-	if got := rec.take(); countSound(got, SoundPaperLift) != 1 || !g.Cell(20, 20).Revealed {
-		t.Fatalf("duel reveal sounds = %v", soundIDs(got))
+	assertSoundIDs(t, "duel reveal", rec.take(), SoundPaperLift)
+	if !g.Cell(20, 20).Revealed {
+		t.Fatal("duel reveal did not open the cell")
 	}
+}
+
+func TestSoundShieldSticksBandage(t *testing.T) {
+	app, rec := newRecordedApp(7, defaultPrefs())
+	app.memberID = MemberSoyorin
+	app.game = NewGame(Difficulty{ID: "easy", Rows: 5, Cols: 5, Mines: 2, SkillCharges: 1}, true, MemberSoyorin, 7)
+	g := app.game
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	g.Cell(2, 2).IsMine = true
+	g.Cell(0, 0).IsMine = true
+	g.RecomputeAdjacency()
+	tt := ui.NewTester(app.view, 1280, 900)
+	posted := app.chatPosted
+	must(t, tt.Click("cell-2-2"))
+	if !g.Cell(2, 2).ShieldSaved || app.chatPosted == posted {
+		t.Fatal("expected the shield to save the cell and post Soyo's line")
+	}
+	assertSoundIDs(t, "shield", rec.take(), SoundBandageOn)
 }
 
 func TestSoundSwitchesToggleOnce(t *testing.T) {
@@ -519,4 +526,62 @@ func TestSoundChatNoteOncePerPost(t *testing.T) {
 	tt.Frame()
 	tt.Advance(time.Second)
 	assertSoundIDs(t, "idle frames", rec.take())
+
+	// A note that lands in the same frame as an unrelated switch still sounds.
+	app.pushChat("MyGO!!!!! 排练室", hexOf(bandColor), "note")
+	tt.Key(0, ui.KeyF)
+	assertSoundIDs(t, "note beside a switch", rec.take(), SoundToggle, SoundChatNote)
+
+	// R with a popover open puts it away; the restart's notes ride on that.
+	must(t, tt.Click("歌单"))
+	rec.take()
+	tt.Key(0, ui.KeyR)
+	assertSoundIDs(t, "restart with popover", rec.take(), SoundPopoverClose)
+
+	// Snapshot scenes re-stage the opening; it stays as quiet as startup.
+	app.resetGame(true)
+	tt.Frame()
+	assertSoundIDs(t, "re-staged opening", rec.take())
+}
+
+func TestSoundDuelChatSilentInBackground(t *testing.T) {
+	app, rec := newRecordedApp(42, defaultPrefs())
+	app.game = NewGame(Difficulty{
+		ID:           "duel-chat",
+		Song:         "春日影",
+		Gameplay:     GameplayDuel,
+		Rows:         40,
+		Cols:         40,
+		Mines:        300,
+		DuelDuration: 300,
+		AIInterval:   1000,
+	}, true, MemberTomori, 7)
+	app.game.PlaceMines(20, 20)
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	// Leading keeps the band commenting every ten seconds.
+	app.game.duel.PlayerScore = 100
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.Advance(11 * time.Second)
+	rec.take()
+
+	// The duel's timed chatter keeps posting while the window is away,
+	// silently, and is not replayed when it comes back.
+	app.setWindowFocused(false)
+	posted := app.chatPosted
+	tt.Advance(11 * time.Second)
+	if app.chatPosted == posted {
+		t.Fatal("expected a timed duel line while in the background")
+	}
+	assertSoundIDs(t, "background duel line", rec.take())
+	app.setWindowFocused(true)
+	tt.Frame()
+	assertSoundIDs(t, "back in front", rec.take())
+
+	posted = app.chatPosted
+	tt.Advance(11 * time.Second)
+	if app.chatPosted == posted {
+		t.Fatal("expected a timed duel line in front")
+	}
+	assertSoundIDs(t, "foreground duel line", rec.take(), SoundChatNote)
 }

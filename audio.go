@@ -1,6 +1,11 @@
 package main
 
-import "github.com/egoist/mygo/audio"
+import (
+	"time"
+
+	"github.com/egoist/mygo/audio"
+	"github.com/egoist/mygo/ui"
+)
 
 // maxSoundPan bounds the stereo placement of every cue, so a board edge
 // leans to one ear without leaving the other.
@@ -73,7 +78,7 @@ func columnPan(col, cols int) float64 {
 	if cols <= 1 {
 		return 0
 	}
-	return clampPan(maxSoundPan * (2*float64(col)/float64(cols-1) - 1))
+	return maxSoundPan * (2*float64(col)/float64(cols-1) - 1)
 }
 
 func clampPan(pan float64) float64 {
@@ -83,13 +88,12 @@ func clampPan(pan float64) float64 {
 // playSound plays id at gain (1 = the player's volume) and pan, obeying the
 // mute switch and the master volume.
 func (a *minesweeperApp) playSound(id SoundID, gain, pan float64) {
-	a.cuesPlayed++
-	if !a.soundEnabled || a.volume <= 0 || gain <= 0 {
+	if !a.soundEnabled || a.volume == 0 {
 		return
 	}
 	a.sound.Play(soundCue{
 		ID:    id,
-		Gain:  gain * float64(min(a.volume, 100)) / 100,
+		Gain:  gain * float64(a.volume) / 100,
 		Pan:   clampPan(pan),
 		Speed: 1,
 	})
@@ -110,14 +114,32 @@ func cellActionSound(kind ActionKind) (SoundID, bool) {
 	return 0, false
 }
 
-// flushChatNote plays one note sound for whatever the group chat gained
-// since the last flush, however many notes one move posted. A move that
-// already made its own sound, as a 旗 posting its quote, makes no second one.
+// chatVoicedSince marks the notes posted since posted as already heard: the
+// move that posted them, as a 旗 posting its quote, made its own sound.
+func (a *minesweeperApp) chatVoicedSince(posted int) {
+	a.chatHeard += a.chatPosted - posted
+}
+
+// flushChatNote plays one note sound for the notes no move has voiced since
+// the last flush, however many there are. Notes that arrive while the window
+// is in the background stay silent and are not replayed on return.
 func (a *minesweeperApp) flushChatNote() {
-	posted, cued := a.chatPosted != a.chatHeard, a.cuesPlayed != a.cuesHeard
+	if a.chatPosted == a.chatHeard {
+		return
+	}
 	a.chatHeard = a.chatPosted
-	if posted && !cued {
+	if a.isWindowFocused() {
 		a.playSound(SoundChatNote, 1, 0)
 	}
-	a.cuesHeard = a.cuesPlayed
+}
+
+// cellMove applies a click on a classic grid cell; the notes its outcome
+// posts ride on the move's own foley.
+func (a *minesweeperApp) cellMove(c *ui.Context, row, col, button int, now time.Time) {
+	posted := a.chatPosted
+	res := a.applyCellAction(row, col, button)
+	a.handleAction(c, res, now)
+	if _, voiced := cellActionSound(res.Kind); voiced {
+		a.chatVoicedSince(posted)
+	}
 }
