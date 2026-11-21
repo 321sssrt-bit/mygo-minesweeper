@@ -712,7 +712,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	detail := v.Cell >= 16
 	var shieldDot ui.Color
 	if !detail && classic {
-		shieldDot = pal.InkOf(memberImage(MemberSoyorin))
+		shieldDot = pal.blendInkOf(memberImage(MemberSoyorin))
 	}
 	numberSize := v.Cell * 0.55
 	var numberW, numberH [len(cellDigits)]float32

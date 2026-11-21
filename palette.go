@@ -212,7 +212,7 @@ func classicMinimapForPaper(p *palette) *minimapColors {
 		Opened:   dayMinimap.Opened.Mix(nightMinimap.Opened, f),
 		Flag:     dayMinimap.Flag.Mix(nightMinimap.Flag, f),
 		Boom:     dayMinimap.Boom.Mix(nightMinimap.Boom, f),
-		Viewport: p.Ink,
+		Viewport: dayMinimap.Viewport.Mix(nightMinimap.Viewport, f),
 	}
 }
 
@@ -930,14 +930,14 @@ func settingsColorsForPaper(p *palette) *settingsColors {
 		TriggerOpenBg:     openBg,
 		TriggerBorder:     mixColorPremul(daySettings.TriggerBorder, nightSettings.TriggerBorder, f),
 		TriggerOpenBorder: mixColorPremul(daySettings.TriggerOpenBorder, nightSettings.TriggerOpenBorder, f),
-		TriggerIdleInk:    daySettings.TriggerIdleInk.Mix(nightSettings.TriggerIdleInk, f),
-		TriggerHoverInk:   daySettings.TriggerHoverInk.Mix(nightSettings.TriggerHoverInk, f),
-		TriggerOpenInk:    daySettings.TriggerOpenInk.Mix(nightSettings.TriggerOpenInk, f),
+		TriggerIdleInk:    autoInkOn(idleBg, daySettings.TriggerIdleInk, nightSettings.TriggerIdleInk),
+		TriggerHoverInk:   autoInkOn(hoverBg, daySettings.TriggerHoverInk, nightSettings.TriggerHoverInk),
+		TriggerOpenInk:    autoInkOn(openBg, daySettings.TriggerOpenInk, nightSettings.TriggerOpenInk),
 		TriggerIdleText:   autoInkOn(idleBg, dayPaper.Ink, nightPaper.Ink),
 		TriggerHoverText:  autoInkOn(hoverBg, dayPaper.Ink, nightPaper.Ink),
 		TriggerIdleIcon:   autoInkOn(idleBg, dayPaper.InkMuted, nightPaper.InkMuted),
 		TriggerHoverIcon:  autoInkOn(hoverBg, dayPaper.InkMuted, nightPaper.InkMuted),
-		GroupInk:          daySettings.GroupInk.Mix(nightSettings.GroupInk, f),
+		GroupInk:          autoInkOn(p.Sheet, daySettings.GroupInk, nightSettings.GroupInk),
 		LabelInk:          p.Ink,
 		MutedInk:          p.InkMuted,
 		KeyBg:             keyBg,

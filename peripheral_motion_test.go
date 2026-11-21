@@ -198,7 +198,8 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 			closedBaseline := image.NewRGBA(tt.Image().Bounds())
 			copy(closedBaseline.Pix, tt.Image().Pix)
 
-			// 1. Open first popover and settle its enter transition.
+			// 1. Open first popover, settle its enter transition, then sit idle well past
+			// popoverExitDuration (500ms) so an outside click must anchor exit start to the click frame.
 			if err := tt.Click(tc.firstTrig); err != nil {
 				t.Fatalf("open %s: %v", tc.firstTrig, err)
 			}
@@ -206,6 +207,7 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 			if !app.popoverOpen(tc.firstKind) {
 				t.Fatalf("expected %s open", tc.firstTrig)
 			}
+			tt.Advance(500 * time.Millisecond)
 
 			// 2. Dismiss via outside left/right click on a board cell: anti-leak shield
 			// must swallow the click (zero reveal/flag) and start a real exit transition.
@@ -346,6 +348,31 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 		tt.Advance(popoverExitDuration + 20*time.Millisecond)
 		if diff := diffPixelCountInRect(afterSwitch, tt.Image(), setlistRect, 2); diff != 0 {
 			t.Fatalf("setlist track switch left lingering exit ghost pixels: diff=%d", diff)
+		}
+
+		// Mode switch during an active Escape exit ghost cancels the ghost on the very same frame.
+		if err := tt.Click("设置"); err != nil {
+			t.Fatalf("open settings before mode switch: %v", err)
+		}
+		tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		settingsRect := app.popoverRects[popoverSettings]
+		tt.Key(0, ui.KeyEscape)
+		tt.Advance(45 * time.Millisecond)
+		if !app.popoverExiting(tt.Now()) {
+			t.Fatal("expected settings exit ghost active at 45ms before mode switch")
+		}
+		if err := tt.Click("纯正经典"); err != nil {
+			t.Fatalf("switch to 纯正经典 mid-exit: %v", err)
+		}
+		if app.modeIdx != 1 || app.hasOpenPopover() || app.popoverExiting(tt.Now()) || tt.FramePending() {
+			t.Fatalf("mode switch mid-exit left ghost or pending frame: modeIdx=%d open=%v exiting=%v pending=%v",
+				app.modeIdx, app.hasOpenPopover(), app.popoverExiting(tt.Now()), tt.FramePending())
+		}
+		afterMode := image.NewRGBA(tt.Image().Bounds())
+		copy(afterMode.Pix, tt.Image().Pix)
+		tt.Advance(popoverExitDuration + 20*time.Millisecond)
+		if diff := diffPixelCountInRect(afterMode, tt.Image(), settingsRect, 2); diff != 0 {
+			t.Fatalf("mode switch mid-exit painted lingering exit ghost on switch frame: diff=%d", diff)
 		}
 
 		// Duel settlement with open settings popover cancels exit ghost immediately.
@@ -540,33 +567,48 @@ func TestMemberHighlightAndLampWarmthSmoothBlend(t *testing.T) {
 		t.Fatalf("expected lamp transition converged: blend=%.3f pending=%v", app.nightBlendValue, tt.FramePending())
 	}
 
-	// 4. Sweep blended palette across nightFrac in [0, 1]: neutral text keeps >=4.5:1 WCAG AA
-	// contrast on both Sheet and Board at every frame, chromatic accents keep hue without
-	// flashing pure black/white across 0.5, and classic minimap paper interpolates smoothly.
-	var prevGroup, prevMember, prevMini ui.Color
+	// 4. Sweep blended palette across nightFrac in [0, 1]: neutral text & settings control inks
+	// keep >=4.5:1 WCAG AA contrast on every frame, chromatic decoration/meter inks preserve hue
+	// without flashing pure black/white, and classic minimap Bg & Viewport interpolate smoothly.
+	var prevBand, prevSoyo, prevTomori, prevMiniBg, prevMiniView ui.Color
 	pureBlack := ui.Color{A: 255}
 	pureWhite := ui.Color{R: 255, G: 255, B: 255, A: 255}
 	for step := 0; step <= 50; step++ {
 		f := float32(step) / 50
 		p := blendPaper(f)
-		if c := contrast(p.Ink, p.Sheet); c < minInkContrast {
-			t.Fatalf("nightFrac=%.2f pal.Ink (%s) on Sheet (%s) contrast=%.2f < %.1f",
-				f, hexOf(p.Ink), hexOf(p.Sheet), c, minInkContrast)
-		}
-		if c := contrast(p.Ink, p.Board); c < minInkContrast {
-			t.Fatalf("nightFrac=%.2f pal.Ink (%s) on Board (%s) contrast=%.2f < %.1f",
-				f, hexOf(p.Ink), hexOf(p.Board), c, minInkContrast)
-		}
 		sc := settingsColorsForPaper(p)
-		if c := contrast(sc.LabelInk, p.Sheet); c < minInkContrast {
-			t.Fatalf("nightFrac=%.2f settings LabelInk (%s) on Sheet (%s) contrast=%.2f < %.1f",
-				f, hexOf(sc.LabelInk), hexOf(p.Sheet), c, minInkContrast)
+		for _, chk := range []struct {
+			name   string
+			fg, bg ui.Color
+		}{
+			{"pal.Ink on Sheet", p.Ink, p.Sheet},
+			{"pal.Ink on Board", p.Ink, p.Board},
+			{"settings LabelInk", sc.LabelInk, p.Sheet},
+			{"settings GroupInk", sc.GroupInk, p.Sheet},
+			{"settings TriggerIdleInk", sc.TriggerIdleInk, sc.TriggerIdleBg},
+			{"settings TriggerHoverInk", sc.TriggerHoverInk, sc.TriggerHoverBg},
+			{"settings TriggerOpenInk", sc.TriggerOpenInk, sc.TriggerOpenBg},
+		} {
+			if c := contrast(chk.fg, chk.bg); c < minInkContrast {
+				t.Fatalf("nightFrac=%.2f %s (%s on %s) contrast=%.2f < %.1f",
+					f, chk.name, hexOf(chk.fg), hexOf(chk.bg), c, minInkContrast)
+			}
 		}
-		mInk := p.blendInkOf(memberImage(MemberTomori))
+		bandInk := p.blendInkOf(bandColor)
+		soyoInk := p.blendInkOf(memberImage(MemberSoyorin))
+		tomoriInk := p.blendInkOf(memberImage(MemberTomori))
 		mini := classicMinimapForPaper(p)
-		if sc.GroupInk == pureBlack || sc.GroupInk == pureWhite || mInk == pureBlack || mInk == pureWhite {
-			t.Fatalf("nightFrac=%.2f chromatic ink collapsed to black/white: group=%s member=%s",
-				f, hexOf(sc.GroupInk), hexOf(mInk))
+		for _, ch := range []struct {
+			name string
+			col  ui.Color
+		}{
+			{"band progress ink", bandInk},
+			{"soyo gravity ink", soyoInk},
+			{"tomori member ink", tomoriInk},
+		} {
+			if ch.col == pureBlack || ch.col == pureWhite {
+				t.Fatalf("nightFrac=%.2f %s collapsed to black/white: %s", f, ch.name, hexOf(ch.col))
+			}
 		}
 		if step > 0 {
 			for _, pair := range []struct {
@@ -574,9 +616,11 @@ func TestMemberHighlightAndLampWarmthSmoothBlend(t *testing.T) {
 				a, b ui.Color
 				maxD int
 			}{
-				{"settings GroupInk", prevGroup, sc.GroupInk, 12},
-				{"member Tomori ink", prevMember, mInk, 12},
-				{"classic minimap Bg", prevMini, mini.Bg, 12},
+				{"band progress ink", prevBand, bandInk, 12},
+				{"soyo gravity ink", prevSoyo, soyoInk, 12},
+				{"tomori member ink", prevTomori, tomoriInk, 12},
+				{"classic minimap Bg", prevMiniBg, mini.Bg, 12},
+				{"classic minimap Viewport", prevMiniView, mini.Viewport, 12},
 			} {
 				dr := absInt(int(pair.a.R) - int(pair.b.R))
 				dg := absInt(int(pair.a.G) - int(pair.b.G))
@@ -586,7 +630,7 @@ func TestMemberHighlightAndLampWarmthSmoothBlend(t *testing.T) {
 				}
 			}
 		}
-		prevGroup, prevMember, prevMini = sc.GroupInk, mInk, mini.Bg
+		prevBand, prevSoyo, prevTomori, prevMiniBg, prevMiniView = bandInk, soyoInk, tomoriInk, mini.Bg, mini.Viewport
 	}
 }
 
