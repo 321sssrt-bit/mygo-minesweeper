@@ -118,23 +118,23 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 				}
 				if backend == "grid" {
 					accNum, ok := tt.Access("cell-0-11")
-					if !ok || accNum.Value != "1" {
-						t.Fatalf("expected frame-0 screen reader value \"1\" on cell-0-11, got ok=%v node=%+v", ok, accNum)
+					if !ok || accNum.Value != "1" || accNum.Description != "1" {
+						t.Fatalf("expected frame-0 screen reader value/description \"1\" on cell-0-11, got ok=%v node=%+v", ok, accNum)
 					}
 					accEmpty, ok := tt.Access("cell-0-0")
-					if !ok || accEmpty.Value != "0" {
-						t.Fatalf("expected frame-0 screen reader value \"0\" on cell-0-0, got ok=%v node=%+v", ok, accEmpty)
+					if !ok || accEmpty.Value != "0" || accEmpty.Description != "0" {
+						t.Fatalf("expected frame-0 screen reader value/description \"0\" on cell-0-0, got ok=%v node=%+v", ok, accEmpty)
 					}
 				} else {
 					accOrigin, ok := tt.Access("经典棋盘")
-					if !ok || accOrigin.Value != "0" {
-						t.Fatalf("expected frame-0 canvas screen reader value \"0\" at (0,0), got ok=%v node=%+v", ok, accOrigin)
+					if !ok || accOrigin.Value != "0" || accOrigin.Description != "0" {
+						t.Fatalf("expected frame-0 canvas screen reader value/description \"0\" at (0,0), got ok=%v node=%+v", ok, accOrigin)
 					}
 					tt.Move(farRectBefore.X+farRectBefore.W/2, farRectBefore.Y+farRectBefore.H/2)
 					tt.Frame()
 					accFar, ok := tt.Access("经典棋盘")
-					if !ok || accFar.Value != "1" {
-						t.Fatalf("expected frame-0 canvas screen reader value \"1\" while hovering still-covered (0,11), got ok=%v node=%+v", ok, accFar)
+					if !ok || accFar.Value != "1" || accFar.Description != "1" {
+						t.Fatalf("expected frame-0 canvas screen reader value/description \"1\" while hovering still-covered (0,11), got ok=%v node=%+v", ok, accFar)
 					}
 					// Move pointer back to origin so (0,11) paints unhovered pal.Slip for stage-1 check.
 					tt.Move(originRectBefore.X+originRectBefore.W/2, originRectBefore.Y+originRectBefore.H/2)

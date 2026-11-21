@@ -552,7 +552,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 		if v.HoverRow >= 0 && v.HoverCol >= 0 {
 			if hoverCell := a.game.Cell(v.HoverRow, v.HoverCol); hoverCell != nil {
 				if val := cellAccessValue(hoverCell); val != "" {
-					boardBox.Value(val)
+					boardBox.Value(val).Description(val)
 				}
 			}
 		}

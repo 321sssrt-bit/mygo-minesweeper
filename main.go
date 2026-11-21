@@ -559,9 +559,6 @@ func (a *minesweeperApp) enqueueRipple(now time.Time, wave []RevealWaveEntry, lo
 	if a.ripples == nil {
 		a.ripples = make(map[int]tileRipple, len(wave))
 	}
-	if len(wave) > MaxRevealWaveEntries {
-		wave = wave[:MaxRevealWaveEntries]
-	}
 	needed := 0
 	for _, entry := range wave {
 		if _, exists := a.ripples[entry.Index]; !exists {
@@ -2186,7 +2183,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									var tileArt *ui.SVG
 
 									if val := cellAccessValue(cell); val != "" {
-										tile.Value(val)
+										tile.Value(val).Description(val)
 									}
 									switch {
 									case cell.Revealed:
