@@ -226,12 +226,14 @@ func benchmarkActiveFrame(b *testing.B, track string, canvas bool) {
 		}
 	}
 
+	paints := testerPaintCount(b, tt)
 	b.ReportAllocs()
 	for b.Loop() {
 		tt.Advance(step)
 	}
-	if got := builds - baseline; got != b.N {
-		b.Fatalf("built %d views in %d measured frames", got, b.N)
+	gotBuilds, gotPaints := builds-baseline, testerPaintCount(b, tt)-paints
+	if gotBuilds != b.N || gotPaints != uint64(b.N) {
+		b.Fatalf("%d builds and %d paints in %d measured frames", gotBuilds, gotPaints, b.N)
 	}
 	if len(app.ripples) != len(samples) || (!canvas && len(app.bandages) != 2) {
 		b.Fatal("staged effects expired during measurement")

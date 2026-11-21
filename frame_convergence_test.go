@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"io/fs"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -81,6 +82,14 @@ func newConvergenceView(t *testing.T, app *minesweeperApp) *convergenceView {
 	v.tt = ui.NewTester(func(c *ui.Context) {
 		v.builds++
 		app.view(c)
+		// The toolkit's independent toast fades are outside these motion
+		// cases. Close them on creation so the quiet window starts as soon
+		// as the last app effect expires, even on loss and settlement.
+		ui.ToastViewportBase(c, func(_ ui.Element, toasts []ui.Toast) {
+			if len(toasts) != 0 {
+				c.CloseToast("")
+			}
+		})
 	}, 1280, 900)
 	v.tt.Advance(10 * time.Millisecond)
 	requireSilentSound(t, app)
@@ -120,14 +129,29 @@ func (v *convergenceView) cell(row, col, button int) {
 	}
 }
 
+func testerPaintCount(t testing.TB, tt *ui.Tester) uint64 {
+	t.Helper()
+	// mygo v0.9.2 exposes pending refreshes but not completed paints. Its
+	// counter includes partial Painter.After repaints, which can bypass both
+	// the app view and any separate Draw callback attached by this test.
+	engine := reflect.ValueOf(tt).Elem().FieldByName("rt")
+	if engine.Kind() == reflect.Pointer {
+		if count := engine.Elem().FieldByName("paintFrames"); count.Kind() == reflect.Uint64 {
+			return count.Uint()
+		}
+	}
+	t.Fatal("mygo Tester paint counter moved; update paint-only convergence probe")
+	return 0
+}
+
 func (v *convergenceView) converge(duration time.Duration) {
 	v.t.Helper()
-	pending, before := v.tt.FramePending(), v.builds
+	pending, before, paints := v.tt.FramePending(), v.builds, testerPaintCount(v.t, v.tt)
 	const probe = 40 * time.Millisecond
 	v.tt.Advance(probe)
-	v.t.Logf("active effect: pending=%v, %d builds in 40 ms", pending, v.builds-before)
-	if !pending && v.builds-before < 2 {
-		v.t.Fatalf("active effect did not schedule frames: pending=%v, %d builds in %v", pending, v.builds-before, probe)
+	v.t.Logf("active effect: pending=%v, %d paints and %d builds in 40 ms", pending, testerPaintCount(v.t, v.tt)-paints, v.builds-before)
+	if testerPaintCount(v.t, v.tt)-paints < 2 {
+		v.t.Fatal("active effect did not paint successive frames")
 	}
 	v.tt.Advance(duration - probe)
 	if v.tt.FramePending() {
@@ -144,31 +168,29 @@ func (v *convergenceView) quiet(status GameStatus) {
 	if status == StatusPlaying {
 		phase := v.tt.Now().Sub(v.app.startedAt) % time.Second
 		// Align the probe 100 ms after a stopwatch tick.
-		v.tt.Advance((time.Second + 100*time.Millisecond - phase) % time.Second)
-		before := v.builds
-		v.tt.Advance(400 * time.Millisecond)
-		got := v.builds - before
-		v.t.Logf("between stopwatch ticks: %d builds in 400 ms", got)
-		if got != 0 {
-			v.t.Fatalf("%d unexpected builds between stopwatch ticks", got)
-		}
+		align := (time.Second + 100*time.Millisecond - phase) % time.Second
+		v.advanceQuiet(align, int((phase+align)/time.Second))
+		v.advanceQuiet(400*time.Millisecond, 0)
+
 		want = 3
 	}
-	before, elapsed := v.builds, v.app.elapsed
-	v.tt.Advance(3 * time.Second)
-	got := v.builds - before
-	v.t.Logf("status=%v pending=%v, %d builds in 3 s (want %d)", status, v.tt.FramePending(), got, want)
-	if got != want || v.tt.FramePending() || (want > 0 && v.app.elapsed-elapsed != want) {
-		v.t.Fatalf("steady state: pending=%v, builds=%d, stopwatch delta=%d, want %d builds",
-			v.tt.FramePending(), got, v.app.elapsed-elapsed, want)
+	elapsed := v.app.elapsed
+	v.advanceQuiet(3*time.Second, want)
+	if v.app.elapsed-elapsed != want {
+		v.t.Fatalf("stopwatch advanced %d, want %d", v.app.elapsed-elapsed, want)
 	}
 }
 
-// Action toasts can stay up for eight seconds in mygo.
-func (v *convergenceView) quietAfterToasts(status GameStatus) {
+func (v *convergenceView) advanceQuiet(d time.Duration, want int) {
 	v.t.Helper()
-	v.tt.Advance(9 * time.Second)
-	v.quiet(status)
+	before, paints := v.builds, testerPaintCount(v.t, v.tt)
+	v.tt.Advance(d)
+	gotBuilds, gotPaints := v.builds-before, testerPaintCount(v.t, v.tt)-paints
+	v.t.Logf("status=%v pending=%v, %d paints and %d builds in %v (want %d each)",
+		v.app.game.Status, v.tt.FramePending(), gotPaints, gotBuilds, d, want)
+	if gotBuilds != want || gotPaints != uint64(want) || v.tt.FramePending() {
+		v.t.Fatal("unexpected frame activity in steady state")
+	}
 }
 
 func convergenceClassic(side int, member MemberID) *minesweeperApp {
@@ -243,7 +265,7 @@ func TestFrameConvergenceBoardEffects(t *testing.T) {
 					if app.shakeAmplitude != 0 || len(app.knotBursts) != 0 {
 						t.Fatal("shake or knot burst did not expire")
 					}
-					v.quietAfterToasts(tc.status)
+					v.quiet(tc.status)
 				})
 			}
 		})
@@ -264,7 +286,7 @@ func TestFrameConvergenceStageHighlights(t *testing.T) {
 				if app.quoteStrip.Active || len(app.skillPulses) != 0 {
 					t.Fatal("skill strip or pulses did not expire")
 				}
-				v.quietAfterToasts(StatusPlaying)
+				v.quiet(StatusPlaying)
 			})
 			t.Run("win-confetti-and-first-unlock", func(t *testing.T) {
 				app := convergenceClassic(side, MemberTomori)
@@ -281,7 +303,7 @@ func TestFrameConvergenceStageHighlights(t *testing.T) {
 				requireVictoryEffects(t, app)
 				v.converge(memeStripDuration + 40*time.Millisecond)
 				requireVictoryEffectsExpired(t, app)
-				v.quietAfterToasts(StatusWon)
+				v.quiet(StatusWon)
 			})
 		})
 	}
@@ -301,7 +323,7 @@ func TestFrameConvergenceStageHighlights(t *testing.T) {
 		requireVictoryEffects(t, app)
 		v.converge(memeStripDuration + 40*time.Millisecond)
 		requireVictoryEffectsExpired(t, app)
-		v.quietAfterToasts(StatusWon)
+		v.quiet(StatusWon)
 	})
 	t.Run("confetti-only", func(t *testing.T) {
 		app := newMinesweeperApp(7)
@@ -522,7 +544,7 @@ func TestFrameConvergenceCombined(t *testing.T) {
 		t.Fatal("combined fixture did not leave every required effect in flight")
 	}
 	v.converge(memeStripDuration + 40*time.Millisecond)
-	v.quietAfterToasts(StatusPlaying)
+	v.quiet(StatusPlaying)
 }
 
 func TestHeadlessEntryPointsUseSilentSound(t *testing.T) {
@@ -546,7 +568,7 @@ func TestDesktopAudioConstructionBoundary(t *testing.T) {
 		if entry.IsDir() && path != "." && strings.HasPrefix(entry.Name(), ".") {
 			return filepath.SkipDir
 		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".go") || path == "audio_test.go" {
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") {
 			return nil
 		}
 		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
@@ -554,7 +576,8 @@ func TestDesktopAudioConstructionBoundary(t *testing.T) {
 			return err
 		}
 		for _, imp := range f.Imports {
-			if p, _ := strconv.Unquote(imp.Path.Value); p == "github.com/egoist/mygo/audio" && path != "audio.go" {
+			if p, _ := strconv.Unquote(imp.Path.Value); p == "github.com/egoist/mygo/audio" &&
+				path != "audio.go" && path != "audio_test.go" {
 				t.Errorf("%s: desktop audio import outside the adapter", fset.Position(imp.Pos()))
 			}
 		}
@@ -562,15 +585,29 @@ func TestDesktopAudioConstructionBoundary(t *testing.T) {
 			fn, _ := decl.(*ast.FuncDecl)
 			main := path == "main.go" && fn != nil && fn.Recv == nil && fn.Name.Name == "main"
 			adapter := path == "audio.go" && fn != nil && fn.Recv == nil && fn.Name.Name == "newDesktopSound"
+			adapterTest := path == "audio_test.go" && fn != nil && fn.Name.Name == "TestAudioDesktopAdapterSetsVoiceBeforePlay"
+			playerTest := path == "audio_test.go" && fn != nil && fn.Name.Name == "TestAudioVoiceForwardsToPlayer"
+			var fakeVoiceAt token.Pos
+			if adapterTest {
+				fakeVoiceAt = fakeVoiceInstallPos(fn)
+			}
 			ast.Inspect(decl, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.Ident:
-					if x.Name == "newDesktopSound" && !main && !(adapter && x == fn.Name) {
+					if x.Name == "newDesktopSound" && !main && !adapterTest && !(adapter && x == fn.Name) {
 						t.Errorf("%s: desktop sound referenced outside main", fset.Position(x.Pos()))
 					}
+				case *ast.KeyValueExpr:
+					if key, ok := x.Key.(*ast.Ident); ok && key.Name == "Sound" &&
+						adapterTest && (!fakeVoiceAt.IsValid() || fakeVoiceAt >= x.Pos()) {
+						t.Errorf("%s: adapter must install the fake voice before injection", fset.Position(x.Pos()))
+					}
 				case *ast.SelectorExpr:
-					if (x.Sel.Name == "NewSound" || x.Sel.Name == "NewPlayer") && !adapter {
-						t.Errorf("%s: %s referenced outside the desktop adapter", fset.Position(x.Pos()), x.Sel.Name)
+					if (x.Sel.Name == "NewSound" || x.Sel.Name == "NewPlayer") && !adapter && !playerTest {
+						t.Errorf("%s: %s referenced outside the desktop adapter and its paused-player test", fset.Position(x.Pos()), x.Sel.Name)
+					}
+					if path == "audio_test.go" && x.Sel.Name == "Play" {
+						t.Errorf("%s: playback must go through the test's substitute voice", fset.Position(x.Pos()))
 					}
 				}
 				return true
@@ -581,5 +618,41 @@ func TestDesktopAudioConstructionBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Log("desktop sound constructor restricted to main; audio player primitives restricted to its adapter and audio_test.go")
+	t.Log("desktop output restricted to main; adapter tests use sample data, a paused player and a substitute voice")
+}
+
+// The adapter test sets its voice factory before it gives the adapter to the
+// app. The assignment must be unconditional and the last write to the factory.
+func fakeVoiceInstallPos(fn *ast.FuncDecl) token.Pos {
+	var installed token.Pos
+	references := 0
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "newVoice" {
+			references++
+		}
+		return true
+	})
+	if references != 1 {
+		return token.NoPos
+	}
+	for _, stmt := range fn.Body.List {
+		assign, ok := stmt.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			continue
+		}
+		sel, ok := assign.Lhs[0].(*ast.SelectorExpr)
+		factory, literal := assign.Rhs[0].(*ast.FuncLit)
+		if !ok || sel.Sel.Name != "newVoice" || !literal {
+			continue
+		}
+		ast.Inspect(factory.Body, func(n ast.Node) bool {
+			if value, ok := n.(*ast.CompositeLit); ok {
+				if id, ok := value.Type.(*ast.Ident); ok && id.Name == "fakeVoice" {
+					installed = assign.End()
+				}
+			}
+			return true
+		})
+	}
+	return installed
 }
