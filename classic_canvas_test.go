@@ -1236,10 +1236,11 @@ func TestClassicCanvasHoverHighlighterParity(t *testing.T) {
 	}
 }
 
-// Classic flood-fill, chord, skill, and winning reveals play the bandColor
-// ripple wave (0.26 on empty cells, 0.22 on numbered cells, no stroke, no
-// duel EffectCell ring), yield to isHintCenter, expire under the virtual
-// clock, and clear immediately on reset.
+// Classic flood-fill, chord, skill, and winning reveals follow the three-stage
+// bounded wave peel (covered slip before delay -> lifting slip + wash during
+// peel -> exposed wash decaying to bare paper), lock the active member's 代表色
+// when a single move reveals >= 10 cells (while < 10 keeps bandColor), yield to
+// isHintCenter, expire under the virtual clock, and clear immediately on reset.
 func TestClassicCanvasRippleWaveVisualAndLifecycle(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
@@ -1257,8 +1258,8 @@ func TestClassicCanvasRippleWaveVisualAndLifecycle(t *testing.T) {
 			g := app.game
 			g.FirstClick = true
 			g.Status = StatusPlaying
-			// Single mine at (0,7): clicking (0,0) flood-fills left-to-right across
-			// depth 0..6, reaching numbered frontier (0,6) at depth 6.
+			// Single mine at (0,7): clicking (0,0) flood-fills 63 safe cells (>= 10)
+			// left-to-right across depth 0..6, reaching numbered frontier (0,6) at depth 6.
 			g.Cell(0, 7).IsMine = true
 			g.RecomputeAdjacency()
 
@@ -1283,53 +1284,70 @@ func TestClassicCanvasRippleWaveVisualAndLifecycle(t *testing.T) {
 				t.Fatalf("classic click must not set duel EffectCell, got %d", v.EffectCell)
 			}
 
-			// At t=0, depth-0 empty cell (0,0) paints bandColor.Alpha(0.26) with no stroke.
-			img := tt.Image()
-			wantEmptyRipple := bandColor.Alpha(0.26).Over(pal.Board)
-			assertColorNear(t, "depth-0 empty ripple interior", sampleCanvasPixel(img, originTile.X+originTile.W/2, originTile.Y+originTile.H/2, 2), wantEmptyRipple)
-			assertColorNear(t, "depth-0 empty ripple edge (no stroke)", sampleCanvasPixel(img, originTile.X+originTile.W/2, originTile.Y+0.5, 2), wantEmptyRipple)
-
-			// Depth-6 numbered cell (0,6) has not started yet at t=0.
+			// Stage 1 (t=0): depth-6 numbered cell (0,6) has not reached its wave delay
+			// yet, so it stays covered by a full paper slip even though game state is revealed.
 			numIdx := 0*g.Cols + 6
 			numRip, ok := app.ripples[numIdx]
-			if !ok || numRip.Delay == 0 {
-				t.Fatalf("expected delayed ripple on numbered frontier (0,6), got ok=%v rip=%+v", ok, numRip)
+			if !ok || numRip.Delay != 6*rippleStepDelay {
+				t.Fatalf("expected 6-step delayed ripple on numbered frontier (0,6), got ok=%v rip=%+v", ok, numRip)
+			}
+			if !g.Cell(0, 6).Revealed {
+				t.Fatal("expected (0,6) logically revealed on frame 0")
+			}
+			if numRip.Color != memberImage(MemberTomori) {
+				t.Fatalf("expected >=10 flood to lock Tomori 代表色 %s, got %s", hexOf(memberImage(MemberTomori)), hexOf(numRip.Color))
 			}
 			numTile := classicCanvasCellRect(board, v, 0, 6)
-			assertColorNear(t, "delayed numbered cell before wave", sampleCanvasPixel(img, numTile.X+3, numTile.Y+3, 2), pal.Board)
+			assertColorNear(t, "stage 1 covered frontier slip before delay", sampleCanvasPixel(tt.Image(), numTile.X+3, numTile.Y+3, 2), pal.Slip)
 
-			// Advance to the exact start of (0,6)'s wave and render: numbered cell paints bandColor.Alpha(0.22) with no stroke.
-			tt.Advance(numRip.Delay)
-			tt.Frame()
-			img = tt.Image()
-			wantNumRipple := bandColor.Alpha(0.22).Over(pal.Board)
-			assertColorNear(t, "numbered ripple interior", sampleCanvasPixel(img, numTile.X+3, numTile.Y+3, 2), wantNumRipple)
-			assertColorNear(t, "numbered ripple edge (no stroke)", sampleCanvasPixel(img, numTile.X+numTile.W/2, numTile.Y+0.5, 2), wantNumRipple)
-
-			// Advancing further without manual Frame() lets p.AnimationFrame() repaint the decaying wave.
-			tt.Advance(140 * time.Millisecond)
-			midGot := sampleCanvasPixel(tt.Image(), numTile.X+3, numTile.Y+3, 2)
-			if near(midGot.R, wantNumRipple.R) && near(midGot.G, wantNumRipple.G) && near(midGot.B, wantNumRipple.B) {
-				t.Errorf("numbered ripple did not decay over 140ms: still %s", hexOf(midGot))
+			// Stage 2 (origin mid-peel at t=75ms): depth-0 slip is halfway peeled, so its
+			// pixel blends the lifting slip over the revealed locked-colour wash (neither pure slip nor pure board).
+			tt.Advance(peelDuration / 2)
+			originMid := sampleCanvasPixel(tt.Image(), originTile.X+originTile.W/2, originTile.Y+originTile.H/2, 2)
+			if near(originMid.R, pal.Slip.R) && near(originMid.G, pal.Slip.G) && near(originMid.B, pal.Slip.B) {
+				t.Errorf("origin slip did not begin peeling by %v: still %s", peelDuration/2, hexOf(originMid))
 			}
+			if near(originMid.R, pal.Board.R) && near(originMid.G, pal.Board.G) && near(originMid.B, pal.Board.B) {
+				t.Errorf("origin slip vanished too early at %v: already bare %s", peelDuration/2, hexOf(originMid))
+			}
+			// Meanwhile (0,6) is still before its 144ms delay and remains a full paper slip.
+			assertColorNear(t, "stage 1 frontier still covered at 75ms", sampleCanvasPixel(tt.Image(), numTile.X+3, numTile.Y+3, 2), pal.Slip)
+
+			// Stage 3 for origin (t=155ms > peelDuration): origin slip is gone and shows the
+			// locked Tomori 代表色 watercolor wash with no stroke.
+			tt.Advance(peelDuration/2 + 5*time.Millisecond)
+			originStage3 := sampleCanvasPixel(tt.Image(), originTile.X+originTile.W/2, originTile.Y+originTile.H/2, 2)
+			originWashAlpha := 1 - float32(peelDuration+5*time.Millisecond)/float32(rippleDuration)
+			wantOriginWash := memberImage(MemberTomori).Alpha(0.26 * originWashAlpha).Over(pal.Board)
+			assertColorNear(t, "stage 3 origin locked-colour wash interior", originStage3, wantOriginWash)
+			assertColorNear(t, "stage 3 origin wash edge (no stroke)", sampleCanvasPixel(tt.Image(), originTile.X+originTile.W/2, originTile.Y+0.5, 2), wantOriginWash)
+
+			// Stage 2 -> Stage 3 for depth-6 frontier (0,6): advance to delay + peelDuration + 10ms.
+			elapsedSoFar := peelDuration + 5*time.Millisecond
+			targetFrontierStage3 := numRip.Delay + peelDuration + 10*time.Millisecond
+			tt.Advance(targetFrontierStage3 - elapsedSoFar)
+			frontierWashAlpha := 1 - float32(peelDuration+10*time.Millisecond)/float32(rippleDuration)
+			wantNumWash := memberImage(MemberTomori).Alpha(0.22 * frontierWashAlpha).Over(pal.Board)
+			assertColorNear(t, "stage 3 frontier locked-colour wash interior", sampleCanvasPixel(tt.Image(), numTile.X+3, numTile.Y+3, 2), wantNumWash)
+			assertColorNear(t, "stage 3 frontier wash edge (no stroke)", sampleCanvasPixel(tt.Image(), numTile.X+numTile.W/2, numTile.Y+0.5, 2), wantNumWash)
 
 			// Advance past full wave lifetime: ripples expire and cells return to bare pal.Board.
-			tt.Advance(rippleMaxDelay + rippleDuration + 50*time.Millisecond)
+			tt.Advance(rippleDuration + 50*time.Millisecond)
 			if len(app.ripples) != 0 {
 				t.Fatalf("expected ripples expired cleanly, remaining=%d", len(app.ripples))
 			}
 			assertColorNear(t, "origin restored after ripple", sampleCanvasPixel(tt.Image(), originTile.X+originTile.W/2, originTile.Y+originTile.H/2, 2), pal.Board)
 			assertColorNear(t, "numbered restored after ripple", sampleCanvasPixel(tt.Image(), numTile.X+3, numTile.Y+3, 2), pal.Board)
 
-			// Hover hint precedence: when a chordable number also has an active ripple,
-			// isHintCenter (0.38 highlighter) wins over ripple (matching main.go).
+			// Hover hint precedence: when a chordable number has an active watercolor wash
+			// (post-peel), isHintCenter (0.38 highlighter) wins over the wash (matching main.go).
 			g.Status = StatusPlaying
 			g.Cell(0, 7).Flagged = true
 			g.FlagsPlaced = 1
 			g.Cell(1, 7).Revealed = false
 			g.RevealedSafe--
 			app.ripples = map[int]tileRipple{
-				numIdx: {Start: tt.Now(), Delay: 0},
+				numIdx: {Start: tt.Now().Add(-peelDuration), Delay: 0, Color: memberImage(MemberRana)},
 			}
 			tt.Move(numTile.X+numTile.W/2, numTile.Y+numTile.H/2)
 			tt.Frame()

@@ -544,12 +544,22 @@ func fromHSL(h, s, l float64) ui.Color {
 	return ui.Color{R: to8(r), G: to8(g), B: to8(b), A: 255}
 }
 
-// paperArt are the hand-drawn props of one paper, as SVG.
+// paperArt are the hand-drawn props of one paper, as SVG, plus pre-rasterized
+// bitmaps for smooth translucent prop animations (bandage diagonal peel-off).
 type paperArt struct {
 	Flag, Shield, WrongFlag, Knot, KnotHit *ui.SVG
+	FlagBitmap, ShieldBitmap               *ui.Bitmap
 }
 
 var dayArt, nightArt = newPaperArt(dayPaper), newPaperArt(nightPaper)
+
+// propTintWhite is a neutral multiplicative tint for fading prop bitmaps
+// without altering their palette colours.
+var propTintWhite = ui.Hex("#FFFFFF")
+
+func fadeTint(alpha float32) ui.Color {
+	return propTintWhite.Alpha(max(float32(0), min(float32(1), alpha)))
+}
 
 func artFor(dark bool) *paperArt {
 	if dark {
@@ -560,12 +570,16 @@ func artFor(dark bool) *paperArt {
 
 func newPaperArt(p *palette) *paperArt {
 	soyo := ui.Hex("#FFDD88")
+	flagSVG := ui.MustParseSVG([]byte(bandAidSVG(p.BandAid, p.BandAidPad, p.BandAidEdge, "")))
+	shieldSVG := ui.MustParseSVG([]byte(bandAidSVG(soyo, soyo.Mix(ui.Hex("#FFFFFF"), 0.5), p.InkOf(soyo), "")))
 	return &paperArt{
-		Flag:      ui.MustParseSVG([]byte(bandAidSVG(p.BandAid, p.BandAidPad, p.BandAidEdge, ""))),
-		Shield:    ui.MustParseSVG([]byte(bandAidSVG(soyo, soyo.Mix(ui.Hex("#FFFFFF"), 0.5), p.InkOf(soyo), ""))),
-		WrongFlag: ui.MustParseSVG([]byte(bandAidSVG(p.BandAid, p.BandAidPad, p.BandAidEdge, hexOf(p.BoomInk)))),
-		Knot:      ui.MustParseSVG([]byte(knotSVG(p.Graphite))),
-		KnotHit:   ui.MustParseSVG([]byte(knotSVG(p.BoomInk))),
+		Flag:         flagSVG,
+		Shield:       shieldSVG,
+		WrongFlag:    ui.MustParseSVG([]byte(bandAidSVG(p.BandAid, p.BandAidPad, p.BandAidEdge, hexOf(p.BoomInk)))),
+		Knot:         ui.MustParseSVG([]byte(knotSVG(p.Graphite))),
+		KnotHit:      ui.MustParseSVG([]byte(knotSVG(p.BoomInk))),
+		FlagBitmap:   ui.NewBitmap(flagSVG.Image(96, 96, nil)),
+		ShieldBitmap: ui.NewBitmap(shieldSVG.Image(96, 96, nil)),
 	}
 }
 
