@@ -185,6 +185,9 @@ func TestTopBarToolbarLayoutAndSettingsPopoverNoOverflow(t *testing.T) {
 						t.Fatalf("motion segment %q unexpected tooltip description: ok=%v info=%+v", seg.label, ok, info)
 					}
 				}
+				if lampInfo, ok := tt.AccessByRole(ui.RoleSwitch, "夜间台灯"); !ok || lampInfo.Description != "切换日间方格纸与深夜台灯下的笔记本" {
+					t.Fatalf("unexpected 夜间台灯 switch description: ok=%v info=%+v", ok, lampInfo)
+				}
 				if soundInfo, ok := tt.AccessByRole(ui.RoleSwitch, "音效"); !ok || soundInfo.Description != "开关纸笔与乐器音效（按 M 切换）" {
 					t.Fatalf("unexpected 音效 switch description: ok=%v info=%+v", ok, soundInfo)
 				}
@@ -399,8 +402,23 @@ func TestSettingsMutedVolumeSliderLocksPointerAndKeyboardAndRestores(t *testing.
 		t.Fatal("Tab from 音效 while muted must skip disabled 音量 slider to 右键 ? 标记")
 	}
 
+	// Let the popover enter transition settle before hovering the muted slider;
+	// moving the pointer onto the disabled slider must show the muted tooltip.
+	tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+	sliderSettled, ok := tt.AccessByRole(ui.RoleSlider, "音量")
+	if !ok || !sliderSettled.Disabled {
+		t.Fatalf("expected settled disabled 音量 slider, ok=%v info=%+v", ok, sliderSettled)
+	}
+	sr := sliderSettled.Bounds
+	tt.Move(1, 1)
+	tt.Advance(20 * time.Millisecond)
+	tt.Move(sr.X+sr.W/2, sr.Y+sr.H/2)
+	tt.Advance(700 * time.Millisecond)
+	if !tt.HasText("已静音，开启音效后恢复此音量") {
+		t.Fatalf("hovering disabled 音量 slider while muted did not show muted tooltip; texts=%q", tt.Texts())
+	}
+
 	// Try pointer click and drag across the disabled slider: popover stays open and volume stays locked.
-	sr := sliderDisabled.Bounds
 	tt.ClickAt(sr.X+sr.W*0.85, sr.Y+sr.H/2)
 	tt.Press(sr.X+sr.W*0.2, sr.Y+sr.H/2)
 	tt.Move(sr.X+sr.W*0.9, sr.Y+sr.H/2)

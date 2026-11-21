@@ -760,7 +760,7 @@ func (a *minesweeperApp) paintPopoverExitContents(p *ui.Painter, box ui.Rect, ki
 			}
 			p.Text(inner.X+6, y+2, "音量", 13, volLabelInk)
 			volText := settingsVolumeReadout(a.soundEnabled, a.volume)
-			volSpan := ui.Span{Text: volText, Size: 12, Color: volValueInk}
+			volSpan := ui.Span{Text: volText, Size: 12, Weight: 700, Color: volValueInk, Features: "tnum"}
 			vw, _ := p.MeasureText(0, volSpan)
 			p.RichText(inner.X+inner.W-6-vw, y+2, 0, volSpan)
 			y += 24
@@ -2677,14 +2677,23 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 						ui.Text(c, settingsVolumeReadout(a.soundEnabled, a.volume)).FontSize(12).Bold().TextColor(volValueInk).FontFeatures("tnum").SingleLine()
 					})
 					vol := float64(a.volume)
-					volSlider := ui.Slider(c.Key("settings-volume"), &vol, 0, 100).
-						Step(1).FillWidth().LabelledBy(volLabel).Value(fmt.Sprintf("%d%%", a.volume)).
-						Disabled(!a.soundEnabled)
-					if a.soundEnabled {
-						volSlider.Tooltip("左右拖动或按方向键调节音量")
-					} else {
-						volSlider.Description(settingsMutedHint).Tooltip(settingsMutedHint)
+					volWrap := ui.Box(c.Key("settings-volume-wrap")).FillWidth()
+					if !a.soundEnabled {
+						// Disabled controls skip hover tooltips in mygo/ui, so attach
+						// the muted hover tooltip to the non-disabled wrapper instead.
+						volWrap.Tooltip(settingsMutedHint)
 					}
+					var volSlider ui.Element
+					volWrap.Children(func() {
+						volSlider = ui.Slider(c.Key("settings-volume"), &vol, 0, 100).
+							Step(1).FillWidth().LabelledBy(volLabel).Value(fmt.Sprintf("%d%%", a.volume)).
+							Disabled(!a.soundEnabled)
+						if a.soundEnabled {
+							volSlider.Tooltip("左右拖动或按方向键调节音量")
+						} else {
+							volSlider.Description(settingsMutedHint)
+						}
+					})
 					if a.soundEnabled && (volSlider.Pressed() || volSlider.Clicked() || volSlider.Changed()) {
 						volSlider.Focus()
 					}
