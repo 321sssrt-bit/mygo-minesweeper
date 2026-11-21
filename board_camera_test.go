@@ -322,6 +322,45 @@ func TestCanvasCameraFarJumpClampsToViewportSpan(t *testing.T) {
 	if v.gliding() || abs32(v.X-wantMidX) > 0.5 || abs32(v.Y-wantMidY) > 0.5 {
 		t.Fatalf("mid-range jump did not converge: pos=(%v,%v) want=(%v,%v)", v.X, v.Y, wantMidX, wantMidY)
 	}
+
+	// Case D: Zooming out from Cell=42 in a corner then pressing Ctrl+0 early
+	// in the zoom glide must still clamp the pan run-in to ~1.5 current viewport
+	// spans (measured at the current displayed Cell, not the smaller target Cell).
+	v.Cell = 42
+	v.center(g, 0, 0)
+	tt.Frame()
+	if err := tt.Click("缩小"); err != nil {
+		t.Fatalf("click 缩小 before Ctrl+0: %v", err)
+	}
+	tt.Advance(20 * time.Millisecond)
+	if v.Cell >= 42 || v.Cell <= 35 {
+		t.Fatalf("precondition failed: expected mid-glide zoom-out cell in (35, 42), got %.2f", v.Cell)
+	}
+	tt.Key(ui.Ctrl, ui.Key0)
+	if !v.gliding() {
+		t.Fatal("Ctrl+0 during zoom-out glide did not keep glide active")
+	}
+	curCell := float64(v.Cell)
+	curCenterX := (float64(v.X) + float64(v.Width)/2) / curCell
+	curCenterY := (float64(v.Y) + float64(v.Height)/2) / curCell
+	tgtCell := float32(v.glide.targetCell)
+	wantCenterX, wantCenterY := v.centerTarget(g, g.Rows/2, g.Cols/2, tgtCell)
+	tgtWX := (float64(wantCenterX) + float64(v.Width)/2) / float64(tgtCell)
+	tgtWY := (float64(wantCenterY) + float64(v.Height)/2) / float64(tgtCell)
+	curViewCellsW := float64(v.Width) / curCell
+	curViewCellsH := float64(v.Height) / curCell
+	combinedSpans := math.Hypot((curCenterX-tgtWX)/curViewCellsW, (curCenterY-tgtWY)/curViewCellsH)
+	if combinedSpans < 1.45 || combinedSpans > 1.55 {
+		t.Fatalf("zoom-out + Ctrl+0 clamped span = %.3f current viewports, want ~1.5 (curCell=%.2f tgtCell=%.2f)",
+			combinedSpans, curCell, tgtCell)
+	}
+	tt.Advance(240 * time.Millisecond)
+	if v.gliding() || abs32(v.Cell-35) > 0.05 {
+		t.Fatalf("zoom-out + Ctrl+0 did not settle at Cell=35: cell=%.2f gliding=%v", v.Cell, v.gliding())
+	}
+	if rEnd, cEnd, ok := v.cellAt(g, boardRect.W/2, boardRect.H/2); !ok || rEnd != g.Rows/2 || cEnd != g.Cols/2 {
+		t.Fatalf("zoom-out + Ctrl+0 settled at (%d,%d), want (%d,%d)", rEnd, cEnd, g.Rows/2, g.Cols/2)
+	}
 }
 
 func TestCanvasCameraMidGlideManualInputTakeover(t *testing.T) {
@@ -471,6 +510,41 @@ func TestCanvasCameraMidGlideManualInputTakeover(t *testing.T) {
 	}
 	if rEnd, cEnd, ok := cv.cellAt(cg, cBoard.W/2, cBoard.H/2); !ok || rEnd != cg.Rows/2 || cEnd != cg.Cols/2 {
 		t.Fatalf("glide after hover landed at (%d,%d), want (%d,%d)", rEnd, cEnd, cg.Rows/2, cg.Cols/2)
+	}
+
+	// 6. Mid-glide minimap click during a zoom glide cancels the zoom spring
+	// immediately and starts the minimap pan from the displayed zoom & position.
+	zApp, zTT, zBoard := setupCameraDuelApp(t)
+	zv, zg := zApp.board, zApp.game
+	zv.center(zg, 500, 500)
+	zTT.Frame()
+	if err := zTT.Click("放大"); err != nil {
+		t.Fatalf("click 放大 before mid-glide minimap click: %v", err)
+	}
+	zTT.Advance(50 * time.Millisecond)
+	if !zv.gliding() {
+		t.Fatal("expected zoom glide active at 50ms")
+	}
+	frozenCell := zv.Cell
+	if frozenCell <= 26 || frozenCell >= 31.1 {
+		t.Fatalf("expected mid-glide zoom cell in (26, 31.1), got %.2f", frozenCell)
+	}
+	zMini := zv.minimapBoundsFor(zg)
+	// Click near (505, 505) on the minimap (well within 2 viewport spans so no far clamp).
+	zClickX := zBoard.X + zMini.X + (505.5/float32(zg.Cols))*zMini.W
+	zClickY := zBoard.Y + zMini.Y + (505.5/float32(zg.Rows))*zMini.H
+	beforeMiniX, beforeMiniY := zv.X, zv.Y
+	zTT.ClickAt(zClickX, zClickY)
+	if !zv.gliding() {
+		t.Fatal("minimap click during zoom glide did not start pan glide")
+	}
+	if zv.Cell != frozenCell || zv.X != beforeMiniX || zv.Y != beforeMiniY {
+		t.Fatalf("minimap click did not take over from displayed zoom/pos: got (%.2f,%v,%v), want (%.2f,%v,%v)",
+			zv.Cell, zv.X, zv.Y, frozenCell, beforeMiniX, beforeMiniY)
+	}
+	zTT.Advance(240 * time.Millisecond)
+	if zv.gliding() || abs32(zv.Cell-frozenCell) > 0.02 {
+		t.Fatalf("minimap takeover continued old zoom glide: cell=%.2f want=%.2f gliding=%v", zv.Cell, frozenCell, zv.gliding())
 	}
 }
 

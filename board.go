@@ -211,10 +211,10 @@ func (v *boardView) startGlide(g *Game, targetX, targetY, targetCell float32, no
 	tgtWX := (float64(targetX) + w/2) / tgtCell
 	tgtWY := (float64(targetY) + h/2) / tgtCell
 
-	// Measure pan distance in world-cell viewport spans so in-place zooms
-	// around high cell indices never trigger the cross-board run-in clamp.
-	viewCellsW := w / tgtCell
-	viewCellsH := h / tgtCell
+	// Measure pan distance in current viewport spans so in-place zooms never
+	// trigger the clamp and combined zoom+recenter glides stay within 1.5 spans.
+	viewCellsW := w / curCell
+	viewCellsH := h / curCell
 	dx := curWX - tgtWX
 	dy := curWY - tgtWY
 	if spans := math.Hypot(dx/viewCellsW, dy/viewCellsH); spans > cameraGlideFarTrigger {
@@ -296,9 +296,6 @@ func (v *boardView) stepGlide(g *Game, now time.Time) bool {
 }
 
 func (v *boardView) glideCenter(g *Game, row, col int, now time.Time, reduced bool) {
-	if g == nil || g.Rows <= 0 || g.Cols <= 0 {
-		return
-	}
 	v.clamp(g)
 	tgtCell := v.Cell
 	if v.glide.active {
@@ -312,16 +309,10 @@ func (v *boardView) glideCenter(g *Game, row, col int, now time.Time, reduced bo
 }
 
 func (v *boardView) glideCenterBoard(g *Game, now time.Time, reduced bool) {
-	if g == nil || g.Rows <= 0 || g.Cols <= 0 {
-		return
-	}
 	v.glideCenter(g, g.Rows/2, g.Cols/2, now, reduced)
 }
 
 func (v *boardView) glideZoom(g *Game, atX, atY, factor float32, now time.Time, reduced bool) {
-	if g == nil || g.Rows <= 0 || g.Cols <= 0 || factor <= 0 || !isFinite32(factor) || !isFinite32(atX) || !isFinite32(atY) {
-		return
-	}
 	v.clamp(g)
 	baseX, baseY, baseCell := v.X, v.Y, v.Cell
 	if v.glide.active {
@@ -551,6 +542,9 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 					return false
 				}
 				if ev.Button == 0 && v.minimapFor(a.game, ev.X, ev.Y) {
+					// End any in-flight glide first so minimap clicks take over
+					// from the exact coordinates and zoom painted on screen.
+					v.stopGlide()
 					row, col := v.minimapCellAt(a.game, ev.X, ev.Y)
 					v.glideCenter(a.game, row, col, ev.Time, a.motionReducedActive)
 					return true
