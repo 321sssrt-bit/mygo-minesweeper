@@ -166,12 +166,18 @@ func TestTopBarToolbarLayoutAndSettingsPopoverNoOverflow(t *testing.T) {
 						t.Fatalf("motion segment %q missing or overflows %dx%d: ok=%v rect=%+v", segLabel, vp.w, vp.h, ok, r)
 					}
 				}
+				// Let the popover's short enter transition settle before checking divider ink pixels.
+				tt.Advance(popoverEnterDuration + 20*time.Millisecond)
 				// Verify visible divider pixels exist at the top border of groups 2 and 3.
 				img := tt.Image()
 				pal := paperFor(dark)
 				wantRule := pal.Rule.Over(pal.Sheet)
 				for _, idx := range []int{1, 2} {
-					gr := groupRects[idx]
+					settledGroup, ok := tt.AccessByRole(ui.RoleGroup, groupNames[idx])
+					if !ok {
+						t.Fatalf("missing settled RoleGroup %q inside 设置 popover", groupNames[idx])
+					}
+					gr := settledGroup.Bounds
 					foundRule := false
 					b := img.Bounds()
 					minX := max(b.Min.X, int(gr.X)+8)

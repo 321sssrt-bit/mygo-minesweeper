@@ -35,10 +35,21 @@ const (
 	maxKnotBursts           = 8
 	confettiDuration        = 1800 * time.Millisecond
 	confettiCount           = 32
-	haruhikageIntroDuration = 1600 * time.Millisecond
-	haruhikageScrimFade     = 260 * time.Millisecond
-	haruhikageBeatDelay     = 250 * time.Millisecond
-	haruhikageLineFade      = 240 * time.Millisecond
+	haruhikageIntroDuration    = 1600 * time.Millisecond
+	haruhikageScrimFade        = 260 * time.Millisecond
+	haruhikageBeatDelay        = 250 * time.Millisecond
+	haruhikageLineFade         = 240 * time.Millisecond
+	chatNoteEnterDuration      = 220 * time.Millisecond
+	chatNoteReducedFade        = 120 * time.Millisecond
+	popoverEnterDuration       = 140 * time.Millisecond
+	popoverExitDuration        = 110 * time.Millisecond
+	popoverReducedFadeDuration = 110 * time.Millisecond
+	drawerOpenDuration         = 180 * time.Millisecond
+	drawerCloseDuration        = 150 * time.Millisecond
+	drawerReducedFadeDuration  = 110 * time.Millisecond
+	memberHighlightDuration    = 180 * time.Millisecond
+	lampTransitionDuration     = 240 * time.Millisecond
+	meterGlideDuration         = 220 * time.Millisecond
 )
 
 // waveSteps is the last step of a reveal wave; deeper cells share it.
@@ -48,9 +59,69 @@ const waveSteps = int(rippleMaxDelay / rippleStepDelay)
 func waveStep(depth int) int { return min(depth, waveSteps) }
 
 type chatMessage struct {
+	ID       int
 	Speaker  string
 	ColorHex string
 	Text     string
+}
+
+type chatNoteKey int
+
+// smoothScalar eases a displayed value toward its real target across frames
+// while letting callers snap immediately on initial mount or reduced motion.
+type smoothScalar struct {
+	init   bool
+	from   float64
+	value  float64
+	target float64
+	start  time.Time
+}
+
+func (s *smoothScalar) snap(v float64) {
+	s.init = true
+	s.from = v
+	s.value = v
+	s.target = v
+	s.start = time.Time{}
+}
+
+func (s *smoothScalar) update(target float64, now time.Time, dur time.Duration, reduced bool) (float64, bool) {
+	if !s.init || reduced || dur <= 0 {
+		s.snap(target)
+		return target, false
+	}
+	if target != s.target {
+		if !s.start.IsZero() {
+			s.sample(now, dur)
+		}
+		s.from = s.value
+		s.target = target
+		if math.Abs(s.target-s.from) < 1e-4 {
+			s.snap(target)
+			return target, false
+		}
+		s.start = now
+		return s.value, true
+	}
+	if s.start.IsZero() {
+		return s.value, false
+	}
+	return s.sample(now, dur)
+}
+
+func (s *smoothScalar) sample(now time.Time, dur time.Duration) (float64, bool) {
+	elapsed := now.Sub(s.start)
+	if elapsed <= 0 {
+		return s.from, true
+	}
+	if elapsed >= dur {
+		s.snap(s.target)
+		return s.value, false
+	}
+	u := float64(elapsed) / float64(dur)
+	ease := 1 - (1-u)*(1-u)*(1-u)
+	s.value = s.from + (s.target-s.from)*ease
+	return s.value, true
 }
 
 type tileRipple struct {
@@ -223,6 +294,36 @@ type minesweeperApp struct {
 	classicHoverRow      int
 	classicHoverCol      int
 	classicHoverHint     HoverHint
+
+	viewMounted         bool
+	lastFrameNow        time.Time
+	popoverEnterKind    appPopover
+	popoverEnterStart   time.Time
+	popoverExitKind     appPopover
+	popoverExitStart    time.Time
+	popoverExitDur      time.Duration
+	suppressPopoverExit bool
+
+	memeDrawerInit   bool
+	memeDrawerOpen   bool
+	memeDrawerFrom   float32
+	memeDrawerValue  float32
+	memeDrawerStart  time.Time
+	memeDrawerDur    time.Duration
+	memeDrawerHeight float32
+
+	nightBlendInit   bool
+	nightBlendFrom   float32
+	nightBlendValue  float32
+	nightBlendTarget float32
+	nightBlendStart  time.Time
+
+	progressVisual smoothScalar
+	gravityVisual  smoothScalar
+
+	chatViewInit   bool
+	chatLastSeenID int
+	chatAnims      map[int]time.Time
 }
 
 func newMinesweeperApp(seed ...uint64) *minesweeperApp {
@@ -345,6 +446,19 @@ func (a *minesweeperApp) syncMotionState(reduced bool) {
 		a.shakeAmplitude = 0
 		a.shakeDuration = 0
 		a.board.finishGlide(a.game)
+		if a.game != nil {
+			if a.progressVisual.init {
+				a.progressVisual.snap(a.game.Progress())
+			}
+			if a.gravityVisual.init {
+				a.gravityVisual.snap(float64(a.game.Gravity))
+			}
+		}
+		if a.memeDrawerInit && !a.memeDrawerOpen && !a.memeDrawerStart.IsZero() {
+			a.memeDrawerValue = 0
+			a.memeDrawerFrom = 0
+			a.memeDrawerStart = time.Time{}
+		}
 	}
 }
 
@@ -394,10 +508,97 @@ func (a *minesweeperApp) setActivePopover(kind appPopover) {
 	switch {
 	case kind == prev:
 	case kind == popoverNone:
+		if a.viewMounted {
+			a.popoverExitKind = prev
+			a.popoverExitStart = a.lastFrameNow
+			a.popoverExitDur = popoverExitDuration
+			if a.motionReducedActive {
+				a.popoverExitDur = popoverReducedFadeDuration
+			}
+			a.popoverEnterKind = popoverNone
+			a.popoverEnterStart = time.Time{}
+		}
 		a.playSound(SoundPopoverClose, 1, 0)
 	default:
+		if a.viewMounted {
+			a.popoverEnterKind = kind
+			a.popoverEnterStart = a.lastFrameNow
+			a.popoverExitKind = popoverNone
+			a.popoverExitStart = time.Time{}
+		}
 		a.playSound(SoundPopoverOpen, 1, 0)
 	}
+}
+
+func (a *minesweeperApp) popoverExiting(now time.Time) bool {
+	if a.popoverExitKind == popoverNone || a.popoverExitStart.IsZero() || a.popoverExitDur <= 0 {
+		a.popoverExitKind = popoverNone
+		a.popoverExitStart = time.Time{}
+		return false
+	}
+	elapsed := now.Sub(a.popoverExitStart)
+	if elapsed < 0 || elapsed >= a.popoverExitDur {
+		a.popoverExitKind = popoverNone
+		a.popoverExitStart = time.Time{}
+		return false
+	}
+	return true
+}
+
+func (a *minesweeperApp) clearPopoverMotion() {
+	a.popoverEnterKind = popoverNone
+	a.popoverEnterStart = time.Time{}
+	a.popoverExitKind = popoverNone
+	a.popoverExitStart = time.Time{}
+}
+
+func (a *minesweeperApp) applyPopoverMotion(c *ui.Context, popover ui.Element, kind appPopover, now time.Time) {
+	if !popover.Valid() {
+		return
+	}
+	if a.popoverEnterKind == kind && !a.popoverEnterStart.IsZero() {
+		dur := popoverEnterDuration
+		if a.motionReducedActive {
+			dur = popoverReducedFadeDuration
+		}
+		elapsed := now.Sub(a.popoverEnterStart)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		if elapsed < dur {
+			u := float32(elapsed) / float32(dur)
+			ease := 1 - (1-u)*(1-u)*(1-u)
+			if a.motionReducedActive {
+				popover.Opacity(0.35 + 0.65*u)
+			} else {
+				scale := 0.96 + 0.04*ease
+				offsetY := -8 * (1 - ease)
+				popover.Opacity(0.18 + 0.82*ease).
+					Transform(ui.Scaling(scale, scale).Then(ui.Translation(0, offsetY)))
+			}
+			c.AnimationFrame()
+		} else {
+			a.popoverEnterKind = popoverNone
+			a.popoverEnterStart = time.Time{}
+		}
+	}
+
+	exitMotion := &ui.Motion{Y: -8, Scale: 0.96, Opacity: 0, Flip: true}
+	exitDur := popoverExitDuration
+	if a.motionReducedActive {
+		exitMotion = &ui.Motion{Opacity: 0}
+		exitDur = popoverReducedFadeDuration
+	}
+	if a.suppressPopoverExit {
+		exitDur = -1
+		a.suppressPopoverExit = false
+	}
+	popover.Transition(ui.ElementTransition{
+		Duration:     -1,
+		Exit:         exitMotion,
+		ExitDuration: exitDur,
+		ExitEase:     ui.EaseIn,
+	})
 }
 
 func (a *minesweeperApp) openPopover(kind appPopover) {
@@ -453,6 +654,8 @@ func (a *minesweeperApp) bindPopover(
 	trigger ui.Element,
 	body func(closeWithFocus func()) ui.Element,
 ) ui.Element {
+	now := c.Now()
+	a.lastFrameNow = now
 	open := a.popoverOpen(kind)
 	wasOpen := open
 	closedByApp := false
@@ -473,6 +676,7 @@ func (a *minesweeperApp) bindPopover(
 				closeWithFocus()
 			}
 		}).Background(c.Theme().Surface).KeepFocus()
+		a.applyPopoverMotion(c, popover, kind, now)
 	}
 
 	if !closedByApp && wasOpen && !open {
@@ -489,17 +693,26 @@ func (a *minesweeperApp) bindPopover(
 	return popover
 }
 
-// popoverWorkspaceShield covers the workspace while any popover is open so an
-// outside dismiss click never leaks onto a board cell or mine.
+// popoverWorkspaceShield covers the workspace while any popover is open or
+// finishing its exit transition so an outside dismiss click never leaks onto a
+// board cell or mine.
 func (a *minesweeperApp) popoverWorkspaceShield(c *ui.Context) {
-	if !a.hasOpenPopover() {
+	now := c.Now()
+	a.lastFrameNow = now
+	exiting := a.popoverExiting(now)
+	if !a.hasOpenPopover() && !exiting {
 		return
+	}
+	if exiting && !a.hasOpenPopover() {
+		c.AnimationFrame()
 	}
 	ui.Box(c.Key("popover-workspace-shield")).Absolute().Top(0).Bottom(0).Start(0).End(0).
 		HandleInput(func(ev ui.InputEvent) bool {
 			switch ev.Kind {
 			case ui.InputPointerDown:
-				a.dismissPopovers()
+				if a.hasOpenPopover() {
+					a.dismissPopovers()
+				}
 				return true
 			case ui.InputPointerUp, ui.InputScroll, ui.InputZoom:
 				return true
@@ -534,12 +747,13 @@ func (a *minesweeperApp) classicOnCanvas() bool {
 }
 
 func (a *minesweeperApp) pushChat(speaker, colorHex, text string) {
+	a.chatPosted++
 	a.chatLog = append(a.chatLog, chatMessage{
+		ID:       a.chatPosted,
 		Speaker:  speaker,
 		ColorHex: colorHex,
 		Text:     text,
 	})
-	a.chatPosted++
 	if len(a.chatLog) > 18 {
 		a.chatLog = a.chatLog[len(a.chatLog)-18:]
 	}
@@ -552,8 +766,13 @@ func (a *minesweeperApp) resetGame(initial bool) {
 		prevDiffID = a.game.Difficulty.ID
 	}
 	a.chatLog = nil
+	a.chatAnims = nil
+	a.chatViewInit = false
 	if !initial {
 		a.seed = 0
+	} else {
+		a.progressVisual = smoothScalar{}
+		a.gravityVisual = smoothScalar{}
 	}
 	diff := a.currentDiff()
 	if diff.Gameplay == GameplayDuel {
@@ -593,6 +812,10 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.haruhikageIntroStart = time.Time{}
 	a.focusDuelSettlement = false
 	a.dismissPopovers()
+	a.clearPopoverMotion()
+	if closing {
+		a.suppressPopoverExit = true
+	}
 	a.classicHoverRow = -1
 	a.classicHoverCol = -1
 	a.classicHoverHint = HoverHint{}
@@ -1652,10 +1875,65 @@ func formatClock(seconds int) string {
 
 func (a *minesweeperApp) paper() *palette { return paperFor(a.darkMode) }
 
-// activeTheme is the notebook paper as a widget theme: the desk behind,
-// sheets for panels, ink for text, the 乐队色 as accent, 文楷 throughout.
-func (a *minesweeperApp) activeTheme() *ui.Theme {
-	p := a.paper()
+// renderedPaper returns the currently interpolated notebook palette (snapping
+// directly to dayPaper/nightPaper before the first render and once settled).
+func (a *minesweeperApp) renderedPaper() *palette {
+	if !a.nightBlendInit {
+		return a.paper()
+	}
+	return blendPaper(a.nightBlendValue)
+}
+
+func (a *minesweeperApp) stepNightBlend(now time.Time) (*palette, bool) {
+	target := float32(0)
+	if a.darkMode {
+		target = 1
+	}
+	if !a.nightBlendInit {
+		a.nightBlendInit = true
+		a.nightBlendFrom = target
+		a.nightBlendValue = target
+		a.nightBlendTarget = target
+		a.nightBlendStart = time.Time{}
+		return blendPaper(target), false
+	}
+	if target != a.nightBlendTarget {
+		if !a.nightBlendStart.IsZero() {
+			elapsed := now.Sub(a.nightBlendStart)
+			if elapsed >= lampTransitionDuration {
+				a.nightBlendValue = a.nightBlendTarget
+			} else if elapsed > 0 {
+				u := float32(elapsed) / float32(lampTransitionDuration)
+				ease := 1 - (1-u)*(1-u)*(1-u)
+				a.nightBlendValue = a.nightBlendFrom + (a.nightBlendTarget-a.nightBlendFrom)*ease
+			}
+		}
+		a.nightBlendFrom = a.nightBlendValue
+		a.nightBlendTarget = target
+		a.nightBlendStart = now
+		return blendPaper(a.nightBlendValue), true
+	}
+	if a.nightBlendStart.IsZero() {
+		return blendPaper(a.nightBlendValue), false
+	}
+	elapsed := now.Sub(a.nightBlendStart)
+	if elapsed <= 0 {
+		a.nightBlendValue = a.nightBlendFrom
+		return blendPaper(a.nightBlendValue), true
+	}
+	if elapsed >= lampTransitionDuration {
+		a.nightBlendValue = a.nightBlendTarget
+		a.nightBlendFrom = a.nightBlendTarget
+		a.nightBlendStart = time.Time{}
+		return blendPaper(a.nightBlendValue), false
+	}
+	u := float32(elapsed) / float32(lampTransitionDuration)
+	ease := 1 - (1-u)*(1-u)*(1-u)
+	a.nightBlendValue = a.nightBlendFrom + (a.nightBlendTarget-a.nightBlendFrom)*ease
+	return blendPaper(a.nightBlendValue), true
+}
+
+func (a *minesweeperApp) themeFor(p *palette) *ui.Theme {
 	var t *ui.Theme
 	if p.Dark {
 		t = ui.DarkTheme().WithAccent(p.InkOf(bandColor))
@@ -1671,6 +1949,12 @@ func (a *minesweeperApp) activeTheme() *ui.Theme {
 	t.TextMuted = p.InkMuted
 	t.Font = fontFamily
 	return t
+}
+
+// activeTheme is the notebook paper as a widget theme: the desk behind,
+// sheets for panels, ink for text, the 乐队色 as accent, 文楷 throughout.
+func (a *minesweeperApp) activeTheme() *ui.Theme {
+	return a.themeFor(a.paper())
 }
 
 func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string) {
@@ -2027,7 +2311,7 @@ func indexToMotion(idx int) motionMode {
 }
 
 func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
-	sc := settingsColorsFor(pal.Dark)
+	sc := settingsColorsForPaper(pal)
 	isOpen := a.popoverOpen(popoverSettings)
 	trigger := ui.ButtonBase(c.Key("settings-trigger")).
 		Padding(6, 11).Radius(6).Cursor(ui.CursorPointer).
@@ -2236,7 +2520,7 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 
 func (a *minesweeperApp) duelHUD(c *ui.Context) {
 	d := a.game.duel
-	hud := duelHUDFor(a.darkMode)
+	hud := duelHUDFor(a.renderedPaper().Dark)
 	ui.Row(c).Grow(0).Padding(8, 10).Gap(12).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Badge(c, fmt.Sprintf("你 %d", d.PlayerScore)).Background(hud.Player.Bg).TextColor(hud.Player.Text)
@@ -2291,6 +2575,8 @@ func (a *minesweeperApp) toggleFlagMode() {
 
 func (a *minesweeperApp) view(c *ui.Context) {
 	now := c.Now()
+	a.lastFrameNow = now
+	defer func() { a.viewMounted = true }()
 	defer a.flushChatNote()
 	defer a.scheduleCues(c, now)
 	a.syncWindowFocus(c)
@@ -2342,11 +2628,14 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		}
 	}
 
-	baseTheme := a.activeTheme()
+	pal, lampMoving := a.stepNightBlend(now)
+	if lampMoving {
+		c.AnimationFrame()
+	}
+	baseTheme := a.themeFor(pal)
 	c.SetTheme(baseTheme)
 	t := c.Theme()
 
-	pal := a.paper()
 	art := artFor(pal.Dark)
 	member := FindMember(a.memberID)
 	// memberColor is the leader's 代表色, used as a highlighter; memberInk
@@ -2421,11 +2710,19 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						selected := m.ID == a.memberID
 						item := ui.Box(c.Key(string(m.ID))).Padding(7, 9).Radius(9).
 							Cursor(ui.CursorPointer).Label(m.Name).Tooltip(m.SkillDesc)
+						targetTint := ui.Transparent
 						if selected {
 							// A highlighter stroke in her 代表色.
-							item.Background(mc.Alpha(0.36).Over(t.Surface))
+							targetTint = mc.Alpha(0.36)
 						} else if item.Hovered() {
-							item.Background(mc.Alpha(0.14).Over(t.Surface))
+							targetTint = mc.Alpha(0.14)
+						}
+						tint := item.AnimateColor("member-bg", targetTint, ui.Animation{
+							Duration: memberHighlightDuration,
+							Ease:     ui.EaseOut,
+						})
+						if tint.A > 0 {
+							item.Background(tint.Over(t.Surface))
 						}
 						item.Children(func() {
 							ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
@@ -2467,37 +2764,114 @@ func (a *minesweeperApp) view(c *ui.Context) {
 
 				// Progress & Gravity Meter
 				ui.Column(c).Gap(5).Padding(8, 4).Children(func() {
+					targetProg := a.game.Progress()
+					displayProg, progMoving := a.progressVisual.update(targetProg, now, meterGlideDuration, a.motionReducedActive)
 					ui.Row(c).Justify(ui.SpaceBetween).Children(func() {
 						ui.Text(c, "排练完成度").FontSize(12).TextColor(t.TextMuted)
-						ui.Textf(c, "%.0f%%", a.game.Progress()*100).FontSize(12).Bold().TextColor(t.Accent)
+						ui.Textf(c, "%.0f%%", targetProg*100).FontSize(12).Bold().TextColor(t.Accent)
 					})
-					hatchProgress(c, "排练完成度", a.game.Progress(), pal.InkOf(bandColor), pal)
+					hatchProgress(c, "排练完成度", targetProg, displayProg, pal.InkOf(bandColor), pal)
 
+					targetGrav := float64(a.game.Gravity)
+					displayGrav, gravMoving := a.gravityVisual.update(targetGrav, now, meterGlideDuration, a.motionReducedActive)
 					gravityInk := pal.InkOf(memberImage(MemberSoyorin))
 					ui.Row(c).Justify(ui.SpaceBetween).Children(func() {
 						ui.Text(c, "乐队重力值").FontSize(12).TextColor(t.TextMuted)
 						ui.Textf(c, "%d%%", a.game.Gravity).FontSize(12).Bold().TextColor(gravityInk)
 					})
-					hatchMeter(c, "乐队重力值", float64(a.game.Gravity), gravityInk, pal)
+					hatchMeter(c, "乐队重力值", targetGrav, displayGrav, gravityInk, pal)
+					if progMoving || gravMoving {
+						c.AnimationFrame()
+					}
 				})
 
 				// Band Group Chat: sticky notes in each speaker's colour.
 				ui.Text(c, "MyGO!!!!! 排练室群聊").FontSize(12).Bold().TextColor(t.TextMuted)
+				if !a.chatViewInit {
+					a.chatViewInit = true
+					for _, msg := range a.chatLog {
+						if msg.ID > a.chatLastSeenID {
+							a.chatLastSeenID = msg.ID
+						}
+					}
+				} else {
+					for _, msg := range a.chatLog {
+						if msg.ID > a.chatLastSeenID {
+							if a.chatAnims == nil {
+								a.chatAnims = make(map[int]time.Time, 4)
+							}
+							a.chatAnims[msg.ID] = now
+							a.chatLastSeenID = msg.ID
+						}
+					}
+				}
+				if len(a.chatAnims) > 0 {
+					dur := chatNoteEnterDuration
+					if a.motionReducedActive {
+						dur = chatNoteReducedFade
+					}
+					present := make(map[int]bool, len(a.chatLog))
+					for _, msg := range a.chatLog {
+						present[msg.ID] = true
+					}
+					for id, start := range a.chatAnims {
+						if !present[id] || now.Sub(start) < 0 || now.Sub(start) >= dur {
+							delete(a.chatAnims, id)
+						}
+					}
+					if len(a.chatAnims) > 0 {
+						c.AnimationFrame()
+					}
+				}
 				ui.Scroll(c).Grow(1).Padding(6, 4).Children(func() {
-					ui.Column(c).Gap(9).Children(func() {
+					ui.Column(c).Children(func() {
 						for idx := len(a.chatLog) - 1; idx >= 0; idx-- {
 							msg := a.chatLog[idx]
 							speaker := ui.Hex(msg.ColorHex)
 							tilt := float32(0.7)
-							if idx%2 == 0 {
+							if msg.ID%2 == 1 {
 								tilt = -0.8
 							}
-							ui.Column(c.Key(idx)).Gap(2).Padding(6, 8).Radius(2).
-								Background(speaker.Alpha(0.2).Over(t.Surface)).
-								Shadow(0, 2, 4, 0, pal.SlipShade.Alpha(0.6)).Rotate(tilt).Children(func() {
-								ui.Text(c, msg.Speaker).FontSize(11).Bold().TextColor(pal.InkOf(speaker))
-								ui.Text(c, msg.Text).FontSize(12)
+							bottomGap := float32(9)
+							if idx == 0 {
+								bottomGap = 0
+							}
+							start, animating := a.chatAnims[msg.ID]
+							slot := ui.Column(c.Key(chatNoteKey(msg.ID))).Shrink(0)
+							var inner ui.Element
+							slot.Children(func() {
+								inner = ui.Column(c).Shrink(0).Padding(0, 0, bottomGap, 0)
+								inner.Children(func() {
+									note := ui.Column(c).Gap(2).Padding(6, 8).Radius(2).
+										Background(speaker.Alpha(0.2).Over(t.Surface)).
+										Shadow(0, 2, 4, 0, pal.SlipShade.Alpha(0.6))
+									if animating {
+										if a.motionReducedActive {
+											u := min(float32(1), max(float32(0), float32(now.Sub(start))/float32(chatNoteReducedFade)))
+											note.Rotate(tilt).Opacity(0.30 + 0.70*u)
+										} else {
+											u := min(float32(1), max(float32(0), float32(now.Sub(start))/float32(chatNoteEnterDuration)))
+											ease := 1 - (1-u)*(1-u)
+											scale := 0.96 + 0.04*ease
+											rot := tilt + 2.5*(1-ease)
+											offsetY := -10 * (1 - ease)
+											note.Opacity(0.15 + 0.85*ease).
+												Transform(ui.Scaling(scale, scale).Then(ui.Rotation(rot)).Then(ui.Translation(0, offsetY)))
+										}
+									} else {
+										note.Rotate(tilt)
+									}
+									note.Children(func() {
+										ui.Text(c, msg.Speaker).FontSize(11).Bold().TextColor(pal.InkOf(speaker))
+										ui.Text(c, msg.Text).FontSize(12)
+									})
+								})
 							})
+							if animating && !a.motionReducedActive {
+								u := min(float32(1), max(float32(0), float32(now.Sub(start))/float32(chatNoteEnterDuration)))
+								ease := 1 - (1-u)*(1-u)
+								slot.ClipY().Height(ease * inner.Bounds().H)
+							}
 						}
 					})
 				})
@@ -2506,12 +2880,17 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			// Right Main Stage: Companion Banner + HUD + Board (+ Optional Memes Drawer)
 			ui.Column(c).Grow(1).Gap(10).Children(func() {
 				// Active Member Banner themed to the selected member!
-				ui.Themed(c, memberTheme).Padding(10, 12).Radius(4).Background(t.Surface).
-					Shadow(0, 1, 3, 0, pal.SlipShade).Draw(func(p *ui.Painter, r ui.Rect) {
+				banner := ui.Themed(c.Key("member-banner"), memberTheme).Padding(10, 12).Radius(4).Background(t.Surface).
+					Shadow(0, 1, 3, 0, pal.SlipShade)
+				tapeColor := banner.AnimateColor("member-tape", memberColor.Alpha(0.5), ui.Animation{
+					Duration: memberHighlightDuration,
+					Ease:     ui.EaseOut,
+				})
+				banner.Draw(func(p *ui.Painter, r ui.Rect) {
 					// A strip of masking tape in her 代表色 holds the note on.
 					tape := ui.Rect{X: r.X + 26, Y: r.Y - 6, W: 64, H: 14}
 					p.Transform(ui.Rotation(-4), tape.X+tape.W/2, tape.Y+tape.H/2, func() {
-						p.Fill(tape, memberColor.Alpha(0.5), 1)
+						p.Fill(tape, tapeColor, 1)
 					})
 				}).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
@@ -2550,35 +2929,113 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				})
 
 				// Collapsible Meme Achievements Panel
-				if a.showMemes {
-					ui.Column(c).Padding(10, 12).Gap(8).Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-							ui.Text(c, "MyGO!!!!! 名场面图鉴").FontSize(13).Bold()
-							ui.Badge(c, fmt.Sprintf("已收集 %d / %d", len(a.unlockedMemes), len(AllMemes)))
-						})
-						ui.Grid(c).Columns(3).Gap(8).Children(func() {
-							for _, meme := range AllMemes {
-								unlocked := a.unlockedMemes[meme.ID]
-								card := ui.Column(c.Key(meme.ID)).Padding(8).Gap(3).Radius(8).Border(1, t.Border)
-								if unlocked {
-									card.Background(t.Accent.Alpha(0.14)).Border(1, t.Accent.Alpha(0.6))
-								} else {
-									card.Background(t.Background.Alpha(0.5))
-								}
-								card.Children(func() {
-									ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(4).Children(func() {
-										ui.Text(c, meme.Title).FontSize(12).Bold().SingleLine()
-										if unlocked {
-											ui.Badge(c, "已解锁").Background(t.Accent).TextColor(t.AccentText)
-										} else {
-											ui.Badge(c, "未解锁")
-										}
-									})
-									ui.Text(c, meme.Desc).FontSize(11).TextColor(t.TextMuted)
-								})
+				if !a.memeDrawerInit {
+					a.memeDrawerInit = true
+					a.memeDrawerOpen = a.showMemes
+					if a.showMemes {
+						a.memeDrawerValue = 1
+					} else {
+						a.memeDrawerValue = 0
+					}
+					a.memeDrawerStart = time.Time{}
+				} else if a.showMemes != a.memeDrawerOpen {
+					a.memeDrawerOpen = a.showMemes
+					if a.motionReducedActive {
+						if a.showMemes {
+							a.memeDrawerFrom = 0
+							a.memeDrawerValue = 0
+							a.memeDrawerStart = now
+							a.memeDrawerDur = drawerReducedFadeDuration
+						} else {
+							a.memeDrawerFrom = 0
+							a.memeDrawerValue = 0
+							a.memeDrawerStart = time.Time{}
+						}
+					} else {
+						a.memeDrawerFrom = a.memeDrawerValue
+						a.memeDrawerStart = now
+						if a.showMemes {
+							a.memeDrawerDur = drawerOpenDuration
+						} else {
+							a.memeDrawerDur = drawerCloseDuration
+						}
+					}
+				}
+				drawerAnimating := false
+				if !a.memeDrawerStart.IsZero() && a.memeDrawerDur > 0 {
+					elapsed := now.Sub(a.memeDrawerStart)
+					target := float32(0)
+					if a.memeDrawerOpen {
+						target = 1
+					}
+					if elapsed < 0 {
+						elapsed = 0
+					}
+					if elapsed >= a.memeDrawerDur {
+						a.memeDrawerValue = target
+						a.memeDrawerFrom = target
+						a.memeDrawerStart = time.Time{}
+					} else {
+						u := float32(elapsed) / float32(a.memeDrawerDur)
+						ease := 1 - (1-u)*(1-u)*(1-u)
+						if !a.memeDrawerOpen {
+							ease = 1 - (1-u)*(1-u)
+						}
+						a.memeDrawerValue = a.memeDrawerFrom + (target-a.memeDrawerFrom)*ease
+						drawerAnimating = true
+						c.AnimationFrame()
+					}
+				}
+				if a.memeDrawerOpen || a.memeDrawerValue > 0 {
+					clip := ui.Column(c.Key("memes-drawer-clip")).Shrink(0)
+					if !a.memeDrawerOpen {
+						clip.IgnoreInput(true).AccessHidden(true)
+					}
+					var drawer ui.Element
+					clip.Children(func() {
+						drawer = ui.Column(c.Key("memes-drawer")).Shrink(0).Padding(10, 12).Gap(8).Radius(12).Background(t.Surface).Border(1, t.Border)
+						if drawerAnimating {
+							if a.motionReducedActive {
+								drawer.Opacity(0.30 + 0.70*a.memeDrawerValue)
+							} else {
+								drawer.Opacity(0.20 + 0.80*a.memeDrawerValue).Translate(0, -6*(1-a.memeDrawerValue))
 							}
+						}
+						drawer.Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+								ui.Text(c, "MyGO!!!!! 名场面图鉴").FontSize(13).Bold()
+								ui.Badge(c, fmt.Sprintf("已收集 %d / %d", len(a.unlockedMemes), len(AllMemes)))
+							})
+							ui.Grid(c).Columns(3).Gap(8).Children(func() {
+								for _, meme := range AllMemes {
+									unlocked := a.unlockedMemes[meme.ID]
+									card := ui.Column(c.Key(meme.ID)).Padding(8).Gap(3).Radius(8).Border(1, t.Border)
+									if unlocked {
+										card.Background(t.Accent.Alpha(0.14)).Border(1, t.Accent.Alpha(0.6))
+									} else {
+										card.Background(t.Background.Alpha(0.5))
+									}
+									card.Children(func() {
+										ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(4).Children(func() {
+											ui.Text(c, meme.Title).FontSize(12).Bold().SingleLine()
+											if unlocked {
+												ui.Badge(c, "已解锁").Background(t.Accent).TextColor(t.AccentText)
+											} else {
+												ui.Badge(c, "未解锁")
+											}
+										})
+										ui.Text(c, meme.Desc).FontSize(11).TextColor(t.TextMuted)
+									})
+								}
+							})
 						})
 					})
+					if h := drawer.Bounds().H; h > 0 {
+						a.memeDrawerHeight = h
+					}
+					if drawerAnimating && !a.motionReducedActive {
+						clip.ClipY().Height(a.memeDrawerValue * a.memeDrawerHeight)
+					}
 				}
 
 				// Board Stage

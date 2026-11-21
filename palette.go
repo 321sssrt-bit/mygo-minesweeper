@@ -58,6 +58,79 @@ func paperFor(dark bool) *palette {
 	return dayPaper
 }
 
+// mixColorPremul interpolates a and b in premultiplied alpha space so
+// translucent notebook strokes and washes blend without grey fringes.
+func mixColorPremul(a, b ui.Color, t float32) ui.Color {
+	if t <= 0 {
+		return a
+	}
+	if t >= 1 {
+		return b
+	}
+	aa := float32(a.A) / 255
+	ba := float32(b.A) / 255
+	alpha := aa + (ba-aa)*t
+	if alpha <= 0 {
+		return ui.Transparent
+	}
+	ch := func(x, y uint8) uint8 {
+		v := (float32(x)*aa + (float32(y)*ba-float32(x)*aa)*t) / alpha
+		return uint8(math.Round(math.Max(0, math.Min(255, float64(v)))))
+	}
+	return ui.Color{
+		R: ch(a.R, b.R),
+		G: ch(a.G, b.G),
+		B: ch(a.B, b.B),
+		A: uint8(math.Round(math.Max(0, math.Min(255, float64(alpha*255))))),
+	}
+}
+
+// scaleColorAlpha scales c's opacity by scale in [0, 1] while keeping its RGB
+// hue intact, used to warm or cool the night desk-lamp glow.
+func scaleColorAlpha(c ui.Color, scale float32) ui.Color {
+	if scale <= 0 || c.A == 0 {
+		return ui.Transparent
+	}
+	if scale >= 1 {
+		return c
+	}
+	a := uint8(math.Round(math.Max(0, math.Min(255, float64(c.A)*float64(scale)))))
+	if a == 0 {
+		return ui.Transparent
+	}
+	return ui.Color{R: c.R, G: c.G, B: c.B, A: a}
+}
+
+// blendPaper returns the exact dayPaper at 0, exact nightPaper at 1, and a
+// smoothly interpolated notebook palette in between.
+func blendPaper(nightFrac float32) *palette {
+	if nightFrac <= 0 {
+		return dayPaper
+	}
+	if nightFrac >= 1 {
+		return nightPaper
+	}
+	return &palette{
+		Dark:        nightFrac >= 0.5,
+		Desk:        dayPaper.Desk.Mix(nightPaper.Desk, nightFrac),
+		Sheet:       dayPaper.Sheet.Mix(nightPaper.Sheet, nightFrac),
+		Board:       dayPaper.Board.Mix(nightPaper.Board, nightFrac),
+		Grid:        mixColorPremul(dayPaper.Grid, nightPaper.Grid, nightFrac),
+		Slip:        dayPaper.Slip.Mix(nightPaper.Slip, nightFrac),
+		SlipShade:   mixColorPremul(dayPaper.SlipShade, nightPaper.SlipShade, nightFrac),
+		Ink:         dayPaper.Ink.Mix(nightPaper.Ink, nightFrac),
+		InkMuted:    dayPaper.InkMuted.Mix(nightPaper.InkMuted, nightFrac),
+		Rule:        mixColorPremul(dayPaper.Rule, nightPaper.Rule, nightFrac),
+		Graphite:    dayPaper.Graphite.Mix(nightPaper.Graphite, nightFrac),
+		Boom:        mixColorPremul(dayPaper.Boom, nightPaper.Boom, nightFrac),
+		BoomInk:     dayPaper.BoomInk.Mix(nightPaper.BoomInk, nightFrac),
+		Lamp:        scaleColorAlpha(nightPaper.Lamp, nightFrac),
+		BandAid:     dayPaper.BandAid.Mix(nightPaper.BandAid, nightFrac),
+		BandAidPad:  dayPaper.BandAidPad.Mix(nightPaper.BandAidPad, nightFrac),
+		BandAidEdge: dayPaper.BandAidEdge.Mix(nightPaper.BandAidEdge, nightFrac),
+	}
+}
+
 // minimapColors are the notebook colours of a classic board's minimap:
 // desk paper for unopened ground, band-blue wash for opened progress,
 // band-aid tone for flags, boom ink for hit mines / wrong flags, and ink
@@ -729,20 +802,22 @@ func drawHatchBar(p *ui.Painter, r ui.Rect, frac float64, col ui.Color, pal *pal
 }
 
 // hatchProgress renders a ui.Progress bar with notebook pencil hatching so
-// assistive technology reads its progress role and value.
-func hatchProgress(c *ui.Context, label string, frac float64, col ui.Color, pal *palette) {
-	ui.Progress(c, frac).Height(10).FillWidth().Background(ui.Transparent).Label(label).
+// assistive technology reads the real value immediately on frame 0 while the
+// pencil hatch glides visually toward displayFrac.
+func hatchProgress(c *ui.Context, label string, value, displayFrac float64, col ui.Color, pal *palette) {
+	ui.Progress(c.Key("rehearsal-progress"), value).Height(10).FillWidth().Background(ui.Transparent).Label(label).
 		Draw(func(p *ui.Painter, r ui.Rect) {
-			drawHatchBar(p, r, frac, col, pal)
+			drawHatchBar(p, r, displayFrac, col, pal)
 		})
 }
 
 // hatchMeter renders a ui.Meter bar in [0, 100] with notebook pencil hatching
-// so assistive technology reads its meter role and value.
-func hatchMeter(c *ui.Context, label string, value float64, col ui.Color, pal *palette) {
-	ui.Meter(c, value, 0, 100, nil).Height(10).FillWidth().Background(ui.Transparent).Label(label).
+// so assistive technology reads the real value immediately on frame 0 while
+// the pencil hatch glides visually toward displayValue.
+func hatchMeter(c *ui.Context, label string, value, displayValue float64, col ui.Color, pal *palette) {
+	ui.Meter(c.Key("band-gravity"), value, 0, 100, nil).Height(10).FillWidth().Background(ui.Transparent).Label(label).
 		Draw(func(p *ui.Painter, r ui.Rect) {
-			drawHatchBar(p, r, value/100, col, pal)
+			drawHatchBar(p, r, displayValue/100, col, pal)
 		})
 }
 
@@ -766,6 +841,16 @@ func settingsColorsFor(dark bool) *settingsColors {
 		return nightSettings
 	}
 	return daySettings
+}
+
+func settingsColorsForPaper(p *palette) *settingsColors {
+	if p == dayPaper {
+		return daySettings
+	}
+	if p == nightPaper {
+		return nightSettings
+	}
+	return newSettingsColors(p)
 }
 
 func newSettingsColors(p *palette) *settingsColors {
