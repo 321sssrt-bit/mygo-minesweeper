@@ -1177,7 +1177,7 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 					dark := a.darkMode
 					sw := ui.Switch(c.Key("settings-dark-mode"), &dark).LabelledBy(lampLabel).
 						Tooltip("切换日间方格纸与深夜台灯下的笔记本")
-					if focusFirst || sw.Pressed() {
+					if focusFirst || sw.Pressed() || sw.Clicked() {
 						sw.Focus()
 					}
 					if sw.Changed() {
@@ -1195,7 +1195,7 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 						Children(func() {
 							for i, label := range motionLabels {
 								seg := parts.Segment(i).Grow(1).Padding(5, 8).Radius(5).Cursor(ui.CursorPointer)
-								if seg.Pressed() {
+								if seg.Pressed() || seg.Clicked() {
 									seg.Focus()
 								}
 								active := i == motionIdx
@@ -1241,7 +1241,7 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 					soundOn := a.soundEnabled
 					soundSwitch = ui.Switch(c.Key("settings-sound"), &soundOn).LabelledBy(soundLabel).
 						KeyShortcuts(0, ui.KeyM).Tooltip("开关文具与乐器音效（按 M 切换）")
-					if soundSwitch.Pressed() {
+					if soundSwitch.Pressed() || soundSwitch.Clicked() {
 						soundSwitch.Focus()
 					}
 					if soundSwitch.Changed() {
@@ -1263,7 +1263,7 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 					volSlider := ui.Slider(c.Key("settings-volume"), &vol, 0, 100).
 						Step(1).FillWidth().LabelledBy(volLabel).Value(fmt.Sprintf("%d%%", a.volume)).
 						Disabled(!a.soundEnabled)
-					if volSlider.Pressed() {
+					if a.soundEnabled && (volSlider.Pressed() || volSlider.Clicked() || volSlider.Changed()) {
 						volSlider.Focus()
 					}
 					if !a.soundEnabled && volSlider.Focused() {
@@ -1290,7 +1290,7 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 					allowQ := a.allowQuestion
 					qSwitch := ui.Switch(c.Key("settings-allow-question"), &allowQ).LabelledBy(qLabel).
 						Tooltip("右键循环加入「？」不确定标记")
-					if qSwitch.Pressed() {
+					if qSwitch.Pressed() || qSwitch.Clicked() {
 						qSwitch.Focus()
 					}
 					if qSwitch.Changed() {
