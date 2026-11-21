@@ -21,14 +21,26 @@ Built with [`egoist/mygo`](https://github.com/egoist/mygo) · Direct3D 11 / Meta
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/assets/showcase-duel.png" alt="1000×1000 百万格实时决斗" />
+      <img src="docs/assets/showcase-live-day.png" alt="经典 · 日间：《碧天伴走》米白方格纸与创可贴旗" />
       <br />
-      <sub><b>1000×1000 百万格决斗</b> · 蓝粉领地对推、<code>+75</code> 即时收雷与 <code>100×100</code> 战区小地图</sub>
+      <sub><b>经典 · 日间（《碧天伴走》16×16）</b> · 米白方格纸、创可贴旗、代表色连开高亮与排练室群聊</sub>
     </td>
     <td width="50%" align="center">
-      <img src="docs/assets/showcase-live.png" alt="16×16 乐队 Live 排练室" />
+      <img src="docs/assets/showcase-live-night.png" alt="经典 · 夜间：《碧天伴走》深夜台灯下的笔记本" />
       <br />
-      <sub><b>乐队 Live（《碧天伴走》16×16）</b> · 领队代表色 Chord 连开高亮、重力值仪表与排练室群聊</sub>
+      <sub><b>经典 · 夜间（《碧天伴走》16×16）</b> · 深夜台灯下的深色方格纸、排练完成度、乐队重力值与排练室群聊</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/showcase-duel-day.png" alt="决斗 · 日间：《春日影》玩家与高松灯 AI 蓝粉高对比领地争夺" />
+      <br />
+      <sub><b>决斗 · 日间（《春日影》1000×1000）</b> · 玩家与高松灯 AI 蓝粉高对比领地争夺、<code>+75</code> 即时收雷与深色决斗小地图</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/showcase-duel-night.png" alt="决斗 · 夜间：《春日影》深夜台灯下的决斗大棋盘" />
+      <br />
+      <sub><b>决斗 · 夜间（《春日影》1000×1000）</b> · 深夜台灯纸面下的蓝粉高对比领地争夺、实时比分与深色决斗小地图</sub>
     </td>
   </tr>
 </table>
