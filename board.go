@@ -8,11 +8,24 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+type cameraGlide struct {
+	active             bool
+	wx, wy             float64
+	vx, vy             float64
+	cell, vCell        float64
+	targetWX, targetWY float64
+	targetCell         float64
+	targetX, targetY   float32
+	originW, originH   float32
+	last               time.Time
+}
+
 type boardView struct {
 	X, Y           float32
 	Cell           float32
 	Width, Height  float32
 	needsCenter    bool
+	glide          cameraGlide
 	HoverRow       int
 	HoverCol       int
 	HoverX, HoverY float32
@@ -32,6 +45,15 @@ const (
 	minimapSize       = float32(148)
 	minimapMargin     = float32(10)
 	classicMinimapPad = float32(4)
+
+	// Critically-damped spring parameters tuned so pan/zoom glides settle
+	// smoothly around 200ms without overshoot, clamping cross-board jumps
+	// past 2 viewport spans to a 1.5-span run-in.
+	cameraSpringOmega     = 50.0
+	cameraGlideFarTrigger = 2.0
+	cameraGlideFarClamp   = 1.5
+	cameraGlideSettlePx   = 0.5
+	cameraGlideSettleCell = 0.02
 )
 
 // classicMinimapPlot insets the board area inside the rounded classic minimap
@@ -68,8 +90,12 @@ func (v *boardView) updateHover(g *Game) {
 }
 
 func (v *boardView) panLimit(g *Game) (float32, float32) {
-	boardW := float32(g.Cols) * v.Cell
-	boardH := float32(g.Rows) * v.Cell
+	return v.panLimitFor(g, v.Cell)
+}
+
+func (v *boardView) panLimitFor(g *Game, cell float32) (float32, float32) {
+	boardW := float32(g.Cols) * cell
+	boardH := float32(g.Rows) * cell
 	maxX := max(float32(0), boardW-v.Width)
 	maxY := max(float32(0), boardH-v.Height)
 	if g.duel == nil {
@@ -111,7 +137,207 @@ func (v *boardView) clamp(g *Game) {
 	v.updateHover(g)
 }
 
+func (v *boardView) gliding() bool {
+	return v.glide.active
+}
+
+func (v *boardView) stopGlide() {
+	v.glide = cameraGlide{}
+}
+
+func (v *boardView) finishGlide(g *Game) {
+	if !v.glide.active {
+		return
+	}
+	glide := v.glide
+	v.glide = cameraGlide{}
+	v.Cell = float32(glide.targetCell)
+	if v.Width == glide.originW && v.Height == glide.originH {
+		v.X = glide.targetX
+		v.Y = glide.targetY
+	} else {
+		v.X = float32(glide.targetWX*glide.targetCell - float64(v.Width)/2)
+		v.Y = float32(glide.targetWY*glide.targetCell - float64(v.Height)/2)
+	}
+	v.clamp(g)
+}
+
+func (v *boardView) centerTarget(g *Game, row, col int, cell float32) (float32, float32) {
+	rawX := (float32(col)+0.5)*cell - v.Width/2
+	rawY := (float32(row)+0.5)*cell - v.Height/2
+	maxX, maxY := v.panLimitFor(g, cell)
+	return max(0, min(maxX, rawX)), max(0, min(maxY, rawY))
+}
+
+func (v *boardView) zoomTarget(g *Game, baseX, baseY, baseCell, atX, atY, factor float32) (float32, float32, float32) {
+	old := max(float32(10), min(float32(42), baseCell))
+	next := max(10, min(42, old*factor))
+	worldX := (baseX + atX) / old
+	worldY := (baseY + atY) / old
+	rawX := worldX*next - atX
+	rawY := worldY*next - atY
+	maxX, maxY := v.panLimitFor(g, next)
+	return max(0, min(maxX, rawX)), max(0, min(maxY, rawY)), next
+}
+
+func stepCriticalSpring(pos, vel, target, omega, dt float64) (float64, float64) {
+	d := pos - target
+	exp := math.Exp(-omega * dt)
+	c := vel + omega*d
+	return target + (d+c*dt)*exp, (vel - omega*c*dt) * exp
+}
+
+func (v *boardView) startGlide(g *Game, targetX, targetY, targetCell float32, now time.Time, reduced bool) {
+	v.needsCenter = false
+	if reduced || (abs32(targetX-v.X) <= cameraGlideSettlePx && abs32(targetY-v.Y) <= cameraGlideSettlePx && abs32(targetCell-v.Cell) <= cameraGlideSettleCell) {
+		v.stopGlide()
+		v.Cell = targetCell
+		v.X = targetX
+		v.Y = targetY
+		v.clamp(g)
+		return
+	}
+
+	var vx, vy, vCell float64
+	if v.glide.active {
+		vx, vy, vCell = v.glide.vx, v.glide.vy, v.glide.vCell
+	}
+
+	w, h := float64(v.Width), float64(v.Height)
+	curCell := float64(v.Cell)
+	curWX := (float64(v.X) + w/2) / curCell
+	curWY := (float64(v.Y) + h/2) / curCell
+	tgtCell := float64(targetCell)
+	tgtWX := (float64(targetX) + w/2) / tgtCell
+	tgtWY := (float64(targetY) + h/2) / tgtCell
+
+	// Measure pan distance in world-cell viewport spans so in-place zooms
+	// around high cell indices never trigger the cross-board run-in clamp.
+	viewCellsW := w / tgtCell
+	viewCellsH := h / tgtCell
+	dx := curWX - tgtWX
+	dy := curWY - tgtWY
+	if spans := math.Hypot(dx/viewCellsW, dy/viewCellsH); spans > cameraGlideFarTrigger {
+		scale := cameraGlideFarClamp / spans
+		curWX = tgtWX + dx*scale
+		curWY = tgtWY + dy*scale
+		vx, vy = 0, 0
+		v.X = float32(curWX*curCell - w/2)
+		v.Y = float32(curWY*curCell - h/2)
+		v.clamp(g)
+		curWX = (float64(v.X) + w/2) / curCell
+		curWY = (float64(v.Y) + h/2) / curCell
+	}
+
+	v.glide = cameraGlide{
+		active:     true,
+		wx:         curWX,
+		wy:         curWY,
+		vx:         vx,
+		vy:         vy,
+		cell:       curCell,
+		vCell:      vCell,
+		targetWX:   tgtWX,
+		targetWY:   tgtWY,
+		targetCell: tgtCell,
+		targetX:    targetX,
+		targetY:    targetY,
+		originW:    v.Width,
+		originH:    v.Height,
+		last:       now,
+	}
+}
+
+func (v *boardView) stepGlide(g *Game, now time.Time) bool {
+	if !v.glide.active {
+		return false
+	}
+	if now.IsZero() {
+		return true
+	}
+	if v.glide.last.IsZero() {
+		v.glide.last = now
+	}
+	dt := now.Sub(v.glide.last).Seconds()
+	if dt < 0 {
+		dt = 0
+	}
+	v.glide.last = now
+	if dt >= 1 {
+		v.finishGlide(g)
+		return false
+	}
+	if dt > 0 {
+		v.glide.wx, v.glide.vx = stepCriticalSpring(v.glide.wx, v.glide.vx, v.glide.targetWX, cameraSpringOmega, dt)
+		v.glide.wy, v.glide.vy = stepCriticalSpring(v.glide.wy, v.glide.vy, v.glide.targetWY, cameraSpringOmega, dt)
+		v.glide.cell, v.glide.vCell = stepCriticalSpring(v.glide.cell, v.glide.vCell, v.glide.targetCell, cameraSpringOmega, dt)
+	}
+
+	cellErr := math.Abs(v.glide.cell - v.glide.targetCell)
+	pxErrX := math.Abs(v.glide.wx-v.glide.targetWX) * v.glide.targetCell
+	pxErrY := math.Abs(v.glide.wy-v.glide.targetWY) * v.glide.targetCell
+	pxVelX := math.Abs(v.glide.vx) * v.glide.targetCell
+	pxVelY := math.Abs(v.glide.vy) * v.glide.targetCell
+	if cellErr <= cameraGlideSettleCell &&
+		pxErrX <= cameraGlideSettlePx &&
+		pxErrY <= cameraGlideSettlePx &&
+		math.Abs(v.glide.vCell) <= cameraGlideSettleCell*60 &&
+		pxVelX <= cameraGlideSettlePx*60 &&
+		pxVelY <= cameraGlideSettlePx*60 {
+		v.finishGlide(g)
+		return false
+	}
+
+	v.Cell = float32(v.glide.cell)
+	v.X = float32(v.glide.wx*v.glide.cell - float64(v.Width)/2)
+	v.Y = float32(v.glide.wy*v.glide.cell - float64(v.Height)/2)
+	v.clamp(g)
+	return true
+}
+
+func (v *boardView) glideCenter(g *Game, row, col int, now time.Time, reduced bool) {
+	if g == nil || g.Rows <= 0 || g.Cols <= 0 {
+		return
+	}
+	v.clamp(g)
+	tgtCell := v.Cell
+	if v.glide.active {
+		v.stepGlide(g, now)
+		if v.glide.active {
+			tgtCell = float32(v.glide.targetCell)
+		}
+	}
+	tgtX, tgtY := v.centerTarget(g, row, col, tgtCell)
+	v.startGlide(g, tgtX, tgtY, tgtCell, now, reduced)
+}
+
+func (v *boardView) glideCenterBoard(g *Game, now time.Time, reduced bool) {
+	if g == nil || g.Rows <= 0 || g.Cols <= 0 {
+		return
+	}
+	v.glideCenter(g, g.Rows/2, g.Cols/2, now, reduced)
+}
+
+func (v *boardView) glideZoom(g *Game, atX, atY, factor float32, now time.Time, reduced bool) {
+	if g == nil || g.Rows <= 0 || g.Cols <= 0 || factor <= 0 || !isFinite32(factor) || !isFinite32(atX) || !isFinite32(atY) {
+		return
+	}
+	v.clamp(g)
+	baseX, baseY, baseCell := v.X, v.Y, v.Cell
+	if v.glide.active {
+		v.stepGlide(g, now)
+		if v.glide.active {
+			baseCell = float32(v.glide.targetCell)
+			baseX = float32(v.glide.targetWX*v.glide.targetCell - float64(v.Width)/2)
+			baseY = float32(v.glide.targetWY*v.glide.targetCell - float64(v.Height)/2)
+		}
+	}
+	tgtX, tgtY, tgtCell := v.zoomTarget(g, baseX, baseY, baseCell, atX, atY, factor)
+	v.startGlide(g, tgtX, tgtY, tgtCell, now, reduced)
+}
+
 func (v *boardView) center(g *Game, row, col int) {
+	v.stopGlide()
 	v.needsCenter = false
 	if g == nil || g.Rows <= 0 || g.Cols <= 0 {
 		return
@@ -132,6 +358,7 @@ func (v *boardView) zoom(g *Game, atX, atY, factor float32) {
 	if g == nil || factor <= 0 || !isFinite32(factor) || !isFinite32(atX) || !isFinite32(atY) {
 		return
 	}
+	v.stopGlide()
 	v.needsCenter = false
 	if !isFinite32(v.Cell) {
 		v.Cell = 26
@@ -294,6 +521,7 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 
 func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label string) {
 	v := a.board
+	a.syncMotionState(a.reducedMotion(c))
 	v.clamp(a.game)
 	ui.Column(c.Key(stageKey)).Grow(1).FillWidth().Children(func() {
 		boardBox := ui.Box(c.Key(boardKey)).Grow(1).FillWidth().Label(label).
@@ -314,6 +542,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				v.zoom(a.game, ev.X, ev.Y, 1+max(-0.35, min(0.35, -ev.DY/400)))
 				return true
 			case ui.InputZoom:
+				v.stopGlide()
 				v.zoom(a.game, ev.X, ev.Y, ev.Scale)
 				return true
 			case ui.InputPointerDown:
@@ -323,9 +552,12 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				}
 				if ev.Button == 0 && v.minimapFor(a.game, ev.X, ev.Y) {
 					row, col := v.minimapCellAt(a.game, ev.X, ev.Y)
-					v.center(a.game, row, col)
+					v.glideCenter(a.game, row, col, ev.Time, a.motionReducedActive)
 					return true
 				}
+				// Stop any active glide without stepping forward so clicks and
+				// drags act on the exact viewport coordinates painted on screen.
+				v.stopGlide()
 				v.Pressed = true
 				v.PressButton = ev.Button
 				v.PressX, v.PressY = ev.X, ev.Y
@@ -340,6 +572,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 					v.Dragging = true
 				}
 				if v.Dragging {
+					v.stopGlide()
 					v.needsCenter = false
 					v.X -= ev.X - v.DragX
 					v.Y -= ev.Y - v.DragY
@@ -377,6 +610,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 			return false
 		}).Draw(func(p *ui.Painter, r ui.Rect) {
 			v.Width, v.Height = r.W, r.H
+			a.syncMotionState(a.reducedMotionPainter(p))
 			if v.needsCenter {
 				v.needsCenter = false
 				if a.game != nil && (a.game.Rows != 1000 || a.game.Cols != 1000) {
@@ -384,6 +618,8 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				} else {
 					v.clamp(a.game)
 				}
+			} else if v.stepGlide(a.game, p.Now()) {
+				p.AnimationFrame()
 			} else {
 				v.clamp(a.game)
 			}
@@ -420,7 +656,6 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	v, g := a.board, a.game
 	t := p.Theme()
 	now := p.Now()
-	a.syncMotionState(a.reducedMotionPainter(p))
 	hoverHint := g.InspectNumberHover(v.HoverRow, v.HoverCol, a.flagMode)
 	v.LastHoverHint = hoverHint
 	hintFill, hintStroke := hoverHintColors(hoverHint.Kind, a.memberID, a.darkMode)

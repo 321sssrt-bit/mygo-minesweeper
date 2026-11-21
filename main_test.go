@@ -1197,7 +1197,7 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 		t.Error("duel board still uses banned 百万格决斗战场 label")
 	}
 
-	// Clicking 定位高松灯 centers the viewport on Tomori's last move.
+	// Clicking 定位高松灯 glides the viewport smoothly onto Tomori's last move.
 	duelApp.game.duel.LastAI = 120*duelApp.game.Cols + 240
 	duelApp.board.center(duelApp.game, 500, 500)
 	dtt.Frame()
@@ -1205,6 +1205,19 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 		t.Fatalf("clicking 定位高松灯 failed: %v", err)
 	}
 	r, _ := dtt.Find("决斗棋盘")
+	if !duelApp.board.gliding() {
+		t.Fatal("定位高松灯 did not start camera glide")
+	}
+	x0, y0 := duelApp.board.X, duelApp.board.Y
+	dtt.Advance(60 * time.Millisecond)
+	if !duelApp.board.gliding() || (duelApp.board.X == x0 && duelApp.board.Y == y0) {
+		t.Fatalf("定位高松灯 mid-glide not in transition: start=(%v,%v) mid=(%v,%v) gliding=%v",
+			x0, y0, duelApp.board.X, duelApp.board.Y, duelApp.board.gliding())
+	}
+	dtt.Advance(200 * time.Millisecond)
+	if duelApp.board.gliding() {
+		t.Fatal("定位高松灯 still gliding after 260ms")
+	}
 	gotRow, gotCol, ok := duelApp.board.cellAt(duelApp.game, r.W/2, r.H/2)
 	if !ok || gotRow != 120 || gotCol != 240 {
 		t.Fatalf("定位高松灯 centered on (%d,%d) ok=%v, want (120,240)", gotRow, gotCol, ok)
