@@ -419,10 +419,51 @@ func TestBigFloodLocksMemberColorWashAcrossModesAndSwitches(t *testing.T) {
 	})
 }
 
+func cloneScaledRect(img *image.RGBA, r ui.Rect, scale float32) *image.RGBA {
+	x0 := max(img.Bounds().Min.X, int(r.X*scale))
+	y0 := max(img.Bounds().Min.Y, int(r.Y*scale))
+	x1 := min(img.Bounds().Max.X, int((r.X+r.W)*scale))
+	y1 := min(img.Bounds().Max.Y, int((r.Y+r.H)*scale))
+	w, h := max(0, x1-x0), max(0, y1-y0)
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		srcOff := img.PixOffset(x0, y0+y)
+		dstOff := dst.PixOffset(0, y)
+		copy(dst.Pix[dstOff:dstOff+w*4], img.Pix[srcOff:srcOff+w*4])
+	}
+	return dst
+}
+
+func diffRectPixels(a, b *image.RGBA, target ui.Color, tol int) (totalDiff, matchingDiff int) {
+	tr, tg, tb := int(target.R), int(target.G), int(target.B)
+	for i := 0; i+3 < len(a.Pix) && i+3 < len(b.Pix); i += 4 {
+		if a.Pix[i] == b.Pix[i] && a.Pix[i+1] == b.Pix[i+1] && a.Pix[i+2] == b.Pix[i+2] && a.Pix[i+3] == b.Pix[i+3] {
+			continue
+		}
+		totalDiff++
+		dr := int(a.Pix[i]) - tr
+		dg := int(a.Pix[i+1]) - tg
+		db := int(a.Pix[i+2]) - tb
+		if dr < 0 {
+			dr = -dr
+		}
+		if dg < 0 {
+			dg = -dg
+		}
+		if db < 0 {
+			db = -db
+		}
+		if dr <= tol && dg <= tol && db <= tol {
+			matchingDiff++
+		}
+	}
+	return totalDiff, matchingDiff
+}
+
 // TestBandageBounceAndPeelOffBothBackends verifies the ~140ms 1.25x slap bounce
 // (manual flag, Soyorin shield + shake, duel claim & AI flag), ~110ms diagonal
-// peel-off (unflag and right-click -> ?), zoomed-out <16px skip, and frame-0
-// steady rendering for pre-staged flagged boards.
+// peel-off (plain unflag and right-click -> ?), zoomed-out <16px skip, and
+// frame-0 steady rendering for pre-staged flagged boards.
 func TestBandageBounceAndPeelOffBothBackends(t *testing.T) {
 	// Verify spring curve starts at 1.25x with slap angle, undershoots slightly, and settles cleanly at 140ms.
 	s0, r0 := bandageBounceTransform(0)
@@ -442,7 +483,7 @@ func TestBandageBounceAndPeelOffBothBackends(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			app := newMinesweeperApp(7)
 			app.memberID = MemberSoyorin
-			app.allowQuestion = true
+			app.allowQuestion = false
 			app.game = makeCorridorGame(6, 6, true, MemberSoyorin, [][2]int{{0, 0}, {5, 5}})
 
 			viewFn := app.view
@@ -465,6 +506,7 @@ func TestBandageBounceAndPeelOffBothBackends(t *testing.T) {
 			pal := app.paper()
 			// 1. Manual right-click flag on (1,1): starts ~1.25x bounce without shifting hit-box.
 			r11Before := cellRect(1, 1)
+			peelProbe := ui.Rect{X: r11Before.X, Y: r11Before.Y - 8, W: r11Before.W + 10, H: r11Before.H + 8}
 			tt.RightClickAt(r11Before.X+r11Before.W/2, r11Before.Y+r11Before.H/2)
 			idx11 := 1*6 + 1
 			if b, ok := app.bandages[idx11]; !ok || b.Kind != bandageBounce || b.Shield {
@@ -483,7 +525,48 @@ func TestBandageBounceAndPeelOffBothBackends(t *testing.T) {
 				t.Errorf("expected 1.25x bouncing band-aid to paint more pixels than steady 1.0x: bounce=%d steady=%d", pxBounce, pxSteady)
 			}
 
-			// 2. Right-click (1,1) again with allowQuestion=true -> transitions Flag -> ? and plays 110ms diagonal peel-off.
+			// 2a. Plain unflag (allowQuestion=false -> blank unrevealed slip, no "?" text glyph):
+			// plays 110ms diagonal peel-off and leaves zero band-aid pixels after settle.
+			tt.RightClickAt(r11Before.X+r11Before.W/2, r11Before.Y+r11Before.H/2)
+			if app.game.Cell(1, 1).Flagged || app.game.Cell(1, 1).Questioned {
+				t.Fatal("expected (1,1) plain unflagged on frame 0")
+			}
+			if b, ok := app.bandages[idx11]; !ok || b.Kind != bandagePeel {
+				t.Fatalf("expected bandagePeel on Flag->blank, got ok=%v b=%+v", ok, b)
+			}
+			tt.Advance(35 * time.Millisecond)
+			pxPeeling := countMatchingPixels(tt.Image(), peelProbe, 2, pal.BandAid, 48)
+			tt.Advance(bandagePeelDuration)
+			if len(app.bandages) != 0 {
+				t.Fatalf("expected plain unflag bandage peel converged, remaining=%d", len(app.bandages))
+			}
+			pxAfterPeel := countMatchingPixels(tt.Image(), peelProbe, 2, pal.BandAid, 24)
+			if pxPeeling == 0 || pxAfterPeel != 0 {
+				t.Errorf("expected plain unflag peeling band-aid visible mid-peel and gone after settle: mid=%d after=%d", pxPeeling, pxAfterPeel)
+			}
+
+			// 2b. Flag -> ? (allowQuestion=true): compare against an independent pre-staged
+			// static "?" slip hovered at the same point so platform LCD subpixel AA (e.g.
+			// Windows ClearType around "?") cannot trigger band-aid color false positives.
+			refApp := newMinesweeperApp(7)
+			refApp.memberID = MemberSoyorin
+			refApp.allowQuestion = true
+			refApp.game = makeCorridorGame(6, 6, true, MemberSoyorin, [][2]int{{0, 0}, {5, 5}})
+			refApp.game.Cell(1, 1).Questioned = true
+			refViewFn := refApp.view
+			if backend == "canvas" {
+				refViewFn = classicCanvasTestView(refApp)
+			}
+			refTT := ui.NewTester(refViewFn, 1280, 900)
+			refTT.SetScale(2)
+			refTT.Frame()
+			refTT.Move(r11Before.X+r11Before.W/2, r11Before.Y+r11Before.H/2)
+			refTT.Frame()
+			steadyQImg := cloneScaledRect(refTT.Image(), peelProbe, 2)
+
+			app.allowQuestion = true
+			tt.RightClickAt(r11Before.X+r11Before.W/2, r11Before.Y+r11Before.H/2)
+			tt.Advance(bandageBounceDuration + 20*time.Millisecond)
 			tt.RightClickAt(r11Before.X+r11Before.W/2, r11Before.Y+r11Before.H/2)
 			if app.game.Cell(1, 1).Flagged || !app.game.Cell(1, 1).Questioned {
 				t.Fatal("expected (1,1) transitioned to ? on frame 0")
@@ -492,16 +575,17 @@ func TestBandageBounceAndPeelOffBothBackends(t *testing.T) {
 				t.Fatalf("expected bandagePeel on Flag->?, got ok=%v b=%+v", ok, b)
 			}
 			tt.Advance(35 * time.Millisecond)
-			// Probe the upper-right region (cell + slight diagonal overhang) for fading band-aid pixels.
-			peelProbe := ui.Rect{X: r11Before.X, Y: r11Before.Y - 8, W: r11Before.W + 10, H: r11Before.H + 8}
-			pxPeeling := countMatchingPixels(tt.Image(), peelProbe, 2, pal.BandAid, 48)
+			midQImg := cloneScaledRect(tt.Image(), peelProbe, 2)
 			tt.Advance(bandagePeelDuration)
 			if len(app.bandages) != 0 {
-				t.Fatalf("expected bandage peel converged, remaining=%d", len(app.bandages))
+				t.Fatalf("expected Flag->? bandage peel converged, remaining=%d", len(app.bandages))
 			}
-			pxAfterPeel := countMatchingPixels(tt.Image(), peelProbe, 2, pal.BandAid, 24)
-			if pxPeeling == 0 || pxAfterPeel != 0 {
-				t.Errorf("expected peeling band-aid visible mid-peel and gone after settle: mid=%d after=%d", pxPeeling, pxAfterPeel)
+			afterQImg := cloneScaledRect(tt.Image(), peelProbe, 2)
+
+			_, midBandAidDiff := diffRectPixels(midQImg, steadyQImg, pal.BandAid, 48)
+			afterTotalDiff, _ := diffRectPixels(afterQImg, steadyQImg, pal.BandAid, 48)
+			if midBandAidDiff < 20 || afterTotalDiff != 0 {
+				t.Errorf("expected Flag->? peeling band-aid visible mid-peel and pixel-identical to static ? after settle: midBandAidDiff=%d afterTotalDiff=%d", midBandAidDiff, afterTotalDiff)
 			}
 			// ? glyph remains cleanly rendered underneath after peel completes.
 			if qPx := countMatchingPixels(tt.Image(), r11Before, 2, pal.Graphite, 28); qPx < 10 {
