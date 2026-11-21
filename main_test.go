@@ -491,10 +491,13 @@ func TestHaruhikageLossDramaOverlaySkipTimedAndReset(t *testing.T) {
 		return app, tt
 	}
 
-	// Flow 1: Click-to-skip isolates click from AlertDialog buttons and board tiles, then dismisses cleanly.
+	// Flow 1: Frame-0 click-to-skip isolates click from AlertDialog buttons and board tiles, then dismisses cleanly.
 	app, tt := setupHaruhikageLoss()
-	if !app.haruhikageIntro || app.haruhikageAlert || !tt.HasText("……为什么要演奏春日影？！") {
-		t.Fatalf("expected Haruhikage drama overlay before dialog, intro=%v alert=%v", app.haruhikageIntro, app.haruhikageAlert)
+	if !app.haruhikageIntro || app.haruhikageAlert || tt.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage drama overlay in half-beat pause on frame 0, intro=%v alert=%v", app.haruhikageIntro, app.haruhikageAlert)
+	}
+	if _, ok := tt.Find("春日影演出遮罩"); !ok {
+		t.Fatal("expected Haruhikage drama overlay mounted on frame 0")
 	}
 	if err := tt.Click("春日影演出遮罩"); err != nil {
 		t.Fatalf("failed clicking drama overlay: %v", err)
@@ -557,10 +560,14 @@ func TestHaruhikagePresentationFollowsMarkerNotID(t *testing.T) {
 		Cols:       5,
 		Mines:      1,
 	}, false, MemberTomori, 0)
-	if !app1.haruhikageIntro || app1.haruhikageAlert || !tt1.HasText("……为什么要演奏春日影？！") {
+	if !app1.haruhikageIntro || app1.haruhikageAlert {
 		t.Fatalf("expected Haruhikage overlay on marked non-hard track, intro=%v alert=%v", app1.haruhikageIntro, app1.haruhikageAlert)
 	}
-	tt1.Advance(haruhikageIntroDuration - 100*time.Millisecond)
+	tt1.Advance(haruhikageBeatDelay + 20*time.Millisecond)
+	if !tt1.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage line after half-beat on marked non-hard track")
+	}
+	tt1.Advance(haruhikageIntroDuration - haruhikageBeatDelay - 120*time.Millisecond)
 	if !app1.haruhikageIntro || app1.haruhikageAlert {
 		t.Fatalf("expected overlay to stay visible before haruhikageIntroDuration, intro=%v alert=%v", app1.haruhikageIntro, app1.haruhikageAlert)
 	}
@@ -669,8 +676,12 @@ func TestDuelHaruhikageDefeatPresentation(t *testing.T) {
 
 	// Case 1: Marked duel timeout score loss plays drama overlay, unlocks meme, emits quote, and click-to-skip opens AlertDialog once.
 	app1, tt1 := setupTimedDuel(true, 10, 100, false)
-	if !app1.duelEnded || !app1.haruhikageIntro || app1.haruhikageAlert || !tt1.HasText("……为什么要演奏春日影？！") {
+	if !app1.duelEnded || !app1.haruhikageIntro || app1.haruhikageAlert {
 		t.Fatalf("expected Haruhikage overlay on marked duel score loss, ended=%v intro=%v alert=%v", app1.duelEnded, app1.haruhikageIntro, app1.haruhikageAlert)
+	}
+	tt1.Advance(haruhikageBeatDelay + 20*time.Millisecond)
+	if !tt1.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage overlay line after half-beat on marked duel score loss")
 	}
 	if !app1.unlockedMemes[MemeHaruhikage] {
 		t.Fatalf("expected MemeHaruhikage unlocked on marked duel score loss")
@@ -731,8 +742,12 @@ func TestDuelHaruhikageDefeatPresentation(t *testing.T) {
 	tt3 := ui.NewTester(app3.view, 1280, 900)
 	app3.pendingResult = app3.game.Reveal(0, 0)
 	tt3.Frame()
-	if !app3.duelEnded || !app3.haruhikageIntro || app3.haruhikageAlert || !tt3.HasText("……为什么要演奏春日影？！") {
+	if !app3.duelEnded || !app3.haruhikageIntro || app3.haruhikageAlert {
 		t.Fatalf("expected Haruhikage overlay on cleared-board marked duel loss, ended=%v intro=%v alert=%v", app3.duelEnded, app3.haruhikageIntro, app3.haruhikageAlert)
+	}
+	tt3.Advance(haruhikageBeatDelay + 20*time.Millisecond)
+	if !tt3.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage line after half-beat on cleared-board marked duel loss")
 	}
 	if !app3.unlockedMemes[MemeHaruhikage] || app3.unlockedMemes[MemeForever] {
 		t.Fatalf("expected MemeHaruhikage without MemeForever on cleared-board loss, unlocked=%v", app3.unlockedMemes)
@@ -785,8 +800,12 @@ func TestDuelHaruhikageDefeatPresentation(t *testing.T) {
 	appAI.game.duel.NextAI = 0.2
 	ttAI := ui.NewTester(appAI.view, 1280, 900)
 	ttAI.Advance(300 * time.Millisecond)
-	if !appAI.duelEnded || !appAI.haruhikageIntro || appAI.haruhikageAlert || !ttAI.HasText("……为什么要演奏春日影？！") {
+	if !appAI.duelEnded || !appAI.haruhikageIntro || appAI.haruhikageAlert {
 		t.Fatalf("expected Haruhikage overlay on AI-cleared score loss, ended=%v intro=%v alert=%v", appAI.duelEnded, appAI.haruhikageIntro, appAI.haruhikageAlert)
+	}
+	ttAI.Advance(haruhikageBeatDelay + 20*time.Millisecond)
+	if !ttAI.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage line after half-beat on AI-cleared score loss")
 	}
 
 	// Case 4: Marked draw, marked win, and unmarked score loss never show the overlay or dialog.
@@ -944,9 +963,13 @@ func TestHaruhikageMovedToDuelAndKageiromaiLossIsPlain(t *testing.T) {
 	duelApp.game.duel.Elapsed = duelApp.game.duel.Duration - 0.5
 	dtt.Frame()
 	dtt.Advance(600 * time.Millisecond)
-	if !duelApp.duelEnded || !duelApp.haruhikageIntro || duelApp.haruhikageAlert || !dtt.HasText("……为什么要演奏春日影？！") {
+	if !duelApp.duelEnded || !duelApp.haruhikageIntro || duelApp.haruhikageAlert {
 		t.Fatalf("expected Haruhikage drama overlay on 《春日影》 duel loss, ended=%v intro=%v alert=%v",
 			duelApp.duelEnded, duelApp.haruhikageIntro, duelApp.haruhikageAlert)
+	}
+	dtt.Advance(haruhikageBeatDelay + 20*time.Millisecond)
+	if !dtt.HasText("……为什么要演奏春日影？！") {
+		t.Fatalf("expected Haruhikage line after half-beat on 《春日影》 duel loss")
 	}
 	if !duelApp.unlockedMemes[MemeHaruhikage] {
 		t.Fatal("expected MemeHaruhikage unlocked on 《春日影》 duel loss")
@@ -1069,6 +1092,7 @@ func TestMemesAndChatCopyContracts(t *testing.T) {
 	app.game.duel.Elapsed = app.game.duel.Duration - 0.5
 	tt.Frame()
 	tt.Advance(600 * time.Millisecond)
+	tt.Advance(haruhikageBeatDelay + 20*time.Millisecond)
 
 	if !tt.HasText("♪ 《春日影》 — 乐声骤停") || tt.HasText("Crychic") {
 		t.Fatal("expected updated Haruhikage drama overlay header without Crychic")
@@ -1368,6 +1392,7 @@ func TestHaruhikagePaperThemeContrastPixelsAndFlows(t *testing.T) {
 			if !app.haruhikageIntro || app.haruhikageAlert {
 				t.Fatalf("expected drama overlay active, intro=%v alert=%v", app.haruhikageIntro, app.haruhikageAlert)
 			}
+			tt.Advance(haruhikageBeatDelay + haruhikageLineFade + 20*time.Millisecond)
 			tt.Frame()
 			img := tt.Image()
 			wantScrimOnDesk := drama.Scrim.Over(pal.Desk)
@@ -1695,7 +1720,7 @@ func TestSnapshotHaruhikage(t *testing.T) {
 			app.haruhikageAlert = true
 		} else {
 			app.haruhikageIntro = true
-			app.haruhikageIntroStart = tt.Now()
+			app.haruhikageIntroStart = tt.Now().Add(-(haruhikageBeatDelay + haruhikageLineFade))
 			app.haruhikageAlert = false
 		}
 		tt.Frame()

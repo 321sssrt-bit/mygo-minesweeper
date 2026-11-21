@@ -102,18 +102,22 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 					return classicCanvasCellRect(br, app.board, row, col)
 				}
 
+				// Pre-unlock win memes and use (11,0) (depth 11 along left column) so the
+				// top-center stage highlight overlays do not sit over the wave sample cell.
+				app.unlockedMemes[MemeForever] = true
+				app.unlockedMemes[MemeAnonBest] = true
 				originRectBefore := cellRect(0, 0)
-				farRectBefore := cellRect(0, 11)
+				farRectBefore := cellRect(11, 0)
 				tt.ClickAt(originRectBefore.X+originRectBefore.W/2, originRectBefore.Y+originRectBefore.H/2)
 
 				// Frame 0: game rules, progress, hit-box, and screen reader state update immediately.
-				if !app.game.Cell(0, 0).Revealed || !app.game.Cell(0, 6).Revealed || !app.game.Cell(0, 11).Revealed {
+				if !app.game.Cell(0, 0).Revealed || !app.game.Cell(0, 6).Revealed || !app.game.Cell(11, 0).Revealed {
 					t.Fatal("expected flood-fill cells logically revealed on frame 0")
 				}
 				if app.game.Status != StatusWon {
 					t.Fatalf("expected immediate win on frame 0, status=%v", app.game.Status)
 				}
-				if got := cellRect(0, 11); got != farRectBefore {
+				if got := cellRect(11, 0); got != farRectBefore {
 					t.Fatalf("cell hit-box shifted on frame 0: before=%+v after=%+v", farRectBefore, got)
 				}
 				if backend == "grid" {
@@ -130,24 +134,25 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 					if !ok || accOrigin.Value != "0" || accOrigin.Description != "0" {
 						t.Fatalf("expected frame-0 canvas screen reader value/description \"0\" at (0,0), got ok=%v node=%+v", ok, accOrigin)
 					}
-					tt.Move(farRectBefore.X+farRectBefore.W/2, farRectBefore.Y+farRectBefore.H/2)
+					numRect := cellRect(0, 11)
+					tt.Move(numRect.X+numRect.W/2, numRect.Y+numRect.H/2)
 					tt.Frame()
 					accFar, ok := tt.Access("经典棋盘")
 					if !ok || accFar.Value != "1" || accFar.Description != "1" {
 						t.Fatalf("expected frame-0 canvas screen reader value/description \"1\" while hovering still-covered (0,11), got ok=%v node=%+v", ok, accFar)
 					}
-					// Move pointer back to origin so (0,11) paints unhovered pal.Slip for stage-1 check.
+					// Move pointer back to origin so (11,0) paints unhovered pal.Slip for stage-1 check.
 					tt.Move(originRectBefore.X+originRectBefore.W/2, originRectBefore.Y+originRectBefore.H/2)
 					tt.Frame()
 				}
 
 				rip6 := app.ripples[0*13+6]
-				rip11 := app.ripples[0*13+11]
+				rip11 := app.ripples[11*13+0]
 				if rip6.Delay != 6*rippleStepDelay || rip11.Delay != rippleMaxDelay {
 					t.Fatalf("unexpected delays: depth6=%v depth11=%v", rip6.Delay, rip11.Delay)
 				}
 
-				// Stage 1 (t=0): depth-11 cell (0,11) is still covered by a full paper slip.
+				// Stage 1 (t=0): depth-11 cell (11,0) is still covered by a full paper slip.
 				assertColorNear(t, "stage 1 covered far slip", sampleCanvasPixel(tt.Image(), farRectBefore.X+farRectBefore.W/2, farRectBefore.Y+farRectBefore.H/2, 2), pal.Slip)
 
 				// Stage 2 (t=75ms): origin (0,0) is mid-peel, while depth-11 (240ms) is still covered.
@@ -157,7 +162,7 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 					t.Errorf("origin slip still opaque pal.Slip at 75ms: %s", hexOf(originMid))
 				}
 				assertColorNear(t, "stage 1 far slip still covered at 75ms", sampleCanvasPixel(tt.Image(), farRectBefore.X+farRectBefore.W/2, farRectBefore.Y+farRectBefore.H/2, 2), pal.Slip)
-				if got := cellRect(0, 11); got != farRectBefore {
+				if got := cellRect(11, 0); got != farRectBefore {
 					t.Fatalf("cell hit-box shifted mid-wave: before=%+v mid=%+v", farRectBefore, got)
 				}
 
@@ -172,14 +177,16 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 				// Stage 3 for far cell (t=240ms+160ms=400ms): slip is gone, locked Anon wash exposed.
 				tt.Advance(85 * time.Millisecond)
 				farWashAlpha := 1 - float32(160*time.Millisecond)/float32(rippleDuration)
-				wantFarWash := memberImage(MemberAnon).Alpha(0.22 * farWashAlpha).Over(pal.Board)
+				wantFarWash := memberImage(MemberAnon).Alpha(0.26 * farWashAlpha).Over(pal.Board)
 				assertColorNear(t, "stage 3 far locked Anon wash", sampleCanvasPixel(tt.Image(), farRectBefore.X+3, farRectBefore.Y+3, 2), wantFarWash)
 
-				// Full convergence: all wave entries pruned and no lingering animation frames.
+				// Full convergence: wave entries pruned; once victory highlights settle too,
+				// zero lingering animation frames remain.
 				tt.Advance(rippleDuration)
 				if len(app.ripples) != 0 {
 					t.Fatalf("expected all ripples pruned, remaining=%d", len(app.ripples))
 				}
+				tt.Advance(memeStripDuration)
 				assertColorNear(t, "far cell bare after settle", sampleCanvasPixel(tt.Image(), farRectBefore.X+3, farRectBefore.Y+3, 2), pal.Board)
 				if backend == "canvas" && tt.FramePending() {
 					t.Fatal("canvas still requested animation frames after wave settled")
@@ -860,10 +867,10 @@ func TestMotionReducedMidFlightAndThreeResetPathsClearAllEffects(t *testing.T) {
 			t.Fatalf("expected active wave, bandages, and shake before switching: ripples=%d bandages=%d amp=%v",
 				len(app.ripples), len(app.bandages), app.shakeAmplitude)
 		}
-		// Cell (0,6) is still covered by its waiting slip at t=0 (sample well inside the
-		// tile so the active shield shake displacement stays inside the slip, yet clear of the digit once revealed).
-		r06, _ := tt.Find("cell-0-6")
-		assertColorNear(t, "covered before reduced toggle", sampleCanvasPixel(tt.Image(), r06.X+10, r06.Y+12, 2), pal.Slip)
+		// Cell (6,0) is still covered by its waiting slip at t=0 (away from the top-center
+		// Soyorin shield quote strip, and clear of the digit once revealed).
+		r60, _ := tt.Find("cell-6-0")
+		assertColorNear(t, "covered before reduced toggle", sampleCanvasPixel(tt.Image(), r60.X+10, r60.Y+12, 2), pal.Slip)
 
 		// System toggles ReduceMotion=true under motionSystem -> immediate same-frame settle!
 		tt.SetPreferences(ui.Preferences{ReduceMotion: true})
@@ -871,7 +878,7 @@ func TestMotionReducedMidFlightAndThreeResetPathsClearAllEffects(t *testing.T) {
 			t.Fatalf("expected same-frame clear on ReduceMotion=true: reduced=%v ripples=%d bandages=%d amp=%v",
 				app.motionReducedActive, len(app.ripples), len(app.bandages), app.shakeAmplitude)
 		}
-		assertColorNear(t, "exposed final bare paper on same frame", sampleCanvasPixel(tt.Image(), r06.X+10, r06.Y+12, 2), pal.Board)
+		assertColorNear(t, "exposed final bare paper on same frame", sampleCanvasPixel(tt.Image(), r60.X+10, r60.Y+12, 2), pal.Board)
 
 		// Open 设置 popover and switch to 标准 while system ReduceMotion remains true -> full motion resumes.
 		if err := tt.Click("设置"); err != nil {

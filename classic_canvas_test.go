@@ -37,51 +37,14 @@ func classicCanvasTestView(a *minesweeperApp) func(c *ui.Context) {
 			a.flagMode = !a.flagMode
 		}
 		if c.Shortcut(0, ui.KeyE) {
-			res := a.game.UseSkill()
-			a.handleAction(c, res, now)
+			a.useSkill(c, now)
 		}
 
 		baseTheme := a.activeTheme()
 		c.SetTheme(baseTheme)
 		t := c.Theme()
 
-		if a.haruhikageIntro {
-			elapsedIntro := now.Sub(a.haruhikageIntroStart)
-			if elapsedIntro >= haruhikageIntroDuration {
-				a.haruhikageIntro = false
-				a.haruhikageAlert = true
-			} else {
-				remain := haruhikageIntroDuration - elapsedIntro
-				c.After(min(50*time.Millisecond, max(time.Millisecond, remain)))
-				ui.Overlay(c, func() {
-					overlay := ui.Box(c.Key("haruhikage-drama-overlay")).Fill().Modal().
-						Background(ui.Hex("#05070D").Alpha(0.84)).Center().
-						Cursor(ui.CursorPointer).Label("春日影演出遮罩")
-					overlay.Children(func() {
-						ui.Column(c).AlignItems(ui.Center).Gap(10).Padding(24).Radius(14).
-							Children(func() {
-								ui.Text(c, "♪ 《春日影》 — 乐声骤停").FontSize(13).Bold()
-								ui.Text(c, "「……为什么要演奏春日影？！」").FontSize(22).Bold()
-								ui.Text(c, "（长崎爽世的眼神失去了高光 · 点击任意处继续）").FontSize(12)
-							})
-					})
-					if overlay.Clicked() {
-						a.haruhikageIntro = false
-						a.haruhikageAlert = true
-					}
-				})
-			}
-		}
-
-		switch ui.AlertDialog(c, &a.haruhikageAlert,
-			"为什么要演奏春日影？！",
-			"「明明说好不再弹这首曲子的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
-			"对不起，我错了", "一辈子重开") {
-		case 0:
-			a.pushChat("长崎爽世", FindMember(MemberSoyorin).ColorHex, "「道歉的话，下次别再擅自演奏这首曲子了呢。」")
-		case 1:
-			a.resetGame(false)
-		}
+		a.haruhikageOverlay(c, a.paper(), baseTheme, now)
 
 		ui.Column(c).Fill().Padding(14).Gap(10).Children(func() {
 			ui.Row(c).Padding(8, 12).Radius(10).Background(t.Surface).Border(1, t.Border).
@@ -535,8 +498,12 @@ func TestClassicCanvasWrongFlagChordLossSoyorinShieldAndHaruhikageParity(t *test
 		t.Fatalf("expected Haruhikage loss with WrongFlag and drama overlay, status=%v wrong=%v intro=%v",
 			h.canvasApp.game.Status, h.canvasApp.game.Cell(0, 1).WrongFlag, h.canvasApp.haruhikageIntro)
 	}
+	if _, ok := h.canvasTester.Find("春日影演出遮罩"); !ok {
+		t.Fatal("expected Haruhikage overlay mounted on frame 0 on classic canvas")
+	}
+	h.advance(haruhikageBeatDelay+20*time.Millisecond, "haruhikage-half-beat")
 	if !h.canvasTester.HasText("……为什么要演奏春日影？！") {
-		t.Fatal("expected Haruhikage overlay text on classic canvas")
+		t.Fatal("expected Haruhikage overlay text after half-beat on classic canvas")
 	}
 
 	// Skip overlay -> AlertDialog -> dismiss keeping StatusLost.
