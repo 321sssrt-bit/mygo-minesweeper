@@ -58,6 +58,8 @@ type appOptions struct {
 	Seed      uint64
 	Prefs     *prefs
 	SavePrefs func(prefs) error
+	// Sound defaults to silence; only the desktop entry point plays aloud.
+	Sound soundOutput
 }
 
 type memeUnlockNotice struct {
@@ -83,6 +85,7 @@ type minesweeperApp struct {
 	haruhikageIntro bool
 
 	savePrefsFn         func(prefs) error
+	sound               soundOutput
 	systemReduceMotion  bool
 	motionReducedActive bool
 	windowActive        bool
@@ -96,6 +99,8 @@ type minesweeperApp struct {
 	unlockedMemes        map[string]bool
 	memeUnlockLog        []memeUnlockNotice
 	chatLog              []chatMessage
+	chatPosted           int
+	chatHeard            int
 	seed                 uint64
 	board                *boardView
 	lastTick             time.Time
@@ -134,6 +139,7 @@ func newMinesweeperAppWith(opts appOptions) *minesweeperApp {
 		modeIdx:         0,
 		memberID:        MemberTomori,
 		savePrefsFn:     opts.SavePrefs,
+		sound:           opts.Sound,
 		windowActive:    true,
 		desktopFocused:  true,
 		bestTimes:       make(map[string]int),
@@ -145,12 +151,15 @@ func newMinesweeperAppWith(opts appOptions) *minesweeperApp {
 		classicHoverRow: -1,
 		classicHoverCol: -1,
 	}
+	if app.sound == nil {
+		app.sound = silentSound{}
+	}
 	app.applyPrefs(p)
 	app.resetGame(true)
 	return app
 }
 
-func newDesktopApp(userConfigDir func() (string, error), save func(string, prefs) error) *minesweeperApp {
+func newDesktopApp(userConfigDir func() (string, error), save func(string, prefs) error, sound soundOutput) *minesweeperApp {
 	p := defaultPrefs()
 	var persist func(prefs) error
 	if dir, err := userConfigDir(); err == nil && dir != "" {
@@ -162,6 +171,7 @@ func newDesktopApp(userConfigDir func() (string, error), save func(string, prefs
 	return newMinesweeperAppWith(appOptions{
 		Prefs:     &p,
 		SavePrefs: persist,
+		Sound:     sound,
 	})
 }
 
@@ -194,6 +204,10 @@ func (a *minesweeperApp) updatePrefs(fn func(*prefs)) bool {
 		return false
 	}
 	a.applyPrefs(next)
+	if next.DarkMode != prev.DarkMode || next.Motion != prev.Motion ||
+		next.SoundEnabled != prev.SoundEnabled || next.AllowQuestion != prev.AllowQuestion {
+		a.playSound(SoundToggle, 1, 0)
+	}
 	if a.savePrefsFn != nil {
 		_ = a.savePrefsFn(next)
 	}
@@ -254,9 +268,24 @@ func (a *minesweeperApp) hasOpenPopover() bool {
 	return a.activePopover != popoverNone
 }
 
-func (a *minesweeperApp) openPopover(kind appPopover) {
+// setActivePopover is the one place a popover opens or closes, so each
+// change rustles its paper once.
+func (a *minesweeperApp) setActivePopover(kind appPopover) {
+	a.syncSetlistPopover()
+	prev := a.activePopover
 	a.activePopover = kind
 	a.setlistOpen = kind == popoverSetlist
+	switch {
+	case kind == prev:
+	case kind == popoverNone:
+		a.playSound(SoundPopoverClose, 1, 0)
+	default:
+		a.playSound(SoundPopoverOpen, 1, 0)
+	}
+}
+
+func (a *minesweeperApp) openPopover(kind appPopover) {
+	a.setActivePopover(kind)
 	a.restorePopover = popoverNone
 }
 
@@ -278,8 +307,7 @@ func (a *minesweeperApp) closePopover(kind appPopover, restoreFocus bool) {
 		return
 	}
 	if a.activePopover == kind {
-		a.activePopover = popoverNone
-		a.setlistOpen = false
+		a.setActivePopover(popoverNone)
 	}
 	if restoreFocus {
 		a.restorePopover = kind
@@ -287,8 +315,7 @@ func (a *minesweeperApp) closePopover(kind appPopover, restoreFocus bool) {
 }
 
 func (a *minesweeperApp) dismissPopovers() {
-	a.activePopover = popoverNone
-	a.setlistOpen = false
+	a.setActivePopover(popoverNone)
 	a.restorePopover = popoverNone
 }
 
@@ -392,12 +419,14 @@ func (a *minesweeperApp) pushChat(speaker, colorHex, text string) {
 		ColorHex: colorHex,
 		Text:     text,
 	})
+	a.chatPosted++
 	if len(a.chatLog) > 18 {
 		a.chatLog = a.chatLog[len(a.chatLog)-18:]
 	}
 }
 
 func (a *minesweeperApp) resetGame(initial bool) {
+	posted, closing := a.chatPosted, a.hasOpenPopover()
 	prevDiffID := ""
 	if a.game != nil {
 		prevDiffID = a.game.Difficulty.ID
@@ -451,6 +480,11 @@ func (a *minesweeperApp) resetGame(initial bool) {
 		a.pushChat("MyGO!!!!! 决斗室", hexOf(bandColor), "同盘限时抢地：开安全格 +1，踩雷 −100；手动插旗终局结算对错，不提前露底。")
 	}
 	a.pushChat(m.Name, m.ColorHex, a.quote)
+	// The opening notes are on the wall before anyone listens, and a restart
+	// that puts a popover away makes that sound for its notes.
+	if initial || closing {
+		a.chatVoicedSince(posted)
+	}
 }
 
 func (a *minesweeperApp) enqueueRipple(now time.Time, wave []RevealWaveEntry) {
@@ -698,6 +732,7 @@ func (a *minesweeperApp) activeTheme() *ui.Theme {
 func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string) {
 	d := a.game.duel
 	a.duelEnded = true
+	posted, closing := a.chatPosted, a.hasOpenPopover()
 	a.dismissPopovers()
 	a.pushChat("决斗结算", hexOf(goldHighlighter), result)
 	a.applyQuote(d.QuoteEvent)
@@ -705,6 +740,9 @@ func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string)
 	if slices.Contains(d.NewMemes, MemeHaruhikage) {
 		a.haruhikageIntro = true
 		a.haruhikageIntroStart = now
+	}
+	if closing {
+		a.chatVoicedSince(posted)
 	}
 	c.ToastAction(result, "再战一局", func() { a.resetGame(false) })
 }
@@ -1055,15 +1093,26 @@ func (a *minesweeperApp) duelHUD(c *ui.Context) {
 	}
 }
 
+func (a *minesweeperApp) toggleFlagMode() {
+	a.flagMode = !a.flagMode
+	a.playSound(SoundToggle, 1, 0)
+}
+
 func (a *minesweeperApp) view(c *ui.Context) {
 	now := c.Now()
+	defer a.flushChatNote()
 	a.syncWindowFocus(c)
 	a.systemReduceMotion = c.Preferences().ReduceMotion
 	a.syncMotionState(a.reducedMotion(c))
 	if a.pendingResult.Kind != ActionNoop {
 		res := a.pendingResult
 		a.pendingResult = ActionResult{}
+		// Only canvas cell moves queue a result; their foley already played.
+		posted := a.chatPosted
 		a.handleAction(c, res, now)
+		if _, voiced := cellActionSound(res.Kind); voiced {
+			a.chatVoicedSince(posted)
+		}
 	}
 	if a.isDuel() {
 		a.tickDuel(c, now)
@@ -1080,7 +1129,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		a.resetGame(false)
 	}
 	if c.Shortcut(0, ui.KeyF) {
-		a.flagMode = !a.flagMode
+		a.toggleFlagMode()
 	}
 	if c.Shortcut(0, ui.KeyE) {
 		res := a.game.UseSkill()
@@ -1227,12 +1276,17 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			a.setlistControl(c, pal, t)
 
 			ui.ToggleGroup(c, func() {
-				ui.Toggle(c, &a.flagMode, "插旗模式 (F)").Tooltip("开启后左键直接贴创可贴插旗")
+				flagMode := a.flagMode
+				if ui.Toggle(c, &flagMode, "插旗模式 (F)").Tooltip("开启后左键直接贴创可贴插旗").Changed() {
+					a.toggleFlagMode()
+				}
 				allowQuestion := a.allowQuestion
 				if ui.Toggle(c, &allowQuestion, "? 标记").Tooltip("右键循环加入「？」不确定标记").Changed() {
 					a.updatePrefs(func(p *prefs) { p.AllowQuestion = allowQuestion })
 				}
-				ui.Toggle(c, &a.showMemes, "名场面图鉴").Tooltip("展开或收起已解锁的 MyGO!!!!! 名场面")
+				if ui.Toggle(c, &a.showMemes, "名场面图鉴").Tooltip("展开或收起已解锁的 MyGO!!!!! 名场面").Changed() {
+					a.playSound(SoundToggle, 1, 0)
+				}
 			}).Label("工具开关")
 		})
 
@@ -1634,19 +1688,9 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									}
 
 									if tile.RightClicked() {
-										res := a.game.ToggleFlag(row, col, a.allowQuestion)
-										a.handleAction(c, res, now)
+										a.cellMove(c, row, col, 1, now)
 									} else if tile.Clicked() {
-										if a.flagMode {
-											res := a.game.ToggleFlag(row, col, a.allowQuestion)
-											a.handleAction(c, res, now)
-										} else if cell.Revealed {
-											res := a.game.Chord(row, col)
-											a.handleAction(c, res, now)
-										} else {
-											res := a.game.Reveal(row, col)
-											a.handleAction(c, res, now)
-										}
+										a.cellMove(c, row, col, 0, now)
 									}
 								}
 							})
@@ -1667,7 +1711,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 }
 
 func main() {
-	app := newDesktopApp(os.UserConfigDir, savePrefs)
+	app := newDesktopApp(os.UserConfigDir, savePrefs, newDesktopSound(NewSoundBank()))
 	mygo.App.WhenReady(func() {
 		w := mygo.NewWindow(mygo.WindowOptions{
 			Title:           "MyGO!!!!! 迷子扫雷",
