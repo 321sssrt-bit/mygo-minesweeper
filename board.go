@@ -444,11 +444,43 @@ func containsIndex(list []int, target int) bool {
 	return false
 }
 
+type cellFlagSnapshot struct {
+	idx     int
+	flagged bool
+	shield  bool
+}
+
 // applyCellAction applies a player's click on a cell, button 0 left and 1
 // right, on either board surface, and plays its stationery foley: a 旗's
 // bandage at once, a reveal's slips along its wave.
 func (a *minesweeperApp) applyCellAction(row, col, button int, now time.Time) ActionResult {
+	var before [9]cellFlagSnapshot
+	beforeCount := 0
+	for dr := -1; dr <= 1; dr++ {
+		for dc := -1; dc <= 1; dc++ {
+			if c := a.game.Cell(row+dr, col+dc); c != nil {
+				before[beforeCount] = cellFlagSnapshot{
+					idx:     c.Row*a.game.Cols + c.Col,
+					flagged: c.Flagged,
+					shield:  c.ShieldSaved,
+				}
+				beforeCount++
+			}
+		}
+	}
 	res := a.resolveCellAction(row, col, button)
+	if res.Kind != ActionNoop && res.Kind != ActionWon && !a.motionReducedActive {
+		for i := range beforeCount {
+			snap := before[i]
+			cur := &a.game.Cells[snap.idx]
+			switch {
+			case !snap.flagged && cur.Flagged:
+				a.enqueueBandage(now, snap.idx, bandageBounce, cur.ShieldSaved)
+			case snap.flagged && !cur.Flagged:
+				a.enqueueBandage(now, snap.idx, bandagePeel, snap.shield)
+			}
+		}
+	}
 	if id, ok := cellActionSound(res.Kind); ok {
 		pan := columnPan(col, a.game.Cols)
 		if id == SoundPaperLift {
@@ -517,6 +549,13 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 	ui.Column(c.Key(stageKey)).Grow(1).FillWidth().Children(func() {
 		boardBox := ui.Box(c.Key(boardKey)).Grow(1).FillWidth().Label(label).
 			Cursor(ui.CursorPointer).Focusable()
+		if v.HoverRow >= 0 && v.HoverCol >= 0 {
+			if hoverCell := a.game.Cell(v.HoverRow, v.HoverCol); hoverCell != nil {
+				if val := cellAccessValue(hoverCell); val != "" {
+					boardBox.Value(val).Description(val)
+				}
+			}
+		}
 		hovered := boardBox.Hovered()
 		if v.WasHovered && !hovered && !v.Pressed {
 			v.HasHover = false
@@ -589,7 +628,11 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				if !ok {
 					return true
 				}
-				result := a.applyCellAction(row, col, button, ev.Time)
+				actionNow := ev.Time
+				if actionNow.IsZero() {
+					actionNow = c.Now()
+				}
+				result := a.applyCellAction(row, col, button, actionNow)
 				if result.Kind != ActionNoop {
 					a.pendingResult = result
 					a.pendingRow = row
@@ -672,6 +715,28 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	var numberW, numberH [len(cellDigits)]float32
 	var questionW, questionH float32
 
+	type liftingSlipDraw struct {
+		tile  ui.Rect
+		idx   int
+		peelT float32
+	}
+	type bouncingBandageDraw struct {
+		tile   ui.Rect
+		prop   *ui.SVG
+		scale  float32
+		rotDeg float32
+	}
+	type peelingBandageDraw struct {
+		tile   ui.Rect
+		shield bool
+		peelT  float32
+	}
+	var liftingSlips []liftingSlipDraw
+	var bouncingBandages []bouncingBandageDraw
+	var peelingBandages []peelingBandageDraw
+	hasRipples := !a.motionReducedActive && len(a.ripples) > 0
+	hasBandages := !a.motionReducedActive && len(a.bandages) > 0
+
 	p.Clip(r, 8, func() {
 		// The canvas is graph paper, as under the classic grid.
 		p.Fill(r, pal.Board, 8)
@@ -739,7 +804,26 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						} else if hoverHint.Kind == HintNone && isHovered {
 							bg = pal.Slip.Mix(pal.Sheet, 0.45)
 						}
-						paintSlip(p, tile, radius, bg, pal.SlipShade, outline, prop, dot, detail)
+						drawProp := prop
+						if hasBandages && detail {
+							if bAnim, ok := a.bandageAnimAt(idx, now); ok {
+								switch {
+								case bAnim.Kind == bandageBounce && cell.Flagged && !cell.WrongFlag && prop != nil:
+									bScale, bRot := bandageBounceTransform(now.Sub(bAnim.Start))
+									bouncingBandages = append(bouncingBandages, bouncingBandageDraw{
+										tile: tile, prop: prop, scale: bScale, rotDeg: bRot,
+									})
+									drawProp = nil
+								case bAnim.Kind == bandagePeel && !cell.Flagged && !cell.Revealed:
+									peelingBandages = append(peelingBandages, peelingBandageDraw{
+										tile:   tile,
+										shield: bAnim.Shield,
+										peelT:  float32(now.Sub(bAnim.Start)) / float32(bandagePeelDuration),
+									})
+								}
+							}
+						}
+						paintSlip(p, tile, radius, bg, pal.SlipShade, outline, drawProp, dot, detail)
 						if detail && question {
 							mark := ui.Span{Text: "?", Size: numberSize, Weight: 700, Color: pal.Graphite}
 							if questionW == 0 {
@@ -750,7 +834,25 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						continue
 					}
 
+					var peel tilePeelState
+					if hasRipples {
+						peel = a.tilePeelAt(idx, now)
+					}
+					if peel.stage == tilePeelCovered {
+						bg := pal.Slip
+						if hoverHint.Kind == HintNone && isHovered {
+							bg = pal.Slip.Mix(pal.Sheet, 0.45)
+						}
+						paintSlip(p, tile, radius, bg, pal.SlipShade, ui.Color{}, nil, ui.Color{}, detail)
+						continue
+					}
+					washActive := peel.stage == tilePeelLifting || peel.stage == tilePeelWashOnly
+
 					if classic {
+						washCol := bandColor
+						if peel.washColor.A > 0 {
+							washCol = peel.washColor
+						}
 						switch {
 						case cell.Exploded:
 							p.Fill(tile, pal.Boom, radius)
@@ -758,14 +860,14 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						case cell.Adjacent > 0:
 							if isHintCenter {
 								p.Fill(tile, hintFill.Alpha(0.38), radius)
-							} else if k, ok := a.rippleAlphaAt(idx, now); ok {
-								p.Fill(tile, bandColor.Alpha(0.22*k), radius)
+							} else if washActive {
+								p.Fill(tile, washCol.Alpha(0.22*peel.washAlpha), radius)
 							} else if isHovered {
 								p.Fill(tile, pal.Ink.Alpha(0.05), radius)
 							}
 						default:
-							if k, ok := a.rippleAlphaAt(idx, now); ok {
-								p.Fill(tile, bandColor.Alpha(0.26*k), radius)
+							if washActive {
+								p.Fill(tile, washCol.Alpha(0.26*peel.washAlpha), radius)
 							}
 						}
 					} else {
@@ -780,12 +882,14 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 							if v.Cell >= 15 {
 								p.Stroke(tile, hintStroke, radius, 1)
 							}
-						}
-						if k, ok := a.rippleAlphaAt(idx, now); ok {
+						} else if washActive {
 							ripColor := duelOwnerColor(cell.Owner)
-							p.Fill(tile, ripColor.Alpha(0.36*k), radius)
+							if peel.washColor.A > 0 {
+								ripColor = peel.washColor
+							}
+							p.Fill(tile, ripColor.Alpha(0.36*peel.washAlpha), radius)
 							if v.Cell >= 15 {
-								p.Stroke(tile, ripColor.Alpha(0.4+0.6*k), radius, 1)
+								p.Stroke(tile, ripColor.Alpha(0.4+0.6*peel.washAlpha), radius, 1)
 							}
 						}
 					}
@@ -798,6 +902,9 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 								ink = pal.BoomInk
 							}
 							paintCellDot(p, tile, ink, 0.5)
+						}
+						if peel.stage == tilePeelLifting {
+							liftingSlips = append(liftingSlips, liftingSlipDraw{tile: tile, idx: idx, peelT: peel.peelT})
 						}
 						continue
 					}
@@ -814,7 +921,38 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						}
 						p.RichText(tile.X+(tile.W-numberW[n])/2, tile.Y+(tile.H-numberH[n])/2, 0, digit)
 					}
+					if peel.stage == tilePeelLifting {
+						liftingSlips = append(liftingSlips, liftingSlipDraw{tile: tile, idx: idx, peelT: peel.peelT})
+					} else if hasBandages && detail {
+						// Unflagging a duel Soyorin shield leaves cell.Revealed == true while
+						// peeling the golden band-aid off the revealed mine.
+						if bAnim, ok := a.bandageAnimAt(idx, now); ok && bAnim.Kind == bandagePeel {
+							peelingBandages = append(peelingBandages, peelingBandageDraw{
+								tile:   tile,
+								shield: bAnim.Shield,
+								peelT:  float32(now.Sub(bAnim.Start)) / float32(bandagePeelDuration),
+							})
+						}
+					}
 				}
+			}
+			for _, ls := range liftingSlips {
+				paintPeelOverlay(p, ls.tile, radius, pal.Slip, pal.SlipShade, 0, ls.idx, true, ls.peelT, detail)
+			}
+			for _, bb := range bouncingBandages {
+				pr := propRect(bb.tile)
+				cx, cy := pr.X+pr.W/2, pr.Y+pr.H/2
+				xf := ui.Scaling(bb.scale, bb.scale).Then(ui.Rotation(bb.rotDeg))
+				p.Transform(xf, cx, cy, func() {
+					p.Image(bb.prop, pr, ui.Contain)
+				})
+			}
+			for _, pb := range peelingBandages {
+				bmp := art.FlagBitmap
+				if pb.shield {
+					bmp = art.ShieldBitmap
+				}
+				paintBandagePeel(p, pb.tile, bmp, 0.86, pb.peelT)
 			}
 			if _, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {
 				x := r.X + float32(v.HoverCol-4)*v.Cell - v.X
@@ -843,7 +981,8 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		})
 
 		a.pruneRipples(now)
-		if len(a.ripples) > 0 {
+		a.pruneBandages(now)
+		if len(a.ripples) > 0 || len(a.bandages) > 0 {
 			p.AnimationFrame()
 		}
 		if count, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {
@@ -879,18 +1018,6 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		p.Fill(ui.Rect{X: r.X + 8, Y: r.Y + r.H - 36, W: cw + 12, H: ch + 8}, pal.Sheet.Alpha(0.92), 6)
 		p.RichText(r.X+14, r.Y+r.H-32, 0, caption)
 	})
-}
-
-func (a *minesweeperApp) rippleAlphaAt(idx int, now time.Time) (float32, bool) {
-	rip, ok := a.ripples[idx]
-	if !ok {
-		return 0, false
-	}
-	elapsed := now.Sub(rip.Start)
-	if elapsed < rip.Delay || elapsed >= rip.Delay+rippleDuration {
-		return 0, false
-	}
-	return 1 - float32(elapsed-rip.Delay)/float32(rippleDuration), true
 }
 
 // cellDigits are the numbers a revealed cell can show, by count.
