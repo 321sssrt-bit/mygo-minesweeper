@@ -614,7 +614,13 @@ func TestDuelHoverSyncsAfterZoomAndDrag(t *testing.T) {
 	if app.board.LastHoverHint.Kind != HintClaimable || app.board.LastHoverHint.Center != 21*60+21 {
 		t.Fatalf("expected initial hover on claimable (21,21), got %+v", app.board.LastHoverHint)
 	}
+	beforeZoomCell := app.board.Cell
 	tt.Key(ui.Ctrl, ui.KeyEqual)
+	tt.Advance(60 * time.Millisecond)
+	tt.Advance(200 * time.Millisecond)
+	if app.board.Cell <= beforeZoomCell {
+		t.Fatalf("Ctrl+= did not zoom duel canvas: before=%.2f after=%.2f", beforeZoomCell, app.board.Cell)
+	}
 	zoomRow, zoomCol, ok := app.board.cellAt(app.game, px-r.X, py-r.Y)
 	if !ok {
 		t.Fatal("pointer out of bounds after zoom")
@@ -881,21 +887,50 @@ func TestDuelRecenterUsesBoardCenter(t *testing.T) {
 
 			wantRow, wantCol := tc.rows/2, tc.cols/2
 
-			// Pan to top-left corner, then click "回到中心".
+			// Pan to top-left corner, then click "回到中心" (3-stage glide).
 			app.board.center(app.game, 0, 0)
 			tt.Frame()
 			if err := tt.Click("回到中心"); err != nil {
 				t.Fatalf("failed clicking 回到中心: %v", err)
+			}
+			if !app.board.gliding() {
+				t.Fatal("button recenter did not start camera glide")
+			}
+			if r0, c0, ok0 := app.board.cellAt(app.game, r.W/2, r.H/2); ok0 && r0 == wantRow && c0 == wantCol {
+				t.Fatalf("button recenter snapped immediately on frame 0 to (%d,%d)", r0, c0)
+			}
+			x0, y0 := app.board.X, app.board.Y
+			tt.Advance(60 * time.Millisecond)
+			if !app.board.gliding() || (app.board.X == x0 && app.board.Y == y0) {
+				t.Fatalf("button recenter mid-glide not in transition: start=(%v,%v) mid=(%v,%v) gliding=%v",
+					x0, y0, app.board.X, app.board.Y, app.board.gliding())
+			}
+			tt.Advance(200 * time.Millisecond)
+			if app.board.gliding() {
+				t.Fatal("button recenter still gliding after 260ms")
 			}
 			row, col, ok := app.board.cellAt(app.game, r.W/2, r.H/2)
 			if !ok || row != wantRow || col != wantCol {
 				t.Fatalf("button recenter got (%d,%d) ok=%v, want (%d,%d)", row, col, ok, wantRow, wantCol)
 			}
 
-			// Pan to bottom-right corner, then press Ctrl+0.
+			// Pan to bottom-right corner, then press Ctrl+0 (3-stage glide).
 			app.board.center(app.game, tc.rows-1, tc.cols-1)
 			tt.Frame()
 			tt.Key(ui.Ctrl, ui.Key0)
+			if !app.board.gliding() {
+				t.Fatal("Ctrl+0 recenter did not start camera glide")
+			}
+			x0, y0 = app.board.X, app.board.Y
+			tt.Advance(60 * time.Millisecond)
+			if !app.board.gliding() || (app.board.X == x0 && app.board.Y == y0) {
+				t.Fatalf("Ctrl+0 recenter mid-glide not in transition: start=(%v,%v) mid=(%v,%v) gliding=%v",
+					x0, y0, app.board.X, app.board.Y, app.board.gliding())
+			}
+			tt.Advance(200 * time.Millisecond)
+			if app.board.gliding() {
+				t.Fatal("Ctrl+0 recenter still gliding after 260ms")
+			}
 			row, col, ok = app.board.cellAt(app.game, r.W/2, r.H/2)
 			if !ok || row != wantRow || col != wantCol {
 				t.Fatalf("Ctrl+0 recenter got (%d,%d) ok=%v, want (%d,%d)", row, col, ok, wantRow, wantCol)
@@ -1111,25 +1146,60 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 			}
 
 			localMini := app.board.minimapBoundsFor(app.game)
-			// Click top-left corner of minimap -> clamps to (0,0).
+			// Click top-left corner of minimap -> 3-stage glide converging to (0,0).
 			tt.ClickAt(r.X+localMini.X+1, r.Y+localMini.Y+1)
-			if app.board.X != 0 || app.board.Y != 0 {
-				t.Fatalf("minimap top-left jump did not clamp to (0,0): (%v,%v)", app.board.X, app.board.Y)
+			if !app.board.gliding() || (app.board.X == 0 && app.board.Y == 0) {
+				t.Fatalf("minimap top-left jump did not glide: (%v,%v) gliding=%v", app.board.X, app.board.Y, app.board.gliding())
+			}
+			tlX0, tlY0 := app.board.X, app.board.Y
+			tt.Advance(60 * time.Millisecond)
+			if !app.board.gliding() || app.board.X >= tlX0 || app.board.Y >= tlY0 {
+				t.Fatalf("minimap top-left mid-glide not in transition: start=(%v,%v) mid=(%v,%v) gliding=%v",
+					tlX0, tlY0, app.board.X, app.board.Y, app.board.gliding())
+			}
+			tt.Advance(200 * time.Millisecond)
+			if app.board.gliding() || app.board.X != 0 || app.board.Y != 0 {
+				t.Fatalf("minimap top-left jump did not converge to (0,0): (%v,%v) gliding=%v", app.board.X, app.board.Y, app.board.gliding())
 			}
 
-			// Click bottom-right corner of minimap -> clamps to (maxX, maxY).
+			// Click bottom-right corner of minimap -> 3-stage glide converging to (maxX, maxY).
 			tt.ClickAt(r.X+localMini.X+localMini.W-1, r.Y+localMini.Y+localMini.H-1)
 			wantMaxX := max(float32(0), float32(tc.cols)*app.board.Cell-app.board.Width)
 			wantMaxY := max(float32(0), float32(tc.rows)*app.board.Cell-app.board.Height)
-			if math.Abs(float64(app.board.X-wantMaxX)) > 0.5 || math.Abs(float64(app.board.Y-wantMaxY)) > 0.5 {
-				t.Fatalf("minimap bottom-right jump got (%v,%v), want (%v,%v)", app.board.X, app.board.Y, wantMaxX, wantMaxY)
+			if !app.board.gliding() || (math.Abs(float64(app.board.X-wantMaxX)) <= 0.5 && math.Abs(float64(app.board.Y-wantMaxY)) <= 0.5) {
+				t.Fatalf("minimap bottom-right jump did not glide: (%v,%v) want=(%v,%v) gliding=%v",
+					app.board.X, app.board.Y, wantMaxX, wantMaxY, app.board.gliding())
+			}
+			brX0, brY0 := app.board.X, app.board.Y
+			tt.Advance(60 * time.Millisecond)
+			if !app.board.gliding() || app.board.X <= brX0 || app.board.Y <= brY0 {
+				t.Fatalf("minimap bottom-right mid-glide not in transition: start=(%v,%v) mid=(%v,%v) gliding=%v",
+					brX0, brY0, app.board.X, app.board.Y, app.board.gliding())
+			}
+			tt.Advance(200 * time.Millisecond)
+			if app.board.gliding() || math.Abs(float64(app.board.X-wantMaxX)) > 0.5 || math.Abs(float64(app.board.Y-wantMaxY)) > 0.5 {
+				t.Fatalf("minimap bottom-right jump got (%v,%v) gliding=%v, want (%v,%v)",
+					app.board.X, app.board.Y, app.board.gliding(), wantMaxX, wantMaxY)
 			}
 
-			// Click interior target (rows/3, cols*2/3) on minimap -> centers viewport on that exact cell.
+			// Click interior target (rows/3, cols*2/3) on minimap -> 3-stage glide centering on that cell.
 			targetRow, targetCol := tc.rows/3, tc.cols*2/3
 			clickX := r.X + localMini.X + (float32(targetCol)+0.5)/float32(tc.cols)*localMini.W
 			clickY := r.Y + localMini.Y + (float32(targetRow)+0.5)/float32(tc.rows)*localMini.H
 			tt.ClickAt(clickX, clickY)
+			if !app.board.gliding() {
+				t.Fatalf("minimap jump to (%d,%d) did not glide", targetRow, targetCol)
+			}
+			inX0, inY0 := app.board.X, app.board.Y
+			tt.Advance(60 * time.Millisecond)
+			if !app.board.gliding() || (app.board.X == inX0 && app.board.Y == inY0) {
+				t.Fatalf("minimap jump to (%d,%d) mid-glide not in transition: start=(%v,%v) mid=(%v,%v) gliding=%v",
+					targetRow, targetCol, inX0, inY0, app.board.X, app.board.Y, app.board.gliding())
+			}
+			tt.Advance(200 * time.Millisecond)
+			if app.board.gliding() {
+				t.Fatalf("minimap jump to (%d,%d) still gliding after 260ms", targetRow, targetCol)
+			}
 			gotRow, gotCol, ok := app.board.cellAt(app.game, r.W/2, r.H/2)
 			if !ok || absInt(gotRow-targetRow) > 1 || absInt(gotCol-targetCol) > 1 {
 				t.Fatalf("minimap jump to (%d,%d) landed at (%d,%d) ok=%v", targetRow, targetCol, gotRow, gotCol, ok)
@@ -1143,9 +1213,13 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 				}
 			}
 
-			// Zoom-out then Ctrl+0 recenters cleanly.
+			// Zoom-out then Ctrl+0 glides cleanly to board center with zoomed-out cell size.
 			tt.Key(ui.Ctrl, ui.KeyMinus)
 			tt.Key(ui.Ctrl, ui.Key0)
+			tt.Advance(260 * time.Millisecond)
+			if app.board.gliding() || app.board.Cell >= 42 {
+				t.Fatalf("Ctrl+- then Ctrl+0 did not converge: cell=%v gliding=%v", app.board.Cell, app.board.gliding())
+			}
 			reRow, reCol, ok := app.board.cellAt(app.game, r.W/2, r.H/2)
 			if !ok || reRow != tc.rows/2 || reCol != tc.cols/2 {
 				t.Fatalf("Ctrl+0 recenter got (%d,%d) ok=%v, want (%d,%d)", reRow, reCol, ok, tc.rows/2, tc.cols/2)

@@ -592,25 +592,54 @@ func TestClassicCanvasPanZoomMinimapAndBoundsSafety(t *testing.T) {
 		t.Fatal("right-click pressed inside minimap and released 3px outside leaked to adjacent cell")
 	}
 
-	// Left-click on minimap in normal mode jumps viewport without revealing cells underneath.
+	// Left-click on minimap in normal mode glides viewport smoothly without revealing cells underneath.
 	tt.ClickAt(boardRect.X+mini.X+2, boardRect.Y+mini.Y+2)
-	if app.board.X != 0 || app.board.Y != 0 {
-		t.Fatalf("minimap top-left click did not jump to (0,0): (%v,%v)", app.board.X, app.board.Y)
+	if !app.board.gliding() || (app.board.X == 0 && app.board.Y == 0) {
+		t.Fatalf("minimap top-left click should start a glide instead of snapping: gliding=%v pos=(%v,%v)",
+			app.board.gliding(), app.board.X, app.board.Y)
 	}
 	if app.game.FirstClick || app.game.Moves != 0 || app.game.RevealedSafe != 0 {
 		t.Fatal("left-click on minimap leaked reveal")
 	}
+	startX, startY := app.board.X, app.board.Y
+	tt.Advance(60 * time.Millisecond)
+	if !app.board.gliding() || app.board.X >= startX || app.board.Y >= startY || (app.board.X == 0 && app.board.Y == 0) {
+		t.Fatalf("minimap top-left mid-glide not in transition: start=(%v,%v) mid=(%v,%v) gliding=%v",
+			startX, startY, app.board.X, app.board.Y, app.board.gliding())
+	}
+	tt.Advance(200 * time.Millisecond)
+	if app.board.gliding() || app.board.X != 0 || app.board.Y != 0 {
+		t.Fatalf("minimap top-left click did not converge to (0,0): (%v,%v) gliding=%v", app.board.X, app.board.Y, app.board.gliding())
+	}
+	if app.game.FirstClick || app.game.Moves != 0 || app.game.RevealedSafe != 0 {
+		t.Fatal("left-click on minimap leaked reveal after glide")
+	}
 
-	// Left-click on minimap in flagMode jumps viewport without flagging cells underneath.
+	// Left-click on minimap in flagMode glides viewport smoothly without flagging cells underneath.
 	tt.Key(0, ui.KeyF)
 	if !app.flagMode {
 		t.Fatal("expected flagMode=true")
 	}
 	tt.ClickAt(boardRect.X+mini.X+mini.W-2, boardRect.Y+mini.Y+mini.H-2)
 	wantMaxX, wantMaxY := app.board.panLimit(app.game)
-	if abs32(app.board.X-wantMaxX) > 0.5 || abs32(app.board.Y-wantMaxY) > 0.5 {
-		t.Fatalf("minimap bottom-right click in flagMode did not jump to max (%v,%v): got (%v,%v)",
-			wantMaxX, wantMaxY, app.board.X, app.board.Y)
+	if !app.board.gliding() || (abs32(app.board.X-wantMaxX) <= 0.5 && abs32(app.board.Y-wantMaxY) <= 0.5) {
+		t.Fatalf("minimap bottom-right click should start a glide: pos=(%v,%v) want=(%v,%v) gliding=%v",
+			app.board.X, app.board.Y, wantMaxX, wantMaxY, app.board.gliding())
+	}
+	if app.game.FlagsPlaced != 0 || app.game.FirstClick {
+		t.Fatal("left-click on minimap in flagMode leaked flag/reveal on frame 0")
+	}
+	brStartX, brStartY := app.board.X, app.board.Y
+	tt.Advance(60 * time.Millisecond)
+	if !app.board.gliding() || app.board.X <= brStartX || app.board.Y <= brStartY ||
+		(abs32(app.board.X-wantMaxX) <= 0.5 && abs32(app.board.Y-wantMaxY) <= 0.5) {
+		t.Fatalf("minimap bottom-right mid-glide not in transition: start=(%v,%v) mid=(%v,%v) want=(%v,%v) gliding=%v",
+			brStartX, brStartY, app.board.X, app.board.Y, wantMaxX, wantMaxY, app.board.gliding())
+	}
+	tt.Advance(200 * time.Millisecond)
+	if app.board.gliding() || abs32(app.board.X-wantMaxX) > 0.5 || abs32(app.board.Y-wantMaxY) > 0.5 {
+		t.Fatalf("minimap bottom-right click in flagMode did not converge to max (%v,%v): got (%v,%v) gliding=%v",
+			wantMaxX, wantMaxY, app.board.X, app.board.Y, app.board.gliding())
 	}
 	// Bottom-right corner cell (79,79) must sit clear of the minimap after jumping there.
 	cornerX := (float32(app.game.Cols)-0.5)*app.board.Cell - app.board.X
@@ -1595,6 +1624,19 @@ func TestClassicMinimapShowsOwnProgressOnlyAndClickToJump(t *testing.T) {
 				if bigApp.game.FirstClick || bigApp.game.Moves != 0 || bigApp.game.FlagsPlaced != 0 {
 					t.Fatalf("minimap jump to %v leaked board action", tgt)
 				}
+				if !bigApp.board.gliding() {
+					t.Fatalf("minimap jump to %v did not start camera glide", tgt)
+				}
+				x0, y0 := bigApp.board.X, bigApp.board.Y
+				bigTT.Advance(60 * time.Millisecond)
+				if !bigApp.board.gliding() || (bigApp.board.X == x0 && bigApp.board.Y == y0) {
+					t.Fatalf("minimap jump to %v not in mid-glide transition: start=(%v,%v) mid=(%v,%v) gliding=%v",
+						tgt, x0, y0, bigApp.board.X, bigApp.board.Y, bigApp.board.gliding())
+				}
+				bigTT.Advance(200 * time.Millisecond)
+				if bigApp.board.gliding() {
+					t.Fatalf("minimap jump to %v still gliding after 260ms", tgt)
+				}
 				if tgt[0] > 0 && tgt[0] < bigApp.game.Rows-1 {
 					gotR, gotC, ok := bigApp.board.cellAt(bigApp.game, bigBoard.W/2, bigBoard.H/2)
 					if !ok || absInt(gotR-tgt[0]) > 1 || absInt(gotC-tgt[1]) > 1 {
@@ -1654,6 +1696,7 @@ func TestClassicMinimap100x100CornersAndEdgeFlagsStayVisible(t *testing.T) {
 				}
 				cx, cy := minimapCellCenter(board, mini, g.Rows, g.Cols, g.Rows/2, g.Cols/2)
 				tt.ClickAt(cx, cy)
+				tt.Advance(260 * time.Millisecond)
 				tt.Frame()
 				img := tt.Image()
 				for _, pt := range corners {
@@ -1788,14 +1831,30 @@ func TestClassicCanvasKeyboardZoomInAppShell(t *testing.T) {
 
 	before := v.Cell
 	tt.Key(ui.Ctrl, ui.KeyEqual)
-	if v.Cell <= before {
-		t.Fatalf("Ctrl+= left cell size at %.2f, want larger than %.2f", v.Cell, before)
+	if !v.gliding() || v.Cell != before {
+		t.Fatalf("Ctrl+= should start a zoom glide from %.2f: cell=%.2f gliding=%v", before, v.Cell, v.gliding())
+	}
+	tt.Advance(60 * time.Millisecond)
+	if !v.gliding() || v.Cell <= before {
+		t.Fatalf("Ctrl+= mid-glide cell=%.2f gliding=%v, want > %.2f and still gliding", v.Cell, v.gliding(), before)
+	}
+	tt.Advance(200 * time.Millisecond)
+	if v.gliding() || v.Cell <= before {
+		t.Fatalf("Ctrl+= left cell size at %.2f (gliding=%v), want converged larger than %.2f", v.Cell, v.gliding(), before)
 	}
 	zoomed := v.Cell
 	tt.Key(ui.Ctrl, ui.KeyMinus)
 	tt.Key(ui.Ctrl, ui.KeyMinus)
-	if v.Cell >= zoomed {
-		t.Fatalf("Ctrl+- left cell size at %.2f, want smaller than %.2f", v.Cell, zoomed)
+	if !v.gliding() {
+		t.Fatal("Ctrl+- should start a zoom-out glide")
+	}
+	tt.Advance(60 * time.Millisecond)
+	if !v.gliding() || v.Cell >= zoomed {
+		t.Fatalf("Ctrl+- mid-glide cell=%.2f gliding=%v, want < %.2f and still gliding", v.Cell, v.gliding(), zoomed)
+	}
+	tt.Advance(200 * time.Millisecond)
+	if v.gliding() || v.Cell >= zoomed {
+		t.Fatalf("Ctrl+- left cell size at %.2f (gliding=%v), want converged smaller than %.2f", v.Cell, v.gliding(), zoomed)
 	}
 
 	v.center(g, 0, 0)
@@ -1804,6 +1863,18 @@ func TestClassicCanvasKeyboardZoomInAppShell(t *testing.T) {
 		t.Fatal("panning to the corner left the board centre in the middle of the view")
 	}
 	tt.Key(ui.Ctrl, ui.Key0)
+	if !v.gliding() {
+		t.Fatal("Ctrl+0 should start a recenter glide")
+	}
+	x0, y0 := v.X, v.Y
+	tt.Advance(60 * time.Millisecond)
+	if !v.gliding() || (v.X == x0 && v.Y == y0) {
+		t.Fatalf("Ctrl+0 mid-glide not in transition: start=(%v,%v) mid=(%v,%v) gliding=%v", x0, y0, v.X, v.Y, v.gliding())
+	}
+	tt.Advance(200 * time.Millisecond)
+	if v.gliding() {
+		t.Fatal("Ctrl+0 still gliding after 260ms")
+	}
 	if row, col, ok := v.cellAt(g, v.Width/2, v.Height/2); !ok || row != g.Rows/2 || col != g.Cols/2 {
 		t.Fatalf("Ctrl+0 shows (%d,%d) mid-view, want the board centre (%d,%d)", row, col, g.Rows/2, g.Cols/2)
 	}

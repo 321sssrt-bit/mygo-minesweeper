@@ -54,7 +54,25 @@ func TestQAStunnedUnflag(t *testing.T) {
 
 func TestQAMinimapCenter(t *testing.T) {
 	a, tt, r := qaApp(t)
+	a.board.center(a.game, 480, 480)
+	tt.Frame()
+	x0, y0 := a.board.X, a.board.Y
 	tt.ClickAt(r.X+r.W-84, r.Y+r.H-84)
+	if a.game.FirstClick || a.game.Moves != 0 {
+		t.Fatal("minimap center click leaked reveal")
+	}
+	if !a.board.gliding() {
+		t.Fatal("minimap center click did not start camera glide")
+	}
+	tt.Advance(60 * time.Millisecond)
+	if !a.board.gliding() || (a.board.X == x0 && a.board.Y == y0) {
+		t.Fatalf("minimap center mid-glide not in transition: start=(%v,%v) mid=(%v,%v) gliding=%v",
+			x0, y0, a.board.X, a.board.Y, a.board.gliding())
+	}
+	tt.Advance(200 * time.Millisecond)
+	if a.board.gliding() {
+		t.Fatal("minimap center glide did not settle after 260ms")
+	}
 	row, col, _ := a.board.cellAt(a.game, r.W/2, r.H/2)
 	if row < 490 || row > 510 || col < 490 || col > 510 {
 		t.Fatalf("minimap center navigated to (%d,%d); offset=(%v,%v)", row, col, a.board.X, a.board.Y)

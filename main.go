@@ -245,6 +245,7 @@ func (a *minesweeperApp) syncMotionState(reduced bool) {
 		a.shakeStart = time.Time{}
 		a.shakeAmplitude = 0
 		a.shakeDuration = 0
+		a.board.finishGlide(a.game)
 	}
 }
 
@@ -1079,18 +1080,19 @@ func (a *minesweeperApp) duelHUD(c *ui.Context) {
 			ui.Badge(c, fmt.Sprintf("高松灯 %d", d.AIScore)).Background(hud.AI.Bg).TextColor(hud.AI.Text)
 			ui.Badge(c, "剩余 "+formatClock(int(d.remaining()))).Background(c.Theme().Accent.Alpha(0.18))
 		})
+		now := c.Now()
 		ui.Row(c).Gap(6).Children(func() {
 			if ui.Button(c.Key("duel-home"), "回到中心").Clicked() {
-				a.board.centerBoard(a.game)
+				a.board.glideCenterBoard(a.game, now, a.motionReducedActive)
 			}
 			if ui.Button(c.Key("duel-follow"), "定位高松灯").Clicked() && d.LastAI >= 0 {
-				a.board.center(a.game, d.LastAI/a.game.Cols, d.LastAI%a.game.Cols)
+				a.board.glideCenter(a.game, d.LastAI/a.game.Cols, d.LastAI%a.game.Cols, now, a.motionReducedActive)
 			}
 			if ui.Button(c.Key("duel-zoom-out"), "−").Label("缩小").Clicked() {
-				a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1/1.2)
+				a.board.glideZoom(a.game, a.board.Width/2, a.board.Height/2, 1/1.2, now, a.motionReducedActive)
 			}
 			if ui.Button(c.Key("duel-zoom-in"), "+").Label("放大").Clicked() {
-				a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1.2)
+				a.board.glideZoom(a.game, a.board.Width/2, a.board.Height/2, 1.2, now, a.motionReducedActive)
 			}
 		})
 	})
@@ -1167,13 +1169,13 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	}
 	if a.isDuel() || a.classicOnCanvas() {
 		if c.Shortcut(ui.Ctrl, ui.KeyEqual) {
-			a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1.15)
+			a.board.glideZoom(a.game, a.board.Width/2, a.board.Height/2, 1.15, now, a.motionReducedActive)
 		}
 		if c.Shortcut(ui.Ctrl, ui.KeyMinus) {
-			a.board.zoom(a.game, a.board.Width/2, a.board.Height/2, 1/1.15)
+			a.board.glideZoom(a.game, a.board.Width/2, a.board.Height/2, 1/1.15, now, a.motionReducedActive)
 		}
 		if c.Shortcut(ui.Ctrl, ui.Key0) {
-			a.board.centerBoard(a.game)
+			a.board.glideCenterBoard(a.game, now, a.motionReducedActive)
 		}
 	}
 
