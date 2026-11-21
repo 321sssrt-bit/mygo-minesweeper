@@ -1159,7 +1159,8 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 		t.Fatalf("opening settings popover failed: %v", err)
 	}
 	for _, want := range []string{
-		"偏好设置",
+		"笔记本设置",
+		"按 Esc 收起",
 		"画面与动效",
 		"夜间台灯",
 		"动效",
@@ -1169,13 +1170,25 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 		"声音",
 		"音效",
 		"音量",
+		"65%",
 		"扫雷操作",
 		"右键 ? 标记",
+		"右键贴过创可贴后，再点一次标上 ? 标记",
 	} {
 		if !tt.HasText(want) {
 			t.Errorf("settings popover missing copy %q", want)
 		}
 	}
+	if tt.HasText("偏好设置") {
+		t.Error("settings popover still contains retired 偏好设置 heading")
+	}
+	tt.KeyDown(ui.KeyM)
+	tt.KeyUp(ui.KeyM)
+	if !tt.HasText("已静音 · 保留 65%") {
+		t.Error("muted settings popover missing 已静音 · 保留 65% volume readout")
+	}
+	tt.KeyDown(ui.KeyM)
+	tt.KeyUp(ui.KeyM)
 	sw, ok := tt.AccessByRole(ui.RoleSwitch, "夜间台灯")
 	if !ok {
 		t.Fatal("night lamp switch missing 夜间台灯 accessibility label inside settings popover")

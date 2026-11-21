@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -113,7 +115,8 @@ func TestTopBarToolbarLayoutAndSettingsPopoverNoOverflow(t *testing.T) {
 				}
 
 				trigCollapsed, ok := tt.Access("设置")
-				if !ok || trigCollapsed.HasPopup != ui.PopupDialog || trigCollapsed.Expanded || !trigCollapsed.Focusable {
+				if !ok || trigCollapsed.HasPopup != ui.PopupDialog || trigCollapsed.Expanded || !trigCollapsed.Focusable ||
+					trigCollapsed.Description != "调整台灯、动效、声音与扫雷习惯" {
 					t.Fatalf("unexpected collapsed 设置 AccessInfo: ok=%v info=%+v", ok, trigCollapsed)
 				}
 
@@ -122,8 +125,14 @@ func TestTopBarToolbarLayoutAndSettingsPopoverNoOverflow(t *testing.T) {
 					t.Fatalf("open 设置 popover: %v", err)
 				}
 				trigOpen, ok := tt.Access("设置")
-				if !ok || !trigOpen.Expanded || len(trigOpen.Controls) == 0 || trigOpen.Controls[0] != "偏好设置" {
+				if !ok || !trigOpen.Expanded || len(trigOpen.Controls) == 0 || trigOpen.Controls[0] != "笔记本设置" {
 					t.Fatalf("unexpected open 设置 AccessInfo: ok=%v info=%+v", ok, trigOpen)
+				}
+				if !tt.HasText("笔记本设置") || tt.HasText("偏好设置") {
+					t.Fatal("settings popover header must use 笔记本设置 instead of 偏好设置")
+				}
+				if !tt.HasText("按 Esc 收起") {
+					t.Fatal("settings popover missing 按 Esc 收起 dismiss hint")
 				}
 
 				groupNames := []string{"画面与动效", "声音", "扫雷操作"}
@@ -160,11 +169,35 @@ func TestTopBarToolbarLayoutAndSettingsPopoverNoOverflow(t *testing.T) {
 						t.Fatalf("control %q overflows %dx%d viewport: %+v", tc.name, vp.w, vp.h, info.Bounds)
 					}
 				}
-				for _, segLabel := range []string{"跟随系统", "标准", "减弱"} {
-					r, ok := tt.Find(segLabel)
+				for _, seg := range []struct {
+					label string
+					tip   string
+				}{
+					{"跟随系统", "跟随系统的减弱动态效果设置"},
+					{"标准", "完整展示揭纸波浪、纸屑与镜头滑行"},
+					{"减弱", "收起揭纸位移、震屏、纸屑与镜头滑行"},
+				} {
+					r, ok := tt.Find(seg.label)
 					if !ok || !inBounds(r, vp.w, vp.h) {
-						t.Fatalf("motion segment %q missing or overflows %dx%d: ok=%v rect=%+v", segLabel, vp.w, vp.h, ok, r)
+						t.Fatalf("motion segment %q missing or overflows %dx%d: ok=%v rect=%+v", seg.label, vp.w, vp.h, ok, r)
 					}
+					if info, ok := tt.Access(seg.label); !ok || info.Description != seg.tip {
+						t.Fatalf("motion segment %q unexpected tooltip description: ok=%v info=%+v", seg.label, ok, info)
+					}
+				}
+				if lampInfo, ok := tt.AccessByRole(ui.RoleSwitch, "夜间台灯"); !ok || lampInfo.Description != "切换日间方格纸与深夜台灯下的笔记本" {
+					t.Fatalf("unexpected 夜间台灯 switch description: ok=%v info=%+v", ok, lampInfo)
+				}
+				if soundInfo, ok := tt.AccessByRole(ui.RoleSwitch, "音效"); !ok || soundInfo.Description != "开关纸笔与乐器音效（按 M 切换）" {
+					t.Fatalf("unexpected 音效 switch description: ok=%v info=%+v", ok, soundInfo)
+				}
+				qHintRect, ok := tt.Find("右键贴过创可贴后，再点一次标上 ? 标记")
+				if !ok || !inBounds(qHintRect, vp.w, vp.h) {
+					t.Fatalf("question mark helper copy missing or overflows %dx%d: ok=%v rect=%+v", vp.w, vp.h, ok, qHintRect)
+				}
+				qSwitchInfo, ok := tt.AccessByRole(ui.RoleSwitch, "右键 ? 标记")
+				if !ok || qSwitchInfo.Description != "右键贴过创可贴后，再点一次标上 ? 标记" {
+					t.Fatalf("unexpected 右键 ? 标记 switch description: ok=%v info=%+v", ok, qSwitchInfo)
 				}
 				// Let the popover's short enter transition settle before checking divider ink pixels.
 				tt.Advance(popoverEnterDuration + 20*time.Millisecond)
@@ -346,6 +379,13 @@ func TestSettingsMutedVolumeSliderLocksPointerAndKeyboardAndRestores(t *testing.
 	if !ok || !sliderDisabled.Disabled {
 		t.Fatalf("expected disabled 音量 slider while muted, ok=%v info=%+v", ok, sliderDisabled)
 	}
+	wantMutedReadout := fmt.Sprintf("已静音 · 保留 %d%%", lockedVol)
+	if !tt.HasText(wantMutedReadout) {
+		t.Fatalf("muted volume readout missing %q", wantMutedReadout)
+	}
+	if sliderDisabled.Description != "已静音，开启音效后恢复此音量" || sliderDisabled.Value != fmt.Sprintf("%d%%", lockedVol) {
+		t.Fatalf("unexpected muted 音量 slider a11y metadata: %+v", sliderDisabled)
+	}
 	savedBeforeMutedInput := len(saved)
 
 	// Try keyboard arrow keys and Home/End while muted.
@@ -362,8 +402,23 @@ func TestSettingsMutedVolumeSliderLocksPointerAndKeyboardAndRestores(t *testing.
 		t.Fatal("Tab from 音效 while muted must skip disabled 音量 slider to 右键 ? 标记")
 	}
 
+	// Let the popover enter transition settle before hovering the muted slider;
+	// moving the pointer onto the disabled slider must show the muted tooltip.
+	tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+	sliderSettled, ok := tt.AccessByRole(ui.RoleSlider, "音量")
+	if !ok || !sliderSettled.Disabled {
+		t.Fatalf("expected settled disabled 音量 slider, ok=%v info=%+v", ok, sliderSettled)
+	}
+	sr := sliderSettled.Bounds
+	tt.Move(1, 1)
+	tt.Advance(20 * time.Millisecond)
+	tt.Move(sr.X+sr.W/2, sr.Y+sr.H/2)
+	tt.Advance(700 * time.Millisecond)
+	if !tt.HasText("已静音，开启音效后恢复此音量") {
+		t.Fatalf("hovering disabled 音量 slider while muted did not show muted tooltip; texts=%q", tt.Texts())
+	}
+
 	// Try pointer click and drag across the disabled slider: popover stays open and volume stays locked.
-	sr := sliderDisabled.Bounds
 	tt.ClickAt(sr.X+sr.W*0.85, sr.Y+sr.H/2)
 	tt.Press(sr.X+sr.W*0.2, sr.Y+sr.H/2)
 	tt.Move(sr.X+sr.W*0.9, sr.Y+sr.H/2)
@@ -392,6 +447,12 @@ func TestSettingsMutedVolumeSliderLocksPointerAndKeyboardAndRestores(t *testing.
 	if !ok || sliderRestored.Disabled {
 		t.Fatalf("expected re-enabled 音量 slider after unmute, ok=%v info=%+v", ok, sliderRestored)
 	}
+	if tt.HasText(wantMutedReadout) || !tt.HasText(fmt.Sprintf("%d%%", lockedVol)) {
+		t.Fatalf("unmuting should restore plain percentage readout %d%% and clear muted readout", lockedVol)
+	}
+	if sliderRestored.Description != "左右拖动或按方向键调节音量" {
+		t.Fatalf("unmuted 音量 slider should restore active tooltip description, got %q", sliderRestored.Description)
+	}
 	tt.ClickAt(sliderRestored.Bounds.X+sliderRestored.Bounds.W*0.85, sliderRestored.Bounds.Y+sliderRestored.Bounds.H/2)
 	if app.volume == lockedVol {
 		t.Fatal("clicking re-enabled 音量 slider did not change volume")
@@ -408,10 +469,12 @@ func TestSettingsMutedVolumeSliderLocksPointerAndKeyboardAndRestores(t *testing.
 	if app.motion != motionReduced {
 		t.Fatalf("KeyRight immediately after clicking 标准 segment gave motion=%q, want %q", app.motion, motionReduced)
 	}
-	if hdr, ok := tt.AccessByRole(ui.RoleText, "偏好设置"); ok {
-		tt.ClickAt(hdr.Bounds.X+hdr.Bounds.W/2, hdr.Bounds.Y+hdr.Bounds.H/2)
-		tt.ClickAt(hdr.Bounds.X+hdr.Bounds.W+40, hdr.Bounds.Y+hdr.Bounds.H/2)
+	hdr, ok := tt.AccessByRole(ui.RoleText, "笔记本设置")
+	if !ok {
+		t.Fatal("missing 笔记本设置 header text inside settings popover")
 	}
+	tt.ClickAt(hdr.Bounds.X+hdr.Bounds.W/2, hdr.Bounds.Y+hdr.Bounds.H/2)
+	tt.ClickAt(hdr.Bounds.X+hdr.Bounds.W+40, hdr.Bounds.Y+hdr.Bounds.H/2)
 	if !app.popoverOpen(popoverSettings) {
 		t.Fatal("clicking internal header or whitespace inside 设置 must keep popover open")
 	}
@@ -737,4 +800,28 @@ func TestDuelSettlementClosesPopoversAndFocusesSettlementArea(t *testing.T) {
 			t.Fatal("Haruhikage duel defeat settlement must move focus to 春日影演出遮罩")
 		}
 	})
+}
+
+// TestSettingsMutedSnapshot renders the settings popover in its muted state
+// across all three viewports and day/night themes for visual review.
+func TestSettingsMutedSnapshot(t *testing.T) {
+	dir := os.Getenv("MYGO_SETTINGS_MUTED_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set MYGO_SETTINGS_MUTED_SNAPSHOT_DIR to render muted settings snapshots")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dark := range []bool{false, true} {
+		suffix := "day"
+		if dark {
+			suffix = "night"
+		}
+		for _, vp := range snapshotViewports {
+			app := stageShippedSettingsScene(dark)
+			app.soundEnabled = false
+			name := fmt.Sprintf("settings-muted-%s-%s.png", vp.name, suffix)
+			writeSnapshot(t, app, false, vp.width, vp.height, filepath.Join(dir, name))
+		}
+	}
 }

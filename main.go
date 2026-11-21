@@ -710,8 +710,10 @@ func (a *minesweeperApp) paintPopoverExitContents(p *ui.Painter, box ui.Rect, ki
 			}
 
 			y := inner.Y + 4
-			p.Text(inner.X+6, y, "偏好设置", 12, sc.MutedInk)
-			p.Text(inner.X+inner.W-64, y+1, "按 Esc 收起", 11, sc.MutedInk)
+			p.Text(inner.X+6, y, settingsPanelTitle, 12, sc.MutedInk)
+			escSpan := ui.Span{Text: settingsDismissHint, Size: 11, Color: sc.MutedInk}
+			tw, _ := p.MeasureText(0, escSpan)
+			p.RichText(inner.X+inner.W-6-tw, y+1, 0, escSpan)
 			p.Line(inner.X, y+20, inner.X+inner.W, y+20, 1, pal.Rule)
 			y += 30
 
@@ -757,8 +759,8 @@ func (a *minesweeperApp) paintPopoverExitContents(p *ui.Painter, box ui.Rect, ki
 				volLabelInk, volValueInk, sliderFill = sc.MutedInk, sc.MutedInk, sc.MutedInk.Alpha(0.45)
 			}
 			p.Text(inner.X+6, y+2, "音量", 13, volLabelInk)
-			volText := fmt.Sprintf("%d%%", a.volume)
-			volSpan := ui.Span{Text: volText, Size: 12, Color: volValueInk}
+			volText := settingsVolumeReadout(a.soundEnabled, a.volume)
+			volSpan := ui.Span{Text: volText, Size: 12, Weight: 700, Color: volValueInk, Features: "tnum"}
 			vw, _ := p.MeasureText(0, volSpan)
 			p.RichText(inner.X+inner.W-6-vw, y+2, 0, volSpan)
 			y += 24
@@ -778,6 +780,9 @@ func (a *minesweeperApp) paintPopoverExitContents(p *ui.Painter, box ui.Rect, ki
 			if y+22 <= inner.Y+inner.H {
 				p.Text(inner.X+6, y+3, "右键 ? 标记", 13, sc.LabelInk)
 				drawSwitch(y, a.allowQuestion)
+				if y+38 <= inner.Y+inner.H {
+					p.Text(inner.X+6, y+25, settingsQuestionHint, 11, sc.MutedInk)
+				}
 			}
 		}
 	})
@@ -2493,13 +2498,27 @@ func indexToMotion(idx int) motionMode {
 	}
 }
 
+const (
+	settingsPanelTitle   = "笔记本设置"
+	settingsDismissHint  = "按 Esc 收起"
+	settingsMutedHint    = "已静音，开启音效后恢复此音量"
+	settingsQuestionHint = "右键贴过创可贴后，再点一次标上 ? 标记"
+)
+
+func settingsVolumeReadout(enabled bool, volume int) string {
+	if !enabled {
+		return fmt.Sprintf("已静音 · 保留 %d%%", volume)
+	}
+	return fmt.Sprintf("%d%%", volume)
+}
+
 func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 	sc := settingsColorsForPaper(pal)
 	isOpen := a.popoverOpen(popoverSettings)
 	trigger := ui.ButtonBase(c.Key("settings-trigger")).
 		Padding(6, 11).Radius(6).Cursor(ui.CursorPointer).
 		Label("设置").HasPopup(ui.PopupDialog).Expanded(isOpen).
-		Tooltip("画面、声音与扫雷偏好设置")
+		Tooltip("调整台灯、动效、声音与扫雷习惯")
 
 	triggerBg, triggerBorder := sc.TriggerIdleBg, sc.TriggerBorder
 	iconColor, textColor, chevronColor := sc.TriggerIdleInk, sc.TriggerIdleText, sc.TriggerIdleIcon
@@ -2535,7 +2554,7 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 
 	var panelEl ui.Element
 	popover := a.bindPopover(c, popoverSettings, "settings-popover", trigger, func(_ func()) ui.Element {
-		panel := ui.Column(c.Key("settings-panel")).Width(320).Gap(10).Label("偏好设置")
+		panel := ui.Column(c.Key("settings-panel")).Width(320).Gap(10).Label(settingsPanelTitle)
 		panelEl = panel
 		sectionHeader := func(title string) ui.Element {
 			var heading ui.Element
@@ -2554,8 +2573,8 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 				Draw(func(p *ui.Painter, r ui.Rect) {
 					p.Line(r.X, r.Y+r.H-0.5, r.X+r.W, r.Y+r.H-0.5, 1, pal.Rule)
 				}).Children(func() {
-				ui.Text(c, "偏好设置").FontSize(12).Bold().TextColor(sc.MutedInk)
-				ui.Text(c, "按 Esc 收起").FontSize(11).TextColor(sc.MutedInk)
+				ui.Text(c, settingsPanelTitle).FontSize(12).Bold().TextColor(sc.MutedInk)
+				ui.Text(c, settingsDismissHint).FontSize(11).TextColor(sc.MutedInk)
 			})
 
 			// Group 1: Display & Motion
@@ -2581,12 +2600,18 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 					motionLabel := ui.Text(c, "动效").FontSize(13).TextColor(sc.LabelInk)
 					motionIdx := motionToIndex(a.motion)
 					motionLabels := [3]string{"跟随系统", "标准", "减弱"}
+					motionTooltips := [3]string{
+						"跟随系统的减弱动态效果设置",
+						"完整展示揭纸波浪、纸屑与镜头滑行",
+						"收起揭纸位移、震屏、纸屑与镜头滑行",
+					}
 					parts := ui.SegmentedBase(c.Key("settings-motion"), &motionIdx, len(motionLabels))
 					parts.Track.FillWidth().AlignItems(ui.Stretch).Padding(2).Gap(2).Radius(7).
 						Background(sc.SegTrackBg).Border(1, pal.Rule).LabelledBy(motionLabel).
 						Children(func() {
 							for i, label := range motionLabels {
-								seg := parts.Segment(i).Grow(1).Padding(5, 8).Radius(5).Cursor(ui.CursorPointer)
+								seg := parts.Segment(i).Grow(1).Padding(5, 8).Radius(5).Cursor(ui.CursorPointer).
+									Tooltip(motionTooltips[i])
 								if seg.Pressed() || seg.Clicked() {
 									seg.Focus()
 								}
@@ -2632,7 +2657,7 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 					})
 					soundOn := a.soundEnabled
 					soundSwitch = ui.Switch(c.Key("settings-sound"), &soundOn).LabelledBy(soundLabel).
-						KeyShortcuts(0, ui.KeyM).Tooltip("开关文具与乐器音效（按 M 切换）")
+						KeyShortcuts(0, ui.KeyM).Tooltip("开关纸笔与乐器音效（按 M 切换）")
 					if soundSwitch.Pressed() || soundSwitch.Clicked() {
 						soundSwitch.Focus()
 					}
@@ -2649,12 +2674,26 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 					var volLabel ui.Element
 					ui.Row(c).FillWidth().AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 						volLabel = ui.Text(c, "音量").FontSize(13).TextColor(volLabelInk)
-						ui.Textf(c, "%d%%", a.volume).FontSize(12).Bold().TextColor(volValueInk).FontFeatures("tnum")
+						ui.Text(c, settingsVolumeReadout(a.soundEnabled, a.volume)).FontSize(12).Bold().TextColor(volValueInk).FontFeatures("tnum").SingleLine()
 					})
 					vol := float64(a.volume)
-					volSlider := ui.Slider(c.Key("settings-volume"), &vol, 0, 100).
-						Step(1).FillWidth().LabelledBy(volLabel).Value(fmt.Sprintf("%d%%", a.volume)).
-						Disabled(!a.soundEnabled)
+					volWrap := ui.Box(c.Key("settings-volume-wrap")).FillWidth()
+					if !a.soundEnabled {
+						// Disabled controls skip hover tooltips in mygo/ui, so attach
+						// the muted hover tooltip to the non-disabled wrapper instead.
+						volWrap.Tooltip(settingsMutedHint)
+					}
+					var volSlider ui.Element
+					volWrap.Children(func() {
+						volSlider = ui.Slider(c.Key("settings-volume"), &vol, 0, 100).
+							Step(1).FillWidth().LabelledBy(volLabel).Value(fmt.Sprintf("%d%%", a.volume)).
+							Disabled(!a.soundEnabled)
+						if a.soundEnabled {
+							volSlider.Tooltip("左右拖动或按方向键调节音量")
+						} else {
+							volSlider.Description(settingsMutedHint)
+						}
+					})
 					if a.soundEnabled && (volSlider.Pressed() || volSlider.Clicked() || volSlider.Changed()) {
 						volSlider.Focus()
 					}
@@ -2677,17 +2716,20 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 			gameplayGroup.Children(func() {
 				gameplayHeading = sectionHeader("扫雷操作")
 
-				ui.Row(c).FillWidth().Padding(2, 4).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
-					qLabel := ui.Text(c, "右键 ? 标记").FontSize(13).TextColor(sc.LabelInk)
-					allowQ := a.allowQuestion
-					qSwitch := ui.Switch(c.Key("settings-allow-question"), &allowQ).LabelledBy(qLabel).
-						Tooltip("右键循环加入「？」不确定标记")
-					if qSwitch.Pressed() || qSwitch.Clicked() {
-						qSwitch.Focus()
-					}
-					if qSwitch.Changed() {
-						a.updatePrefs(func(p *prefs) { p.AllowQuestion = allowQ })
-					}
+				ui.Column(c).FillWidth().Padding(2, 4).Gap(3).Children(func() {
+					ui.Row(c).FillWidth().AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+						qLabel := ui.Text(c, "右键 ? 标记").FontSize(13).TextColor(sc.LabelInk)
+						allowQ := a.allowQuestion
+						qSwitch := ui.Switch(c.Key("settings-allow-question"), &allowQ).LabelledBy(qLabel).
+							Description(settingsQuestionHint).Tooltip(settingsQuestionHint)
+						if qSwitch.Pressed() || qSwitch.Clicked() {
+							qSwitch.Focus()
+						}
+						if qSwitch.Changed() {
+							a.updatePrefs(func(p *prefs) { p.AllowQuestion = allowQ })
+						}
+					})
+					ui.Text(c, settingsQuestionHint).FontSize(11).TextColor(sc.MutedInk)
 				})
 			})
 			gameplayGroup.LabelledBy(gameplayHeading)
