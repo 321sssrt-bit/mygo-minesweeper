@@ -693,26 +693,24 @@ func (a *minesweeperApp) bindPopover(
 	return popover
 }
 
-// popoverWorkspaceShield covers the workspace while any popover is open or
-// finishing its exit transition so an outside dismiss click never leaks onto a
-// board cell or mine.
+// popoverWorkspaceShield covers the workspace while any popover is open so an
+// outside dismiss click never leaks onto a board cell or mine, while leaving
+// the board immediately playable once a popover is dismissed (such as via
+// Escape) as its inert exit ghost finishes fading out.
 func (a *minesweeperApp) popoverWorkspaceShield(c *ui.Context) {
 	now := c.Now()
 	a.lastFrameNow = now
-	exiting := a.popoverExiting(now)
-	if !a.hasOpenPopover() && !exiting {
-		return
-	}
-	if exiting && !a.hasOpenPopover() {
+	if a.popoverExiting(now) && !a.hasOpenPopover() {
 		c.AnimationFrame()
+	}
+	if !a.hasOpenPopover() {
+		return
 	}
 	ui.Box(c.Key("popover-workspace-shield")).Absolute().Top(0).Bottom(0).Start(0).End(0).
 		HandleInput(func(ev ui.InputEvent) bool {
 			switch ev.Kind {
 			case ui.InputPointerDown:
-				if a.hasOpenPopover() {
-					a.dismissPopovers()
-				}
+				a.dismissPopovers()
 				return true
 			case ui.InputPointerUp, ui.InputScroll, ui.InputZoom:
 				return true

@@ -148,9 +148,10 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 		secondTrig  string
 		secondKind  appPopover
 		secondFocus string
+		rightClick  bool
 	}{
-		{"setlist-exiting-to-settings", "歌单", popoverSetlist, "设置", popoverSettings, "夜间台灯"},
-		{"settings-exiting-to-setlist", "设置", popoverSettings, "歌单", popoverSetlist, "迷星叫"},
+		{"setlist-exiting-to-settings", "歌单", popoverSetlist, "设置", popoverSettings, "夜间台灯", false},
+		{"settings-exiting-to-setlist", "设置", popoverSettings, "歌单", popoverSetlist, "迷星叫", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newMinesweeperApp(12345)
@@ -171,10 +172,23 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 				t.Fatalf("expected %s open", tc.firstTrig)
 			}
 
-			// 2. Close via Escape and step midway into the real exit transition.
-			tt.Key(0, ui.KeyEscape)
+			// 2. Dismiss via outside left/right click on a board cell: anti-leak shield
+			// must swallow the click (zero reveal/flag) and start a real exit transition.
+			cellRect, ok := tt.Find("cell-4-4")
+			if !ok {
+				t.Fatal("cell-4-4 missing")
+			}
+			if tc.rightClick {
+				tt.RightClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
+			} else {
+				tt.ClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
+			}
 			if app.hasOpenPopover() {
-				t.Fatalf("Escape did not start closing %s", tc.firstTrig)
+				t.Fatalf("outside board click did not start closing %s", tc.firstTrig)
+			}
+			if app.game.Moves != 0 || app.game.FirstClick || app.game.FlagsPlaced != 0 {
+				t.Fatalf("outside dismiss click leaked through shield onto board: moves=%d first=%v flags=%d",
+					app.game.Moves, app.game.FirstClick, app.game.FlagsPlaced)
 			}
 			tt.Advance(45 * time.Millisecond)
 			if !app.popoverExiting(tt.Now()) || !tt.FramePending() {
@@ -187,19 +201,7 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 				t.Fatalf("expected visible exiting popover ghost at 45ms, pixel diff=%d", diff)
 			}
 
-			// 3. Mid-exit anti-leak shield: left-click and right-click on a board cell must NOT reveal or flag.
-			cellRect, ok := tt.Find("cell-4-4")
-			if !ok {
-				t.Fatal("cell-4-4 missing")
-			}
-			tt.ClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
-			tt.RightClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
-			if app.game.Moves != 0 || app.game.FirstClick || app.game.FlagsPlaced != 0 {
-				t.Fatalf("mid-exit board click leaked through shield: moves=%d first=%v flags=%d",
-					app.game.Moves, app.game.FirstClick, app.game.FlagsPlaced)
-			}
-
-			// 4. Directly single-click the other trigger while the first popover is still mid-exit!
+			// 3. Directly single-click the other trigger while the first popover is still mid-exit!
 			if err := tt.Click(tc.secondTrig); err != nil {
 				t.Fatalf("single-click %s mid-exit: %v", tc.secondTrig, err)
 			}
@@ -210,7 +212,27 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 				t.Fatalf("expected focus on %q after mid-exit single-click switch", tc.secondFocus)
 			}
 
-			// 5. Close second popover and confirm full convergence (FramePending() == false).
+			// 4. Immediately clicking or right-clicking the board while the switched popover is open
+			// (overlapping the old popover's exit) must be caught by popoverWorkspaceShield.
+			if tc.rightClick {
+				tt.ClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
+			} else {
+				tt.RightClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
+			}
+			if app.hasOpenPopover() {
+				t.Fatalf("outside click did not dismiss %s after mid-exit switch", tc.secondTrig)
+			}
+			if app.game.Moves != 0 || app.game.FirstClick || app.game.FlagsPlaced != 0 {
+				t.Fatalf("post-switch outside click leaked onto board: moves=%d first=%v flags=%d",
+					app.game.Moves, app.game.FirstClick, app.game.FlagsPlaced)
+			}
+
+			// 5. Re-open second popover mid-exit, close via Escape, verify focus restoration
+			// and full convergence (FramePending() == false).
+			tt.Advance(45 * time.Millisecond)
+			if err := tt.Click(tc.secondTrig); err != nil {
+				t.Fatalf("re-open %s mid-exit: %v", tc.secondTrig, err)
+			}
 			tt.Key(0, ui.KeyEscape)
 			if !tt.Focused(tc.secondTrig) {
 				t.Fatalf("Escape did not restore focus to %s", tc.secondTrig)
