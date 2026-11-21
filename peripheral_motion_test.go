@@ -281,7 +281,7 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 			}
 			tt.UseScreenReader()
 			for _, node := range tt.AccessAll() {
-				if node.Name == "排练歌单" || node.Name == "偏好设置" || node.Name == "夜间台灯" {
+				if node.Name == "排练歌单" || node.Name == "笔记本设置" || node.Name == "夜间台灯" {
 					t.Fatalf("exiting popover leaked into screen reader tree: %+v", node)
 				}
 			}
