@@ -493,13 +493,13 @@ func TestFrameConvergenceCamera(t *testing.T) {
 			v.tt.Frame()
 			r, ok := v.tt.Find("决斗棋盘")
 			if !ok {
-				t.Fatal("duel canvas missing")
+				v.t.Fatal("duel canvas missing")
 			}
 			mini := board.minimapBoundsFor(g)
 			v.tt.ClickAt(r.X+mini.X+mini.W-2, r.Y+mini.Y+mini.H-2)
 			spans := viewportSpansBetween(board.X, board.Y, board.glide.targetX, board.glide.targetY, board.Width, board.Height)
 			if spans < 1.45 || spans > 1.55 {
-				t.Fatalf("far minimap jump starts %.2f viewports from target, want 1.5", spans)
+				v.t.Fatalf("far minimap jump starts %.2f viewports from target, want 1.5", spans)
 			}
 		}},
 	} {
