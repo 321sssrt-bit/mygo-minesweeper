@@ -97,6 +97,9 @@ type minesweeperApp struct {
 	motionReducedActive bool
 	windowActive        bool
 	desktopFocused      bool
+	// duelTickFocused is whether the window was in front at the last duel
+	// tick, so the first tick back from the background stays quiet.
+	duelTickFocused bool
 
 	game                 *Game
 	quote                string
@@ -247,10 +250,16 @@ func (a *minesweeperApp) syncMotionState(reduced bool) {
 
 func (a *minesweeperApp) setWindowFocused(focused bool) {
 	a.desktopFocused = focused
+	if !focused {
+		a.duelTickFocused = false
+	}
 }
 
 func (a *minesweeperApp) syncWindowFocus(c *ui.Context) {
 	a.windowActive = c.WindowActive() && !c.WindowHidden()
+	if !a.isWindowFocused() {
+		a.duelTickFocused = false
+	}
 }
 
 func (a *minesweeperApp) isWindowFocused() bool {
@@ -463,6 +472,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.board = newBoardView()
 	a.ripples = nil
 	a.clearCues()
+	a.duelTickFocused = false
 	a.duelPopups = nil
 	a.shakeStart = time.Time{}
 	a.shakeAmplitude = 0
@@ -797,6 +807,7 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 		a.settleDuel(c, now, result)
 	}
 	a.lastTick = now
+	a.duelTickFocused = a.isWindowFocused()
 	if a.game.Status == StatusPlaying {
 		c.After(50 * time.Millisecond)
 	}

@@ -860,7 +860,9 @@ func TestSoundSkillMotifOnlyWhenItTakesEffect(t *testing.T) {
 		if g.SkillUsesLeft != 1 || app.chatPosted == posted {
 			t.Fatalf("%s: expected the skill to take effect and post its line", id)
 		}
-		// The skill's line rides on its motif.
+		// The skill's line rides on its one motif, at once or as its flood
+		// closes.
+		tt.Advance(time.Second)
 		assertSoundIDs(t, string(id)+" skill", rec.take(), wantMotif[id])
 	}
 
@@ -1178,4 +1180,73 @@ func TestSoundDuelSettlement(t *testing.T) {
 			assertSoundIDs(t, tc.name, rec.take(), tc.want...)
 		})
 	}
+}
+
+func TestSoundSkillFloodMotifAtClose(t *testing.T) {
+	app, rec, tt := newClockedApp(defaultPrefs())
+	app.memberID = MemberRana
+	g := wallBoard(tt, app, 2)
+	rec.take()
+	start := tt.Now()
+	tt.Key(0, ui.KeyE)
+	if opened := g.RevealedSafe; opened < bigFloodCells || g.Status != StatusPlaying {
+		t.Fatalf("Rana's skill opened %d cells with status %v, want a big flood that plays on", opened, g.Status)
+	}
+	assertSoundIDs(t, "skill fires", rec.take())
+	tt.Advance(time.Second)
+	assertSoundIDs(t, "flood closes", rec.cues, SoundMotifRana)
+	if at := rec.at[0].Sub(start); at <= 0 || at > 240*time.Millisecond {
+		t.Fatalf("motif at +%v, want as the flood closes", at)
+	}
+}
+
+func TestSoundDuelCountdownQuietOnResumeFrames(t *testing.T) {
+	app, rec := newRecordedApp(7, func() prefs { p := defaultPrefs(); p.Volume = 80; return p }())
+	stalled := false
+	tt := ui.NewTester(func(c *ui.Context) {
+		if stalled {
+			c.After(16 * time.Millisecond)
+			return
+		}
+		app.view(c)
+	}, 1280, 900)
+	app.game = NewGame(Difficulty{ID: "duel-resume", Gameplay: GameplayDuel, Rows: 100, Cols: 100, Mines: 10, DuelDuration: 300, AIInterval: 1000}, true, MemberTomori, 7)
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	d := app.game.duel
+	d.NextAI = d.Duration + 1
+	app.duelNoticeAt = tt.Now().Add(time.Hour)
+	tt.Frame()
+
+	// 9.10 s left, then a stall until about 6.95 s: the frame that catches
+	// up crosses 7 just after it turned, and still stays quiet.
+	d.Elapsed = d.Duration - 9.10
+	tt.Frame()
+	rec.take()
+	stalled = true
+	tt.Advance(2140 * time.Millisecond)
+	stalled = false
+	tt.Advance(20 * time.Millisecond)
+	if left := d.remaining(); left >= 7 || left < 6.8 {
+		t.Fatalf("resumed at %.2f s left, want just under 7", left)
+	}
+	assertSoundIDs(t, "stall from 9.10 s", rec.take())
+	tt.Advance(time.Second)
+	assertSoundIDs(t, "next second after the stall", rec.take(), SoundDuelTick)
+
+	// A hide shorter than a quarter second across 5 s: the tick that brings
+	// the window back does not sound it.
+	d.Elapsed = d.Duration - 5.10
+	tt.Frame()
+	rec.take()
+	tt.SetWindowHidden(true)
+	tt.Advance(150 * time.Millisecond)
+	tt.SetWindowHidden(false)
+	tt.Frame()
+	if left := d.remaining(); left >= 5 {
+		t.Fatalf("back at %.2f s left, want past 5", left)
+	}
+	assertSoundIDs(t, "short hide across 5 s", rec.take())
+	tt.Advance(time.Second)
+	assertSoundIDs(t, "next second after the hide", rec.take(), SoundDuelTick)
 }

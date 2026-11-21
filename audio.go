@@ -123,9 +123,9 @@ const (
 	duelCueGain = 0.5
 	// countdownFrom is the first whole second of the duel's countdown.
 	countdownFrom = 10
-	// countdownLateness is how long after a whole second its tick may still
-	// sound; a frame that comes later, after a stall or a hidden window,
-	// lets the second pass silently.
+	// countdownLateness is the most duel time one frame may cover and still
+	// tick the second it crossed; a frame catching up on a stall or a hidden
+	// window lets the second pass silently.
 	countdownLateness = 0.25
 )
 
@@ -268,27 +268,38 @@ func memberMotif(id MemberID) SoundID {
 
 // highlightSound voices the moments a motif marks: a skill that took
 // effect, Soyo's 护盾, the close of a big flood and a classic game's end.
+// A skill that floods a big area plays its one motif as the flood closes.
 // A duel ends in settleDuel instead, and a 雷 there only costs points.
 func (a *minesweeperApp) highlightSound(res ActionResult, now time.Time) {
 	motif := memberMotif(a.memberID)
+	bigFlood := res.RevealedCount >= bigFloodCells
 	switch res.Kind {
 	case ActionSkill:
-		a.playSound(motif, 1, 0)
+		if bigFlood {
+			a.closeFlood(now, res.RevealWave, motif)
+		} else {
+			a.playSound(motif, 1, 0)
+		}
 	case ActionShielded:
 		a.playSound(SoundMotifSoyo, 1, 0)
 	case ActionRevealed:
-		if res.RevealedCount >= bigFloodCells {
-			a.cues.add(queuedCue{
-				At:  now.Add(waveSpan(res.RevealWave)),
-				Cue: soundCue{ID: motif, Gain: 1, Speed: 1},
-			})
-			a.flushCues(now)
+		if bigFlood {
+			a.closeFlood(now, res.RevealWave, motif)
 		}
 	case ActionWon, ActionLost:
 		if !a.isDuel() {
 			a.settleSound(res.Kind == ActionWon, res.Kind == ActionLost && a.game.Difficulty.Haruhikage)
 		}
 	}
+}
+
+// closeFlood queues motif for the moment a reveal wave reaches its last step.
+func (a *minesweeperApp) closeFlood(now time.Time, wave []RevealWaveEntry, motif SoundID) {
+	a.cues.add(queuedCue{
+		At:  now.Add(waveSpan(wave)),
+		Cue: soundCue{ID: motif, Gain: 1, Speed: 1},
+	})
+	a.flushCues(now)
 }
 
 // settleSound marks the end of a game with the leader's motif, joined by the
@@ -306,9 +317,10 @@ func (a *minesweeperApp) settleSound(won, haruhikage bool) {
 }
 
 // duelHint plays one of the duel's passive cues, which a window in the
-// background keeps quiet and never replays.
+// background keeps quiet and never replays, the tick that brings it back
+// included.
 func (a *minesweeperApp) duelHint(id SoundID, gain, pan float64) {
-	if a.isWindowFocused() {
+	if a.isWindowFocused() && a.duelTickFocused {
 		a.playSound(id, gain, pan)
 	}
 }
@@ -330,11 +342,12 @@ func (a *minesweeperApp) voiceAITurn(kind ActionKind, cell int) {
 }
 
 // voiceCountdown ticks when the duel clock, going from before to after
-// seconds left, has just crossed a whole second of its last countdownFrom.
-// Seconds a stall or a hidden window skipped past are never replayed.
+// seconds left within one ordinary frame, crosses a whole second of its last
+// countdownFrom. Seconds a stall or a hidden window skipped past are never
+// replayed.
 func (a *minesweeperApp) voiceCountdown(before, after float64) {
 	s := math.Ceil(after)
-	if s >= 1 && s <= countdownFrom && s < math.Ceil(before) && s-after <= countdownLateness {
+	if s >= 1 && s <= countdownFrom && s < math.Ceil(before) && before-after <= countdownLateness {
 		a.duelHint(SoundDuelTick, duelCueGain, 0)
 	}
 }
