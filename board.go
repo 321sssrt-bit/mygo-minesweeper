@@ -191,6 +191,14 @@ func (v *boardView) minimapFor(g *Game, x, y float32) bool {
 	return x >= mini.X && y >= mini.Y && x <= mini.X+mini.W && y <= mini.Y+mini.H
 }
 
+// shows reports whether a cell's centre is on screen in the last drawn view
+// and not under the minimap.
+func (v *boardView) shows(g *Game, row, col int) bool {
+	x := (float32(col)+0.5)*v.Cell - v.X
+	y := (float32(row)+0.5)*v.Cell - v.Y
+	return x >= 0 && y >= 0 && x < v.Width && y < v.Height && !v.minimapFor(g, x, y)
+}
+
 func (v *boardView) minimapCellAt(g *Game, x, y float32) (int, int) {
 	if g == nil || g.Rows <= 0 || g.Cols <= 0 || !isFinite32(x) || !isFinite32(y) {
 		return 0, 0
@@ -219,11 +227,17 @@ func containsIndex(list []int, target int) bool {
 }
 
 // applyCellAction applies a player's click on a cell, button 0 left and 1
-// right, on either board surface, and plays its stationery foley once.
-func (a *minesweeperApp) applyCellAction(row, col, button int) ActionResult {
+// right, on either board surface, and plays its stationery foley: a 旗's
+// bandage at once, a reveal's slips along its wave.
+func (a *minesweeperApp) applyCellAction(row, col, button int, now time.Time) ActionResult {
 	res := a.resolveCellAction(row, col, button)
 	if id, ok := cellActionSound(res.Kind); ok {
-		a.playSound(id, 1, columnPan(col, a.game.Cols))
+		pan := columnPan(col, a.game.Cols)
+		if id == SoundPaperLift {
+			a.playFlood(now, pan, res.RevealWave)
+		} else {
+			a.playSound(id, 1, pan)
+		}
 	}
 	return res
 }
@@ -348,7 +362,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				if !ok {
 					return true
 				}
-				result := a.applyCellAction(row, col, button)
+				result := a.applyCellAction(row, col, button, ev.Time)
 				if result.Kind != ActionNoop {
 					a.pendingResult = result
 					a.pendingRow = row

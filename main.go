@@ -27,6 +27,12 @@ const (
 	haruhikageIntroDuration = 1600 * time.Millisecond
 )
 
+// waveSteps is the last step of a reveal wave; deeper cells share it.
+const waveSteps = int(rippleMaxDelay / rippleStepDelay)
+
+// waveStep is the step at which a reveal wave reaches a cell depth away.
+func waveStep(depth int) int { return min(depth, waveSteps) }
+
 type chatMessage struct {
 	Speaker  string
 	ColorHex string
@@ -86,10 +92,14 @@ type minesweeperApp struct {
 
 	savePrefsFn         func(prefs) error
 	sound               soundOutput
+	cues                cueQueue
 	systemReduceMotion  bool
 	motionReducedActive bool
 	windowActive        bool
 	desktopFocused      bool
+	// duelTickFocused is whether the window was in front at the last duel
+	// tick, so the first tick back from the background stays quiet.
+	duelTickFocused bool
 
 	game                 *Game
 	quote                string
@@ -240,10 +250,16 @@ func (a *minesweeperApp) syncMotionState(reduced bool) {
 
 func (a *minesweeperApp) setWindowFocused(focused bool) {
 	a.desktopFocused = focused
+	if !focused {
+		a.duelTickFocused = false
+	}
 }
 
 func (a *minesweeperApp) syncWindowFocus(c *ui.Context) {
 	a.windowActive = c.WindowActive() && !c.WindowHidden()
+	if !a.isWindowFocused() {
+		a.duelTickFocused = false
+	}
 }
 
 func (a *minesweeperApp) isWindowFocused() bool {
@@ -455,6 +471,8 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.classicSize = 0
 	a.board = newBoardView()
 	a.ripples = nil
+	a.clearCues()
+	a.duelTickFocused = false
 	a.duelPopups = nil
 	a.shakeStart = time.Time{}
 	a.shakeAmplitude = 0
@@ -499,7 +517,7 @@ func (a *minesweeperApp) enqueueRipple(now time.Time, wave []RevealWaveEntry) {
 		if len(a.ripples) >= MaxRevealWaveEntries {
 			break
 		}
-		delay := min(rippleMaxDelay, time.Duration(entry.Depth)*rippleStepDelay)
+		delay := time.Duration(waveStep(entry.Depth)) * rippleStepDelay
 		a.ripples[entry.Index] = tileRipple{Start: now, Delay: delay}
 	}
 }
@@ -605,6 +623,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 
 	m := FindMember(a.memberID)
 	a.applyQuote(res.QuoteEvent)
+	a.highlightSound(res, now)
 
 	switch res.Kind {
 	case ActionShielded:
@@ -732,7 +751,7 @@ func (a *minesweeperApp) activeTheme() *ui.Theme {
 func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string) {
 	d := a.game.duel
 	a.duelEnded = true
-	posted, closing := a.chatPosted, a.hasOpenPopover()
+	posted := a.chatPosted
 	a.dismissPopovers()
 	a.pushChat("决斗结算", hexOf(goldHighlighter), result)
 	a.applyQuote(d.QuoteEvent)
@@ -741,9 +760,10 @@ func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string)
 		a.haruhikageIntro = true
 		a.haruhikageIntroStart = now
 	}
-	if closing {
-		a.chatVoicedSince(posted)
-	}
+	// The settlement's own sound carries its notes, as does a popover it
+	// puts away.
+	a.chatVoicedSince(posted)
+	a.settleSound(d.PlayerScore > d.AIScore, slices.Contains(d.NewMemes, MemeHaruhikage))
 	c.ToastAction(result, "再战一局", func() { a.resetGame(false) })
 }
 
@@ -753,6 +773,7 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 	}
 	d := a.game.duel
 	if !a.lastTick.IsZero() && a.game.Status == StatusPlaying {
+		before := d.remaining()
 		tick := a.game.TickDuel(now.Sub(a.lastTick).Seconds())
 		a.elapsed = int(d.Elapsed)
 		if tick.AITurn != nil && tick.AITurn.Kind != ActionNoop {
@@ -761,9 +782,13 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 				a.board.LastEffect = now
 				a.board.EffectCell = tick.AICell
 			}
+			a.voiceAITurn(tick.AITurn.Kind, tick.AICell)
 			if tick.AITurn.Kind == ActionLost {
 				c.Toast("高松灯踩雷 −100")
 			}
+		}
+		if a.game.Status == StatusPlaying {
+			a.voiceCountdown(before, d.remaining())
 		}
 		if tick.Finished {
 			a.elapsed = int(d.Duration)
@@ -782,6 +807,7 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 		a.settleDuel(c, now, result)
 	}
 	a.lastTick = now
+	a.duelTickFocused = a.isWindowFocused()
 	if a.game.Status == StatusPlaying {
 		c.After(50 * time.Millisecond)
 	}
@@ -1101,7 +1127,9 @@ func (a *minesweeperApp) toggleFlagMode() {
 func (a *minesweeperApp) view(c *ui.Context) {
 	now := c.Now()
 	defer a.flushChatNote()
+	defer a.scheduleCues(c, now)
 	a.syncWindowFocus(c)
+	a.flushCues(now)
 	a.systemReduceMotion = c.Preferences().ReduceMotion
 	a.syncMotionState(a.reducedMotion(c))
 	if a.pendingResult.Kind != ActionNoop {
@@ -1132,8 +1160,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		a.toggleFlagMode()
 	}
 	if c.Shortcut(0, ui.KeyE) {
-		res := a.game.UseSkill()
-		a.handleAction(c, res, now)
+		a.useSkill(c, now)
 	}
 	if c.Shortcut(0, ui.KeyM) && !c.ShortcutRepeated() {
 		a.toggleMute()
@@ -1427,8 +1454,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						}
 						if ui.PrimaryButton(c.Key("skill-btn"), skillLabel).Disabled(!canUse).
 							Tooltip(member.SkillDesc).Clicked() {
-							res := a.game.UseSkill()
-							a.handleAction(c, res, now)
+							a.useSkill(c, now)
 						}
 					})
 				})
