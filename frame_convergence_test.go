@@ -571,47 +571,12 @@ func TestDesktopAudioConstructionBoundary(t *testing.T) {
 		if entry.IsDir() || !strings.HasSuffix(path, ".go") {
 			return nil
 		}
-		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			return err
 		}
-		for _, imp := range f.Imports {
-			if p, _ := strconv.Unquote(imp.Path.Value); p == "github.com/egoist/mygo/audio" &&
-				path != "audio.go" && path != "audio_test.go" {
-				t.Errorf("%s: desktop audio import outside the adapter", fset.Position(imp.Pos()))
-			}
-		}
-		for _, decl := range f.Decls {
-			fn, _ := decl.(*ast.FuncDecl)
-			main := path == "main.go" && fn != nil && fn.Recv == nil && fn.Name.Name == "main"
-			adapter := path == "audio.go" && fn != nil && fn.Recv == nil && fn.Name.Name == "newDesktopSound"
-			adapterTest := path == "audio_test.go" && fn != nil && fn.Name.Name == "TestAudioDesktopAdapterSetsVoiceBeforePlay"
-			playerTest := path == "audio_test.go" && fn != nil && fn.Name.Name == "TestAudioVoiceForwardsToPlayer"
-			var fakeVoiceAt token.Pos
-			if adapterTest {
-				fakeVoiceAt = fakeVoiceInstallPos(fn)
-			}
-			ast.Inspect(decl, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.Ident:
-					if x.Name == "newDesktopSound" && !main && !adapterTest && !(adapter && x == fn.Name) {
-						t.Errorf("%s: desktop sound referenced outside main", fset.Position(x.Pos()))
-					}
-				case *ast.KeyValueExpr:
-					if key, ok := x.Key.(*ast.Ident); ok && key.Name == "Sound" &&
-						adapterTest && (!fakeVoiceAt.IsValid() || fakeVoiceAt >= x.Pos()) {
-						t.Errorf("%s: adapter must install the fake voice before injection", fset.Position(x.Pos()))
-					}
-				case *ast.SelectorExpr:
-					if (x.Sel.Name == "NewSound" || x.Sel.Name == "NewPlayer") && !adapter && !playerTest {
-						t.Errorf("%s: %s referenced outside the desktop adapter and its paused-player test", fset.Position(x.Pos()), x.Sel.Name)
-					}
-					if path == "audio_test.go" && x.Sel.Name == "Play" {
-						t.Errorf("%s: playback must go through the test's substitute voice", fset.Position(x.Pos()))
-					}
-				}
-				return true
-			})
+		for _, violation := range desktopAudioViolations(fset, path, f) {
+			t.Error(violation)
 		}
 		return nil
 	})
@@ -621,9 +586,107 @@ func TestDesktopAudioConstructionBoundary(t *testing.T) {
 	t.Log("desktop output restricted to main; adapter tests use sample data, a paused player and a substitute voice")
 }
 
-// The adapter test sets its voice factory before it gives the adapter to the
-// app. The assignment must be unconditional and the last write to the factory.
-func fakeVoiceInstallPos(fn *ast.FuncDecl) token.Pos {
+func desktopAudioViolations(fset *token.FileSet, path string, f *ast.File) []string {
+	var violations []string
+	report := func(at token.Pos, message string) {
+		violations = append(violations, fmt.Sprintf("%s: %s", fset.Position(at), message))
+	}
+	for _, imp := range f.Imports {
+		if p, _ := strconv.Unquote(imp.Path.Value); p == "github.com/egoist/mygo/audio" &&
+			path != "audio.go" && path != "audio_test.go" {
+			report(imp.Pos(), "desktop audio import outside the adapter")
+		}
+	}
+	for _, decl := range f.Decls {
+		fn, _ := decl.(*ast.FuncDecl)
+		main := path == "main.go" && fn != nil && fn.Recv == nil && fn.Name.Name == "main"
+		adapter := path == "audio.go" && fn != nil && fn.Recv == nil && fn.Name.Name == "newDesktopSound"
+		adapterTest := path == "audio_test.go" && fn != nil && fn.Name.Name == "TestAudioDesktopAdapterSetsVoiceBeforePlay"
+		playerTest := path == "audio_test.go" && fn != nil && fn.Name.Name == "TestAudioVoiceForwardsToPlayer"
+
+		var local, constructor *ast.Ident
+		var fakeVoiceAt token.Pos
+		if adapterTest {
+			local, constructor = desktopAdapterBinding(fn)
+			if local == nil {
+				report(fn.Pos(), "desktop sound must be bound by a top-level short declaration")
+			}
+			fakeVoiceAt = fakeVoiceInstallPos(fn, local)
+			if !fakeVoiceAt.IsValid() {
+				report(fn.Pos(), "adapter must install the fake voice on its own binding")
+			}
+		}
+
+		checkWrite := func(expr ast.Expr) {
+			if id, ok := expr.(*ast.Ident); ok && id != local && sameAdapterBinding(id, local) {
+				report(id.Pos(), "desktop adapter binding must not be reassigned")
+			}
+		}
+		ast.Inspect(decl, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Ident:
+				if x.Name == "newDesktopSound" && !main && x != constructor && !(adapter && x == fn.Name) {
+					report(x.Pos(), "desktop sound constructor is only allowed in main or the test's single binding")
+				}
+			case *ast.AssignStmt:
+				for _, lhs := range x.Lhs {
+					checkWrite(ast.Unparen(lhs))
+				}
+			case *ast.RangeStmt:
+				checkWrite(x.Key)
+				checkWrite(x.Value)
+			case *ast.UnaryExpr:
+				if x.Op == token.AND && sameAdapterBinding(ast.Unparen(x.X), local) {
+					report(x.Pos(), "desktop adapter binding must not be addressed")
+				}
+			case *ast.KeyValueExpr:
+				if key, ok := x.Key.(*ast.Ident); ok && key.Name == "Sound" && adapterTest {
+					if !sameAdapterBinding(x.Value, local) {
+						report(x.Value.Pos(), "Sound injection must use the same desktop adapter binding")
+					} else if !fakeVoiceAt.IsValid() || fakeVoiceAt >= x.Pos() {
+						report(x.Pos(), "adapter must install the fake voice before injection")
+					}
+				}
+			case *ast.SelectorExpr:
+				if (x.Sel.Name == "NewSound" || x.Sel.Name == "NewPlayer") && !adapter && !playerTest {
+					report(x.Pos(), x.Sel.Name+" referenced outside the desktop adapter and its paused-player test")
+				}
+				if path == "audio_test.go" && x.Sel.Name == "Play" {
+					report(x.Pos(), "playback must go through the test's substitute voice")
+				}
+			}
+			return true
+		})
+	}
+	return violations
+}
+
+func desktopAdapterBinding(fn *ast.FuncDecl) (local, constructor *ast.Ident) {
+	for _, stmt := range fn.Body.List {
+		assign, ok := stmt.(*ast.AssignStmt)
+		if !ok || assign.Tok != token.DEFINE || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			continue
+		}
+		id, idOK := assign.Lhs[0].(*ast.Ident)
+		call, callOK := assign.Rhs[0].(*ast.CallExpr)
+		if !idOK || !callOK || id.Obj == nil {
+			continue
+		}
+		if ctor, ok := call.Fun.(*ast.Ident); ok && ctor.Name == "newDesktopSound" {
+			return id, ctor
+		}
+	}
+	return nil, nil
+}
+
+func sameAdapterBinding(expr ast.Expr, local *ast.Ident) bool {
+	id, ok := expr.(*ast.Ident)
+	// Parser-resolved locals distinguish the original variable from shadows.
+	return ok && local != nil && id.Obj == local.Obj
+}
+
+// The assignment must be unconditional and the only reference to the factory.
+func fakeVoiceInstallPos(fn *ast.FuncDecl, local *ast.Ident) token.Pos {
 	var installed token.Pos
 	references := 0
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -637,12 +700,12 @@ func fakeVoiceInstallPos(fn *ast.FuncDecl) token.Pos {
 	}
 	for _, stmt := range fn.Body.List {
 		assign, ok := stmt.(*ast.AssignStmt)
-		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+		if !ok || assign.Tok != token.ASSIGN || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 			continue
 		}
 		sel, ok := assign.Lhs[0].(*ast.SelectorExpr)
 		factory, literal := assign.Rhs[0].(*ast.FuncLit)
-		if !ok || sel.Sel.Name != "newVoice" || !literal {
+		if !ok || sel.Sel.Name != "newVoice" || !literal || !sameAdapterBinding(sel.X, local) {
 			continue
 		}
 		ast.Inspect(factory.Body, func(n ast.Node) bool {
@@ -655,4 +718,47 @@ func fakeVoiceInstallPos(fn *ast.FuncDecl) token.Pos {
 		})
 	}
 	return installed
+}
+
+func TestDesktopAudioGuardRejectsUnsafeSource(t *testing.T) {
+	const construct = "d := newDesktopSound(bank)\n"
+	const install = "d.newVoice = func() soundVoice { return &fakeVoice{} }\n"
+	const inject = "_ = appOptions{Sound: d}\n"
+	const adapterTest = "package main\nfunc TestAudioDesktopAdapterSetsVoiceBeforePlay() {\n"
+	for _, tc := range []struct {
+		name, source, want string
+	}{
+		{"same-adapter", adapterTest + construct + install + inject + "}", ""},
+		{"fresh-adapter", adapterTest + construct + install + "_ = appOptions{Sound: newDesktopSound(bank)}\n}", "same desktop adapter binding"},
+		{"second-construction", adapterTest + construct + install + inject + "_ = newDesktopSound(bank)\n}", "test's single binding"},
+		{"late-install", adapterTest + construct + inject + install + "}", "install the fake voice before injection"},
+		{"shadow", adapterTest + construct + install + "{ d := other; " + inject + "}}", "same desktop adapter binding"},
+		{"other-factory-receiver", adapterTest + construct + strings.Replace(install, "d.", "other.", 1) + inject + "}", "fake voice on its own binding"},
+		{"reassign", adapterTest + construct + install + "d = other\n" + inject + "}", "must not be reassigned"},
+		{"address", adapterTest + construct + install + "_ = &d\n" + inject + "}", "must not be addressed"},
+		{"deferred-play", "package main\nfunc TestAudioVoiceForwardsToPlayer() { defer v.Play() }", "playback must go through the test's substitute voice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			const path = "audio_test.go"
+			f, err := parser.ParseFile(fset, path, tc.source, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			violations := desktopAudioViolations(fset, path, f)
+			if tc.want == "" {
+				if len(violations) != 0 {
+					t.Fatalf("safe fixture rejected: %v", violations)
+				}
+				return
+			}
+			for _, violation := range violations {
+				if strings.Contains(violation, tc.want) {
+					t.Log(violation)
+					return
+				}
+			}
+			t.Fatalf("wanted violation %q, got %v", tc.want, violations)
+		})
+	}
 }
