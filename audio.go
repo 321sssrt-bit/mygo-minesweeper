@@ -123,6 +123,10 @@ const (
 	duelCueGain = 0.5
 	// countdownFrom is the first whole second of the duel's countdown.
 	countdownFrom = 10
+	// countdownLateness is how long after a whole second its tick may still
+	// sound; a frame that comes later, after a stall or a hidden window,
+	// lets the second pass silently.
+	countdownLateness = 0.25
 )
 
 // queuedCue is a sound due later, its Gain relative to the player's volume.
@@ -179,7 +183,8 @@ func (a *minesweeperApp) clearCues() {
 }
 
 // flushCues plays the queued cues now due and drops those overdue past
-// cueLateness.
+// cueLateness. A grain that a late frame would sound within paperGrainGap
+// of the last one is dropped too.
 func (a *minesweeperApp) flushCues(now time.Time) {
 	var due []queuedCue
 	kept := a.cues.pending[:0]
@@ -194,6 +199,9 @@ func (a *minesweeperApp) flushCues(now time.Time) {
 	a.cues.pending = kept
 	for _, c := range due {
 		if c.Grain {
+			if !a.cues.lastGrain.IsZero() && now.Sub(a.cues.lastGrain) < paperGrainGap {
+				continue
+			}
 			a.cues.lastGrain = now
 		}
 		a.playCue(c.Cue)
@@ -322,11 +330,11 @@ func (a *minesweeperApp) voiceAITurn(kind ActionKind, cell int) {
 }
 
 // voiceCountdown ticks when the duel clock, going from before to after
-// seconds left, crosses a whole second of its last countdownFrom. A stall
-// across several seconds ticks once.
+// seconds left, has just crossed a whole second of its last countdownFrom.
+// Seconds a stall or a hidden window skipped past are never replayed.
 func (a *minesweeperApp) voiceCountdown(before, after float64) {
 	s := math.Ceil(after)
-	if s >= 1 && s <= countdownFrom && s < math.Ceil(before) {
+	if s >= 1 && s <= countdownFrom && s < math.Ceil(before) && s-after <= countdownLateness {
 		a.duelHint(SoundDuelTick, duelCueGain, 0)
 	}
 }

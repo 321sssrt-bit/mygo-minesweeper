@@ -362,7 +362,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				if !ok {
 					return true
 				}
-				result := a.applyCellAction(row, col, button, c.Now())
+				result := a.applyCellAction(row, col, button, ev.Time)
 				if result.Kind != ActionNoop {
 					a.pendingResult = result
 					a.pendingRow = row

@@ -1039,11 +1039,80 @@ func TestSoundDuelCountdownSkipsStalledSeconds(t *testing.T) {
 	tt.Frame()
 	rec.take()
 
+	// Seconds a stall swallowed pass silently; the next one ticks on time.
 	stalled = true
 	tt.Advance(3 * time.Second)
 	stalled = false
 	tt.Advance(50 * time.Millisecond)
-	assertSoundIDs(t, "stall across three seconds", rec.take(), SoundDuelTick)
+	assertSoundIDs(t, "stall across three seconds", rec.take())
+	tt.Advance(time.Second)
+	assertSoundIDs(t, "next second after the stall", rec.take(), SoundDuelTick)
+
+	// So do those that passed while the window was hidden.
+	tt.SetWindowHidden(true)
+	tt.Advance(2 * time.Second)
+	tt.SetWindowHidden(false)
+	tt.Frame()
+	assertSoundIDs(t, "window back after two seconds", rec.take())
+	tt.Advance(time.Second)
+	assertSoundIDs(t, "next second after the window is back", rec.take(), SoundDuelTick)
+}
+
+func TestSoundLateFrameKeepsGrainGap(t *testing.T) {
+	app, rec := newRecordedApp(7, defaultPrefs())
+	stalled := false
+	tt := ui.NewTester(func(c *ui.Context) {
+		if stalled {
+			c.After(16 * time.Millisecond)
+			return
+		}
+		app.view(c)
+	}, 1280, 900)
+	rec.clock = tt.Now
+	wallBoard(tt, app, 0)
+	rec.take()
+
+	// A short stall makes the second grain sound late, still within its
+	// lateness; the one after must keep the gap from it, not from its slot.
+	must(t, tt.Click("cell-9-0"))
+	stalled = true
+	tt.Advance(60 * time.Millisecond)
+	stalled = false
+	tt.Advance(time.Second)
+	grains, at := grainsOf(rec)
+	if len(grains) < 2 {
+		t.Fatalf("expected a late grain after the stall, got %v", soundIDs(rec.cues))
+	}
+	assertGrainGaps(t, at)
+}
+
+func TestSoundCanvasFloodGrains(t *testing.T) {
+	app, rec := newRecordedApp(7, defaultPrefs())
+	g := NewGame(Difficulty{ID: "canvas-wall", Rows: 40, Cols: 40, Mines: 40}, true, MemberTomori, 7)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	for row := range g.Rows {
+		g.Cell(row, 20).IsMine = true
+	}
+	g.RecomputeAdjacency()
+	app.game = g
+	tt := ui.NewTester(app.view, 1280, 900)
+	rec.clock = tt.Now
+	x, y := canvasCellAt(t, tt, app, "经典棋盘", 20, 5)
+	// The board sits idle a while, so the last frame is well before the click.
+	tt.Advance(200 * time.Millisecond)
+	rec.take()
+	start := tt.Now()
+	tt.ClickAt(x, y)
+	tt.Advance(time.Second)
+	grains, at := grainsOf(rec)
+	if len(grains) < 2 || len(grains) > 6 || !at[0].Equal(start) {
+		t.Fatalf("canvas flood grains at %v from %v, want 2 to 6 starting at the click", at, start)
+	}
+	assertGrainGaps(t, at)
+	if last := rec.cues[len(rec.cues)-1]; last.ID != SoundMotifTomori {
+		t.Fatalf("canvas flood sounds = %v, want them to close on motif-tomori", soundIDs(rec.cues))
+	}
 }
 
 func TestSoundDuelPassiveCuesHushInBackground(t *testing.T) {
@@ -1081,6 +1150,32 @@ func TestSoundDuelPassiveCuesHushInBackground(t *testing.T) {
 			tc.stage(app)
 			tt.Advance(time.Second)
 			assertSoundIDs(t, "next cue in front", rec.take(), tc.want)
+		})
+	}
+}
+
+func TestSoundDuelSettlement(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		haruhikage bool
+		player, ai int
+		want       []SoundID
+	}{
+		{"win", false, 120, 80, []SoundID{SoundMotifTomori, SoundWinChord}},
+		{"loss", false, 80, 120, []SoundID{SoundMotifTomori}},
+		{"春日影 loss", true, 80, 120, []SoundID{SoundHaruhikageStop}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, rec, tt := newDuelSoundApp()
+			app.game.Difficulty.Haruhikage = tc.haruhikage
+			d := app.game.duel
+			d.PlayerScore, d.AIScore = tc.player, tc.ai
+			d.Elapsed = d.Duration - 0.2
+			tt.Advance(time.Second)
+			if app.game.Status != StatusWon || !app.duelEnded {
+				t.Fatal("expected the duel to settle on its clock")
+			}
+			assertSoundIDs(t, tc.name, rec.take(), tc.want...)
 		})
 	}
 }
