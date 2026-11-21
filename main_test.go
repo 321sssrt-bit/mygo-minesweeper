@@ -1094,9 +1094,8 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 	tt.UseScreenReader()
 
 	for _, want := range []string{
-		"夜间台灯",
+		"设置",
 		"插旗模式 (F)",
-		"? 标记",
 		"名场面图鉴",
 		"乐队成员",
 		"排练完成度",
@@ -1116,9 +1115,11 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 		"乐队重力值 (Gravity)",
 		"乐队成员应援",
 		"标旗模式",
+		"夜间台灯",
+		"? 标记",
 	} {
 		if tt.HasText(avoid) {
-			t.Errorf("classic view still contains retired copy %q", avoid)
+			t.Errorf("classic view still contains retired or moved copy %q", avoid)
 		}
 	}
 	if _, ok := tt.AccessByRole(ui.RoleProgress, "排练完成度"); !ok {
@@ -1130,15 +1131,37 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 	if _, ok := tt.Access("Live 完成度"); ok {
 		t.Error("progress meter still uses retired Live 完成度 label")
 	}
+	if err := tt.Click("设置"); err != nil {
+		t.Fatalf("opening settings popover failed: %v", err)
+	}
+	for _, want := range []string{
+		"偏好设置",
+		"画面与动效",
+		"夜间台灯",
+		"动效",
+		"跟随系统",
+		"标准",
+		"减弱",
+		"声音",
+		"音效",
+		"音量",
+		"扫雷操作",
+		"右键 ? 标记",
+	} {
+		if !tt.HasText(want) {
+			t.Errorf("settings popover missing copy %q", want)
+		}
+	}
 	sw, ok := tt.AccessByRole(ui.RoleSwitch, "夜间台灯")
 	if !ok {
-		t.Fatal("night lamp switch missing 夜间台灯 accessibility label")
+		t.Fatal("night lamp switch missing 夜间台灯 accessibility label inside settings popover")
 	}
 	wasDark := app.darkMode
 	tt.ClickAt(sw.Bounds.X+sw.Bounds.W/2, sw.Bounds.Y+sw.Bounds.H/2)
 	if app.darkMode == wasDark {
 		t.Fatal("clicking 夜间台灯 switch did not toggle darkMode")
 	}
+	tt.Key(0, ui.KeyEscape)
 
 	if err := tt.Click("名场面图鉴"); err != nil {
 		t.Fatalf("opening memes drawer failed: %v", err)

@@ -650,3 +650,54 @@ func hatchMeter(c *ui.Context, label string, value float64, col ui.Color, pal *p
 			drawHatchBar(p, r, value/100, col, pal)
 		})
 }
+
+// settingsColors holds the palette-derived surfaces and WCAG-AA inks for the
+// top-bar settings trigger button and the settings popover sheet.
+type settingsColors struct {
+	TriggerIdleBg, TriggerHoverBg, TriggerOpenBg    ui.Color
+	TriggerBorder, TriggerOpenBorder                ui.Color
+	TriggerIdleInk, TriggerHoverInk, TriggerOpenInk ui.Color
+	TriggerIdleText, TriggerHoverText               ui.Color
+	TriggerIdleIcon, TriggerHoverIcon               ui.Color
+	GroupInk, LabelInk, MutedInk                    ui.Color
+	KeyBg, KeyInk                                   ui.Color
+}
+
+var daySettings, nightSettings = newSettingsColors(dayPaper), newSettingsColors(nightPaper)
+
+func settingsColorsFor(dark bool) *settingsColors {
+	if dark {
+		return nightSettings
+	}
+	return daySettings
+}
+
+func newSettingsColors(p *palette) *settingsColors {
+	accent := bandColor
+	if p.Dark {
+		accent = p.InkOf(bandColor)
+	}
+	idleBg := p.Slip.Alpha(0.45).Over(p.Sheet)
+	hoverBg := p.Slip.Alpha(0.85).Over(p.Sheet)
+	openBg := accent.Alpha(0.14).Over(p.Sheet)
+	keyBg := p.Slip.Alpha(0.65).Over(p.Sheet)
+	return &settingsColors{
+		TriggerIdleBg:     idleBg,
+		TriggerHoverBg:    hoverBg,
+		TriggerOpenBg:     openBg,
+		TriggerBorder:     p.Rule,
+		TriggerOpenBorder: accent.Alpha(0.7),
+		TriggerIdleInk:    p.inkOn(idleBg, bandColor),
+		TriggerHoverInk:   p.inkOn(hoverBg, bandColor),
+		TriggerOpenInk:    p.inkOn(openBg, bandColor),
+		TriggerIdleText:   p.inkOn(idleBg, p.Ink),
+		TriggerHoverText:  p.inkOn(hoverBg, p.Ink),
+		TriggerIdleIcon:   p.inkOn(idleBg, p.InkMuted),
+		TriggerHoverIcon:  p.inkOn(hoverBg, p.InkMuted),
+		GroupInk:          p.inkOn(p.Sheet, bandColor),
+		LabelInk:          p.inkOn(p.Sheet, p.Ink),
+		MutedInk:          p.inkOn(p.Sheet, p.InkMuted),
+		KeyBg:             keyBg,
+		KeyInk:            p.inkOn(keyBg, p.InkMuted),
+	}
+}
