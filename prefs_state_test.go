@@ -124,20 +124,25 @@ func TestDesktopPrefsLoadSaveAndSaveFailureRetention(t *testing.T) {
 	tt := ui.NewTester(app.view, 1280, 900)
 	tt.UseScreenReader()
 
-	// Toggle DarkMode via the 夜间台灯 switch, AllowQuestion via ? 标记, and mute via M.
+	// Open 设置 popover and toggle DarkMode via 夜间台灯, AllowQuestion via 右键 ? 标记, and mute via M.
+	if err := tt.Click("设置"); err != nil {
+		t.Fatalf("open 设置 popover: %v", err)
+	}
 	sw, ok := tt.AccessByRole(ui.RoleSwitch, "夜间台灯")
 	if !ok {
-		t.Fatal("missing 夜间台灯 switch")
+		t.Fatal("missing 夜间台灯 switch inside 设置 popover")
 	}
 	tt.ClickAt(sw.Bounds.X+sw.Bounds.W/2, sw.Bounds.Y+sw.Bounds.H/2)
-	if err := tt.Click("? 标记"); err != nil {
-		t.Fatalf("click ? 标记: %v", err)
+	qsw, ok := tt.AccessByRole(ui.RoleSwitch, "右键 ? 标记")
+	if !ok {
+		t.Fatal("missing 右键 ? 标记 switch inside 设置 popover")
 	}
+	tt.ClickAt(qsw.Bounds.X+qsw.Bounds.W/2, qsw.Bounds.Y+qsw.Bounds.H/2)
 	tt.Key(0, ui.KeyM)
-	// The desktop app plays through the output it was given: two switch
-	// flips at 80% volume, then the mute itself is silent.
-	if got := desktopSound.take(); len(got) != 2 || got[0].ID != SoundToggle || got[1].ID != SoundToggle || got[0].Gain != 0.8 {
-		t.Fatalf("desktop app sounds = %+v, want two toggles at gain 0.8", got)
+	// The desktop app plays through the output it was given: opening 设置 plus
+	// two switch flips at 80% volume, then the mute itself is silent.
+	if got := desktopSound.take(); len(got) != 3 || got[0].ID != SoundPopoverOpen || got[1].ID != SoundToggle || got[2].ID != SoundToggle || got[1].Gain != 0.8 {
+		t.Fatalf("desktop app sounds = %+v, want popover open + two toggles at gain 0.8", got)
 	}
 
 	wantSaved := prefs{

@@ -88,9 +88,9 @@ func classicCanvasTestView(a *minesweeperApp) func(c *ui.Context) {
 				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
 				ui.ToggleGroup(c, func() {
 					ui.Toggle(c, &a.flagMode, "插旗模式 (F)")
-					ui.Toggle(c, &a.allowQuestion, "? 标记")
 					ui.Toggle(c, &a.showMemes, "名场面图鉴")
 				}).Label("工具开关")
+				a.settingsControl(c, a.paper())
 			})
 
 			ui.Column(c).Grow(1).Padding(12).Gap(10).Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
@@ -214,6 +214,29 @@ func (h *classicParityHarness) rightClickCell(row, col int, step string) {
 	h.assertEqualState(step)
 }
 
+func (h *classicParityHarness) toggleAllowQuestion(step string) {
+	h.t.Helper()
+	for _, entry := range []struct {
+		name string
+		tt   *ui.Tester
+	}{
+		{"widget", h.widgetTester},
+		{"canvas", h.canvasTester},
+	} {
+		entry.tt.UseScreenReader()
+		if err := entry.tt.Click("设置"); err != nil {
+			h.t.Fatalf("%s %s open 设置 failed: %v", step, entry.name, err)
+		}
+		sw, ok := entry.tt.AccessByRole(ui.RoleSwitch, "右键 ? 标记")
+		if !ok {
+			h.t.Fatalf("%s %s missing 右键 ? 标记 switch in 设置", step, entry.name)
+		}
+		entry.tt.ClickAt(sw.Bounds.X+sw.Bounds.W/2, sw.Bounds.Y+sw.Bounds.H/2)
+		entry.tt.Key(0, ui.KeyEscape)
+	}
+	h.assertEqualState(step)
+}
+
 func (h *classicParityHarness) clickButton(label string, step string) {
 	h.t.Helper()
 	if err := h.widgetTester.Click(label); err != nil {
@@ -324,8 +347,8 @@ func TestClassicCanvasRevealFlagQuestionAndFlagModeParity(t *testing.T) {
 		t.Fatal("expected unflagged blank cell")
 	}
 
-	// Enable ? 标记 and verify full unmarked -> flag -> ? -> unmarked cycle on right-click.
-	h.clickButton("? 标记", "enable-question")
+	// Enable ? 标记 via 设置 popover and verify full unmarked -> flag -> ? -> unmarked cycle on right-click.
+	h.toggleAllowQuestion("enable-question")
 	h.rightClickCell(0, 1, "q-cycle-flag")
 	if !h.canvasApp.game.Cell(0, 1).Flagged || h.canvasApp.game.Cell(0, 1).Questioned {
 		t.Fatal("expected Flagged on step 1")
@@ -380,8 +403,8 @@ func TestClassicCanvasRevealFlagQuestionAndFlagModeParity(t *testing.T) {
 		t.Fatal("expected cleared cell in flagMode")
 	}
 
-	// Disable ? 标记 and toggle flagMode off/on via toolbar button.
-	h.clickButton("? 标记", "disable-question")
+	// Disable ? 标记 via 设置 popover and toggle flagMode off/on via toolbar button.
+	h.toggleAllowQuestion("disable-question")
 	h.leftClickCell(targetRow, targetCol, "flagmode-noq-flag")
 	if !h.canvasApp.game.Cell(targetRow, targetCol).Flagged {
 		t.Fatal("expected flag without question")

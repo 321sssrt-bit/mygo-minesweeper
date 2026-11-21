@@ -445,14 +445,6 @@ func TestSoundSwitchesToggleOnce(t *testing.T) {
 	}{
 		{"插旗模式", func() { must(t, tt.Click("插旗模式 (F)")) }},
 		{"F", func() { tt.Key(0, ui.KeyF) }},
-		{"夜间台灯", func() {
-			sw, ok := tt.AccessByRole(ui.RoleSwitch, "夜间台灯")
-			if !ok {
-				t.Fatal("missing 夜间台灯 switch")
-			}
-			tt.ClickAt(sw.Bounds.X+sw.Bounds.W/2, sw.Bounds.Y+sw.Bounds.H/2)
-		}},
-		{"? 标记", func() { must(t, tt.Click("? 标记")) }},
 		{"名场面图鉴", func() { must(t, tt.Click("名场面图鉴")) }},
 	}
 	for _, s := range steps {
@@ -464,6 +456,40 @@ func TestSoundSwitchesToggleOnce(t *testing.T) {
 		}
 		assertSoundIDs(t, s.name, rec.take(), SoundToggle)
 	}
+
+	// Preference switches inside the 设置 popover also sound once per toggle.
+	must(t, tt.Click("设置"))
+	assertSoundIDs(t, "open settings", rec.take(), SoundPopoverOpen)
+	settingsSteps := []struct {
+		name string
+		do   func()
+	}{
+		{"夜间台灯", func() {
+			sw, ok := tt.AccessByRole(ui.RoleSwitch, "夜间台灯")
+			if !ok {
+				t.Fatal("missing 夜间台灯 switch")
+			}
+			tt.ClickAt(sw.Bounds.X+sw.Bounds.W/2, sw.Bounds.Y+sw.Bounds.H/2)
+		}},
+		{"动效", func() { must(t, tt.Click("减弱")) }},
+		{"右键 ? 标记", func() {
+			sw, ok := tt.AccessByRole(ui.RoleSwitch, "右键 ? 标记")
+			if !ok {
+				t.Fatal("missing 右键 ? 标记 switch")
+			}
+			tt.ClickAt(sw.Bounds.X+sw.Bounds.W/2, sw.Bounds.Y+sw.Bounds.H/2)
+		}},
+	}
+	for _, s := range settingsSteps {
+		before := app.currentPrefs()
+		s.do()
+		if app.currentPrefs() == before {
+			t.Fatalf("%s changed nothing", s.name)
+		}
+		assertSoundIDs(t, s.name, rec.take(), SoundToggle)
+	}
+	must(t, tt.Click("设置"))
+	assertSoundIDs(t, "close settings", rec.take(), SoundPopoverClose)
 
 	// Muting is silent; unmuting rustles once; a held M repeats nothing.
 	tt.Key(0, ui.KeyM)

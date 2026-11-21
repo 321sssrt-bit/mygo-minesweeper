@@ -35,6 +35,7 @@ var snapshotScenes = []snapshotScene{
 	{name: "duel", stage: stageDuelScene},
 	{name: "senzaihyoumei", stage: stageSenzaihyoumeiScene},
 	{name: "setlist-shipped", stage: stageShippedSetlistScene},
+	{name: "settings-shipped", stage: stageShippedSettingsScene},
 	{name: "classic-canvas-live", stage: stageClassicCanvasLiveScene, canvas: true},
 	{name: "classic-canvas-won", stage: stageClassicCanvasWonScene, canvas: true},
 	{name: "classic-canvas-lost", stage: stageClassicCanvasLostScene, canvas: true},
@@ -160,6 +161,15 @@ func stageShippedSetlistScene(dark bool) *minesweeperApp {
 	app := stageLiveScene(dark)
 	app.classicHoverRow, app.classicHoverCol = -1, -1
 	app.setlistOpen = true
+	return app
+}
+
+// stageShippedSettingsScene stages the live scene with the shipped settings
+// popover expanded, showing all three preference groups and controls.
+func stageShippedSettingsScene(dark bool) *minesweeperApp {
+	app := stageLiveScene(dark)
+	app.classicHoverRow, app.classicHoverCol = -1, -1
+	app.openPopover(popoverSettings)
 	return app
 }
 

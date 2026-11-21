@@ -74,21 +74,22 @@ type memeUnlockNotice struct {
 }
 
 type minesweeperApp struct {
-	diffIdx         int
-	modeIdx         int // 0 = Band Live Mode, 1 = Classic Mode
-	darkMode        bool
-	motion          motionMode
-	soundEnabled    bool
-	volume          int
-	memberID        MemberID
-	flagMode        bool
-	allowQuestion   bool
-	showMemes       bool
-	setlistOpen     bool
-	activePopover   appPopover
-	restorePopover  appPopover
-	haruhikageAlert bool
-	haruhikageIntro bool
+	diffIdx             int
+	modeIdx             int // 0 = Band Live Mode, 1 = Classic Mode
+	darkMode            bool
+	motion              motionMode
+	soundEnabled        bool
+	volume              int
+	memberID            MemberID
+	flagMode            bool
+	allowQuestion       bool
+	showMemes           bool
+	setlistOpen         bool
+	activePopover       appPopover
+	restorePopover      appPopover
+	focusDuelSettlement bool
+	haruhikageAlert     bool
+	haruhikageIntro     bool
 
 	savePrefsFn         func(prefs) error
 	sound               soundOutput
@@ -365,12 +366,16 @@ func (a *minesweeperApp) bindPopover(
 	if open && trigger.Shortcut(0, ui.KeyEscape) {
 		closeWithFocus()
 	}
-	popover := ui.Popover(c.Key(key), trigger, &open, func() {
-		panel := body(closeWithFocus)
-		if panel.Valid() && panel.Shortcut(0, ui.KeyEscape) {
-			closeWithFocus()
-		}
-	}).Background(c.Theme().Surface).KeepFocus()
+	var popover ui.Element
+	if open {
+		// Guard with open so c.Key(key) is never left unconsumed when ui.Popover returns nil.
+		popover = ui.Popover(c.Key(key), trigger, &open, func() {
+			panel := body(closeWithFocus)
+			if panel.Valid() && panel.Shortcut(0, ui.KeyEscape) {
+				closeWithFocus()
+			}
+		}).Background(c.Theme().Surface).KeepFocus()
+	}
 
 	if !closedByApp && wasOpen && !open {
 		// ui.Popover dismisses on either Escape or outside press;
@@ -392,7 +397,7 @@ func (a *minesweeperApp) popoverWorkspaceShield(c *ui.Context) {
 	if !a.hasOpenPopover() {
 		return
 	}
-	ui.Box(c.Key("setlist-workspace-shield")).Absolute().Top(0).Bottom(0).Start(0).End(0).
+	ui.Box(c.Key("popover-workspace-shield")).Absolute().Top(0).Bottom(0).Start(0).End(0).
 		HandleInput(func(ev ui.InputEvent) bool {
 			switch ev.Kind {
 			case ui.InputPointerDown:
@@ -481,6 +486,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.haruhikageAlert = false
 	a.haruhikageIntro = false
 	a.haruhikageIntroStart = time.Time{}
+	a.focusDuelSettlement = false
 	a.dismissPopovers()
 	a.classicHoverRow = -1
 	a.classicHoverCol = -1
@@ -754,6 +760,7 @@ func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string)
 	a.duelEnded = true
 	posted := a.chatPosted
 	a.dismissPopovers()
+	a.focusDuelSettlement = true
 	a.pushChat("决斗结算", hexOf(goldHighlighter), result)
 	a.applyQuote(d.QuoteEvent)
 	a.unlockMemes(c, d.NewMemes)
@@ -827,9 +834,10 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 }
 
 var (
-	setlistChevronDown = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3.5 6L8 10.5L12.5 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
-	setlistChevronUp   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3.5 10L8 5.5L12.5 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
-	setlistCheckIcon   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3 8.5L6.5 12L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+	setlistChevronDown  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3.5 6L8 10.5L12.5 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+	setlistChevronUp    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3.5 10L8 5.5L12.5 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+	setlistCheckIcon    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3 8.5L6.5 12L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+	settingsSlidersIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="5.5" cy="4.5" r="1.6" fill="currentColor"/><circle cx="10.5" cy="8" r="1.6" fill="currentColor"/><circle cx="6.5" cy="11.5" r="1.6" fill="currentColor"/></svg>`))
 )
 
 // setlistInk derives a WCAG-AA (4.5:1+) ink from base against the exact
@@ -1071,6 +1079,236 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 	}
 }
 
+func motionToIndex(m motionMode) int {
+	switch m {
+	case motionStandard:
+		return 1
+	case motionReduced:
+		return 2
+	default:
+		return 0
+	}
+}
+
+func indexToMotion(idx int) motionMode {
+	switch idx {
+	case 1:
+		return motionStandard
+	case 2:
+		return motionReduced
+	default:
+		return motionSystem
+	}
+}
+
+func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
+	sc := settingsColorsFor(pal.Dark)
+	isOpen := a.popoverOpen(popoverSettings)
+	trigger := ui.ButtonBase(c.Key("settings-trigger")).
+		Padding(6, 11).Radius(6).Cursor(ui.CursorPointer).
+		Label("设置").HasPopup(ui.PopupDialog).Expanded(isOpen).
+		Tooltip("画面、声音与扫雷偏好设置")
+
+	triggerBg, triggerBorder := sc.TriggerIdleBg, sc.TriggerBorder
+	iconColor, textColor, chevronColor := sc.TriggerIdleInk, sc.TriggerIdleText, sc.TriggerIdleIcon
+	chevron := setlistChevronDown
+	switch {
+	case isOpen:
+		triggerBg, triggerBorder = sc.TriggerOpenBg, sc.TriggerOpenBorder
+		iconColor, textColor, chevronColor = sc.TriggerOpenInk, sc.TriggerOpenInk, sc.TriggerOpenInk
+		chevron = setlistChevronUp
+	case trigger.Hovered():
+		triggerBg = sc.TriggerHoverBg
+		iconColor, textColor, chevronColor = sc.TriggerHoverInk, sc.TriggerHoverText, sc.TriggerHoverIcon
+	}
+	trigger.Background(triggerBg).Border(1, triggerBorder).
+		Shadow(0, 1, 2, 0, pal.SlipShade.Alpha(0.45))
+
+	trigger.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(6).PassThrough().Children(func() {
+			ui.Icon(c, settingsSlidersIcon).Size(13, 13).TextColor(iconColor).PassThrough()
+			ui.Text(c, "设置").FontSize(12).Bold().TextColor(textColor).SingleLine().PassThrough()
+			ui.Icon(c, chevron).Size(12, 12).TextColor(chevronColor).PassThrough()
+		})
+	})
+
+	focusFirst := false
+	switch {
+	case trigger.Clicked():
+		focusFirst = a.togglePopover(popoverSettings)
+	case trigger.Shortcut(0, ui.KeyDown):
+		a.openPopover(popoverSettings)
+		focusFirst = true
+	}
+
+	var panelEl ui.Element
+	popover := a.bindPopover(c, popoverSettings, "settings-popover", trigger, func(_ func()) ui.Element {
+		panel := ui.Column(c.Key("settings-panel")).Width(320).Gap(10).Label("偏好设置")
+		panelEl = panel
+		sectionHeader := func(title string) ui.Element {
+			var heading ui.Element
+			ui.Row(c).FillWidth().Padding(2, 4, 2, 4).AlignItems(ui.Center).Gap(6).Children(func() {
+				ui.Box(c).Size(3, 11).Radius(1.5).Background(sc.GroupInk)
+				heading = ui.Text(c, title).FontSize(11).Bold().TextColor(sc.GroupInk)
+			})
+			return heading
+		}
+		divider := func(p *ui.Painter, r ui.Rect) {
+			p.Line(r.X+4, r.Y+0.5, r.X+r.W-4, r.Y+0.5, 1, pal.Rule)
+		}
+
+		panel.Children(func() {
+			ui.Row(c).FillWidth().Padding(2, 6, 6, 6).AlignItems(ui.Center).Justify(ui.SpaceBetween).
+				Draw(func(p *ui.Painter, r ui.Rect) {
+					p.Line(r.X, r.Y+r.H-0.5, r.X+r.W, r.Y+r.H-0.5, 1, pal.Rule)
+				}).Children(func() {
+				ui.Text(c, "偏好设置").FontSize(12).Bold().TextColor(sc.MutedInk)
+				ui.Text(c, "按 Esc 收起").FontSize(11).TextColor(sc.MutedInk)
+			})
+
+			// Group 1: Display & Motion
+			displayGroup := ui.Column(c.Key("settings-group-display")).FillWidth().Gap(8).Role(ui.RoleGroup)
+			var displayHeading ui.Element
+			displayGroup.Children(func() {
+				displayHeading = sectionHeader("画面与动效")
+
+				ui.Row(c).FillWidth().Padding(2, 4).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+					lampLabel := ui.Text(c, "夜间台灯").FontSize(13).TextColor(sc.LabelInk)
+					dark := a.darkMode
+					sw := ui.Switch(c.Key("settings-dark-mode"), &dark).LabelledBy(lampLabel).
+						Tooltip("切换日间方格纸与深夜台灯下的笔记本")
+					if focusFirst || sw.Pressed() || sw.Clicked() {
+						sw.Focus()
+					}
+					if sw.Changed() {
+						a.updatePrefs(func(p *prefs) { p.DarkMode = dark })
+					}
+				})
+
+				ui.Column(c).FillWidth().Padding(2, 4).Gap(6).Children(func() {
+					motionLabel := ui.Text(c, "动效").FontSize(13).TextColor(sc.LabelInk)
+					motionIdx := motionToIndex(a.motion)
+					motionLabels := [3]string{"跟随系统", "标准", "减弱"}
+					parts := ui.SegmentedBase(c.Key("settings-motion"), &motionIdx, len(motionLabels))
+					parts.Track.FillWidth().AlignItems(ui.Stretch).Padding(2).Gap(2).Radius(7).
+						Background(sc.SegTrackBg).Border(1, pal.Rule).LabelledBy(motionLabel).
+						Children(func() {
+							for i, label := range motionLabels {
+								seg := parts.Segment(i).Grow(1).Padding(5, 8).Radius(5).Cursor(ui.CursorPointer)
+								if seg.Pressed() || seg.Clicked() {
+									seg.Focus()
+								}
+								active := i == motionIdx
+								textColor := sc.SegIdleInk
+								if active {
+									seg.Background(sc.TriggerOpenBg).Shadow(0, 1, 2, 0, pal.SlipShade.Alpha(0.45))
+									textColor = sc.TriggerOpenInk
+								} else if seg.Hovered() {
+									seg.Background(sc.TriggerHoverBg)
+									textColor = sc.TriggerHoverText
+								}
+								seg.Children(func() {
+									txt := ui.Text(c, label).FontSize(12).TextColor(textColor).SingleLine().PassThrough()
+									if active {
+										txt.Bold()
+									}
+								})
+							}
+						})
+					if parts.Track.Changed() {
+						a.updatePrefs(func(p *prefs) { p.Motion = indexToMotion(motionIdx) })
+					}
+				})
+			})
+			displayGroup.LabelledBy(displayHeading)
+
+			// Group 2: Sound
+			soundGroup := ui.Column(c.Key("settings-group-sound")).FillWidth().Gap(8).
+				Padding(10, 0, 0, 0).Role(ui.RoleGroup).Draw(divider)
+			var soundHeading ui.Element
+			soundGroup.Children(func() {
+				soundHeading = sectionHeader("声音")
+
+				var soundSwitch ui.Element
+				ui.Row(c).FillWidth().Padding(2, 4).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+					var soundLabel ui.Element
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+						soundLabel = ui.Text(c, "音效").FontSize(13).TextColor(sc.LabelInk)
+						ui.Box(c).Padding(1, 6).Radius(4).Background(sc.KeyBg).Border(1, pal.Rule).Children(func() {
+							ui.Text(c, "M").FontSize(10.5).Bold().TextColor(sc.KeyInk).SingleLine()
+						})
+					})
+					soundOn := a.soundEnabled
+					soundSwitch = ui.Switch(c.Key("settings-sound"), &soundOn).LabelledBy(soundLabel).
+						KeyShortcuts(0, ui.KeyM).Tooltip("开关文具与乐器音效（按 M 切换）")
+					if soundSwitch.Pressed() || soundSwitch.Clicked() {
+						soundSwitch.Focus()
+					}
+					if soundSwitch.Changed() {
+						a.updatePrefs(func(p *prefs) { p.SoundEnabled = soundOn })
+					}
+				})
+
+				ui.Column(c).FillWidth().Padding(2, 4).Gap(4).Children(func() {
+					volLabelInk, volValueInk := sc.LabelInk, sc.GroupInk
+					if !a.soundEnabled {
+						volLabelInk, volValueInk = sc.MutedInk, sc.MutedInk
+					}
+					var volLabel ui.Element
+					ui.Row(c).FillWidth().AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+						volLabel = ui.Text(c, "音量").FontSize(13).TextColor(volLabelInk)
+						ui.Textf(c, "%d%%", a.volume).FontSize(12).Bold().TextColor(volValueInk).FontFeatures("tnum")
+					})
+					vol := float64(a.volume)
+					volSlider := ui.Slider(c.Key("settings-volume"), &vol, 0, 100).
+						Step(1).FillWidth().LabelledBy(volLabel).Value(fmt.Sprintf("%d%%", a.volume)).
+						Disabled(!a.soundEnabled)
+					if a.soundEnabled && (volSlider.Pressed() || volSlider.Clicked() || volSlider.Changed()) {
+						volSlider.Focus()
+					}
+					if !a.soundEnabled && volSlider.Focused() {
+						// Muting via M while the slider holds focus disables it;
+						// keep focus inside the popover so FocusLeft does not close it.
+						soundSwitch.Focus()
+					}
+					if volSlider.Changed() {
+						a.updatePrefs(func(p *prefs) { p.Volume = int(math.Round(vol)) })
+					}
+				})
+			})
+			soundGroup.LabelledBy(soundHeading)
+
+			// Group 3: Minesweeper Controls
+			gameplayGroup := ui.Column(c.Key("settings-group-gameplay")).FillWidth().Gap(8).
+				Padding(10, 0, 0, 0).Role(ui.RoleGroup).Draw(divider)
+			var gameplayHeading ui.Element
+			gameplayGroup.Children(func() {
+				gameplayHeading = sectionHeader("扫雷操作")
+
+				ui.Row(c).FillWidth().Padding(2, 4).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+					qLabel := ui.Text(c, "右键 ? 标记").FontSize(13).TextColor(sc.LabelInk)
+					allowQ := a.allowQuestion
+					qSwitch := ui.Switch(c.Key("settings-allow-question"), &allowQ).LabelledBy(qLabel).
+						Tooltip("右键循环加入「？」不确定标记")
+					if qSwitch.Pressed() || qSwitch.Clicked() {
+						qSwitch.Focus()
+					}
+					if qSwitch.Changed() {
+						a.updatePrefs(func(p *prefs) { p.AllowQuestion = allowQ })
+					}
+				})
+			})
+			gameplayGroup.LabelledBy(gameplayHeading)
+		})
+		return panel
+	})
+
+	if popover.Valid() {
+		popover.AttachTo(trigger, ui.AnchorBottomEnd, ui.AnchorTopEnd)
+		trigger.Controls(panelEl)
+	}
+}
+
 func (a *minesweeperApp) duelHUD(c *ui.Context) {
 	d := a.game.duel
 	hud := duelHUDFor(a.darkMode)
@@ -1204,7 +1442,11 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			ui.Overlay(c, func() {
 				overlay := ui.Box(c.Key("haruhikage-drama-overlay")).Fill().Modal().
 					Background(drama.Scrim).Center().
-					Cursor(ui.CursorPointer).Label("春日影演出遮罩")
+					Cursor(ui.CursorPointer).Focusable().FocusRing(false).Label("春日影演出遮罩")
+				if a.focusDuelSettlement {
+					a.focusDuelSettlement = false
+					overlay.Focus()
+				}
 				overlay.Children(func() {
 					ui.Column(c).AlignItems(ui.Center).Gap(10).Padding(26, 32).Radius(6).
 						Background(drama.CardBg).Border(1.5, drama.CardBorder).
@@ -1289,13 +1531,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				if ui.Segmented(c, &a.modeIdx, "乐队 Live", "纯正经典").Label("游戏模式").Disabled(a.isDuel()).Changed() {
 					a.resetGame(false)
 				}
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					lamp := ui.Text(c, "夜间台灯").FontSize(12).TextColor(t.TextMuted)
-					dark := a.darkMode
-					if ui.Switch(c, &dark).LabelledBy(lamp).Tooltip("切换日间方格纸与深夜台灯下的笔记本").Changed() {
-						a.updatePrefs(func(p *prefs) { p.DarkMode = dark })
-					}
-				})
+				a.settingsControl(c, pal)
 			})
 		})
 
@@ -1308,10 +1544,6 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				flagMode := a.flagMode
 				if ui.Toggle(c, &flagMode, "插旗模式 (F)").Tooltip("开启后左键直接贴创可贴插旗").Changed() {
 					a.toggleFlagMode()
-				}
-				allowQuestion := a.allowQuestion
-				if ui.Toggle(c, &allowQuestion, "? 标记").Tooltip("右键循环加入「？」不确定标记").Changed() {
-					a.updatePrefs(func(p *prefs) { p.AllowQuestion = allowQuestion })
 				}
 				if ui.Toggle(c, &a.showMemes, "名场面图鉴").Tooltip("展开或收起已解锁的 MyGO!!!!! 名场面").Changed() {
 					a.playSound(SoundToggle, 1, 0)
@@ -1516,7 +1748,12 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						case StatusLost:
 							resetLabel = "炸团了 · 再排练一次"
 						}
-						if ui.Button(c.Key("reset-btn"), resetLabel).Clicked() {
+						resetBtn := ui.Button(c.Key("reset-btn"), resetLabel)
+						if a.focusDuelSettlement && !a.haruhikageIntro {
+							a.focusDuelSettlement = false
+							resetBtn.Focus()
+						}
+						if resetBtn.Clicked() {
 							a.resetGame(false)
 						}
 
