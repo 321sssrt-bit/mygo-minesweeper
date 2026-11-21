@@ -30,6 +30,15 @@ func diffPixelCountInRect(a, b *image.RGBA, r ui.Rect, scale float32) int {
 	return changed
 }
 
+func rectContainsColorScaled(img *image.RGBA, r ui.Rect, scale float32, want ui.Color, tol int) bool {
+	return rectContainsColor(img, ui.Rect{
+		X: r.X * scale,
+		Y: r.Y * scale,
+		W: r.W * scale,
+		H: r.H * scale,
+	}, want, tol)
+}
+
 func TestStageHighlightPaletteContrastAndScan(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, m := range Members {
@@ -73,14 +82,18 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 		t.Run(backend+"/anon-two-targets-passthrough-and-lifecycle", func(t *testing.T) {
 			app := newMinesweeperApp(99)
 			app.memberID = MemberAnon
+			rows, cols, mines := 16, 16, 40
+			if backend == "canvas" {
+				rows, cols, mines = 50, 50, 425
+			}
 			app.game = NewGame(Difficulty{
 				ID:           "skill-test",
 				Song:         "迷星叫",
-				Subtitle:     "9×10",
+				Subtitle:     fmt.Sprintf("%d×%d", rows, cols),
 				Gameplay:     GameplayClassic,
-				Rows:         9,
-				Cols:         10,
-				Mines:        14,
+				Rows:         rows,
+				Cols:         cols,
+				Mines:        mines,
 				SkillCharges: 3,
 			}, true, MemberAnon, 99)
 
@@ -98,14 +111,17 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 				t.Fatalf("idle KeyE must not show quote strip or pulses: strip=%+v pulses=%d", app.quoteStrip, len(app.skillPulses))
 			}
 
-			// Start the game on (4,4) and settle initial wave.
+			// Start the game near center and settle initial wave.
+			startRow, startCol := rows/2, cols/2
 			if backend == "grid" {
-				r44, _ := tt.Find("cell-4-4")
-				tt.ClickAt(r44.X+r44.W/2, r44.Y+r44.H/2)
+				rc, _ := tt.Find(fmt.Sprintf("cell-%d-%d", startRow, startCol))
+				tt.ClickAt(rc.X+rc.W/2, rc.Y+rc.H/2)
 			} else {
 				br, _ := tt.Find("经典棋盘")
-				c44 := classicCanvasCellRect(br, app.board, 4, 4)
-				tt.ClickAt(c44.X+c44.W/2, c44.Y+c44.H/2)
+				app.board.center(app.game, startRow, startCol)
+				tt.Frame()
+				cc := classicCanvasCellRect(br, app.board, startRow, startCol)
+				tt.ClickAt(cc.X+cc.W/2, cc.Y+cc.H/2)
 			}
 			tt.Advance(600 * time.Millisecond)
 
@@ -123,10 +139,20 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 				t.Fatalf("expected 2 Anon skill target pulses, got %d (%+v)", len(app.skillPulses), app.skillPulses)
 			}
 			firstStart := app.quoteStrip.Start
+			wantStripBg := quoteStripColorsFor(MemberAnon, app.darkMode).Bg
 
-			// Advance into pulse peak and verify visible ring pixels compared to settled frame.
-			tt.Advance(160 * time.Millisecond)
-			pulseImg := tt.Image()
+			// Enter transition frame (t=+40ms): strip slides down at full opaque Bg (no contrast washout).
+			tt.Advance(40 * time.Millisecond)
+			stripRectEnter, ok := tt.Find("台词")
+			if !ok {
+				t.Fatal("quote strip not found during enter frame")
+			}
+			if !rectContainsColorScaled(tt.Image(), ui.Rect{X: stripRectEnter.X + 4, Y: max(float32(0), stripRectEnter.Y + 4), W: stripRectEnter.W - 8, H: max(float32(4), stripRectEnter.H - 8)}, 2, wantStripBg, 4) {
+				t.Errorf("quote strip enter frame did not render full opaque Bg %s", hexOf(wantStripBg))
+			}
+
+			// Advance into pulse peak & hold (t=+160ms total) and verify visible ring pixels.
+			tt.Advance(120 * time.Millisecond)
 			targetIdx := app.skillPulses[0].Index
 			tRow, tCol := targetIdx/app.game.Cols, targetIdx%app.game.Cols
 			var haloRect ui.Rect
@@ -137,48 +163,74 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 				}
 				haloRect = ui.Rect{X: tr.X - tr.W*0.5, Y: tr.Y - tr.H*0.5, W: tr.W * 2, H: tr.H * 2}
 			} else {
+				app.board.center(app.game, tRow, tCol)
+				tt.Frame()
 				br, _ := tt.Find("经典棋盘")
 				tr := classicCanvasCellRect(br, app.board, tRow, tCol)
 				haloRect = ui.Rect{X: tr.X - tr.W*0.5, Y: tr.Y - tr.H*0.5, W: tr.W * 2, H: tr.H * 2}
 			}
+			pulseImg := tt.Image()
 
-			// Verify pass-through: find a top-row cell overlapping the quote strip area and click/scroll through it.
+			// Verify pass-through directly over the quote strip's 26x26 avatar glyph center
+			// (not just the text middle!) so IgnoreInput cascades into ui.Avatar's inner text.
+			stripRect, ok := tt.Find("台词")
+			if !ok {
+				t.Fatal("quote strip not found during hold frame")
+			}
+			if !rectContainsColorScaled(tt.Image(), ui.Rect{X: stripRect.X + 4, Y: stripRect.Y + 4, W: stripRect.W - 8, H: stripRect.H - 8}, 2, wantStripBg, 4) {
+				t.Errorf("quote strip hold frame did not render full opaque Bg %s", hexOf(wantStripBg))
+			}
+			// Avatar sits at left padding (12) + radius (13) horizontally, vertically centered in strip.
+			avatarX := stripRect.X + 12 + 13
+			avatarY := stripRect.Y + stripRect.H/2
 			if backend == "grid" {
-				// Find an unrevealed safe cell in row 0 (under top-center quote strip) and right-click it through the strip.
-				for col := 2; col <= 7; col++ {
-					cell := app.game.Cell(0, col)
-					if !cell.Revealed && !cell.Flagged {
-						rc, ok := tt.Find(fmt.Sprintf("cell-0-%d", col))
+				hitCell := false
+				for row := 0; row <= 2 && !hitCell; row++ {
+					for col := range app.game.Cols {
+						rc, ok := tt.Find(fmt.Sprintf("cell-%d-%d", row, col))
 						if !ok {
 							continue
 						}
-						tt.RightClickAt(rc.X+rc.W/2, rc.Y+rc.H/2)
-						if !cell.Flagged {
-							t.Fatalf("quote strip blocked right-click pass-through on (0,%d)", col)
+						if avatarX >= rc.X && avatarX < rc.X+rc.W && avatarY >= rc.Y && avatarY < rc.Y+rc.H {
+							cell := app.game.Cell(row, col)
+							if cell.Revealed {
+								// Ensure an unrevealed cell sits under the avatar for flag toggle check.
+								cell.Revealed = false
+								tt.Frame()
+							}
+							tt.RightClickAt(avatarX, avatarY)
+							if !cell.Flagged {
+								t.Fatalf("quote strip avatar glyph blocked right-click on cell (%d,%d) at (%.1f,%.1f)", row, col, avatarX, avatarY)
+							}
+							hitCell = true
+							break
 						}
-						break
 					}
+				}
+				if !hitCell {
+					t.Fatalf("could not align avatar center (%.1f,%.1f) over a grid cell", avatarX, avatarY)
 				}
 			} else {
 				br, _ := tt.Find("经典棋盘")
-				// Scroll directly over the top-center strip region: canvas zoom must change!
+				// Scroll directly over the avatar glyph center: canvas zoom must change!
 				beforeCell := app.board.Cell
-				stripX := br.X + br.W/2
-				stripY := br.Y + 28
-				tt.Scroll(stripX, stripY, 0, -120)
+				tt.Scroll(avatarX, avatarY, 0, -120)
 				if app.board.Cell == beforeCell {
-					t.Fatalf("quote strip blocked wheel zoom pass-through on canvas (cell stayed %.2f)", beforeCell)
+					t.Fatalf("quote strip avatar glyph blocked wheel zoom at (%.1f,%.1f) (cell stayed %.2f)", avatarX, avatarY, beforeCell)
 				}
-				// Click through the top-center strip onto the cell directly beneath it.
-				row, col, ok := app.board.cellAt(app.game, stripX-br.X, stripY-br.Y)
-				if ok {
-					cell := app.game.Cell(row, col)
-					if !cell.Revealed && !cell.Flagged {
-						tt.RightClickAt(stripX, stripY)
-						if !cell.Flagged {
-							t.Fatalf("quote strip blocked click pass-through on canvas cell (%d,%d)", row, col)
-						}
-					}
+				// Right-click directly over the avatar glyph center: must flag the cell beneath!
+				row, col, ok := app.board.cellAt(app.game, avatarX-br.X, avatarY-br.Y)
+				if !ok {
+					t.Fatalf("avatar center (%.1f,%.1f) did not map to a canvas cell (board=%+v)", avatarX, avatarY, br)
+				}
+				cell := app.game.Cell(row, col)
+				if cell.Revealed {
+					cell.Revealed = false
+					tt.Frame()
+				}
+				tt.RightClickAt(avatarX, avatarY)
+				if !cell.Flagged {
+					t.Fatalf("quote strip avatar glyph blocked click pass-through on canvas cell (%d,%d)", row, col)
 				}
 			}
 
@@ -192,14 +244,20 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 				t.Fatalf("second skill trigger did not replace strip timer: first=%v second=%v", firstStart, app.quoteStrip.Start)
 			}
 
-			// At +800ms after second trigger (1400ms after first), strip must still be active.
-			tt.Advance(800 * time.Millisecond)
+			// Check exit transition frame (+1080ms after 2nd trigger, inside final 180ms slide-out):
+			// visible strip pixels must still keep full opaque sc.Bg (no alpha washout).
+			tt.Advance(1080 * time.Millisecond)
 			if !app.quoteStrip.Active {
-				t.Fatal("replaced quote strip expired prematurely on old timer")
+				t.Fatal("replaced quote strip expired prematurely before 1.2s")
+			}
+			if exitRect, ok := tt.Find("台词"); ok {
+				if !rectContainsColorScaled(tt.Image(), ui.Rect{X: exitRect.X + 4, Y: max(float32(0), exitRect.Y + 4), W: exitRect.W - 8, H: max(float32(4), exitRect.H - 8)}, 2, wantStripBg, 4) {
+					t.Errorf("quote strip exit frame faded Bg away from opaque %s", hexOf(wantStripBg))
+				}
 			}
 
 			// After full 1.2s + pulse expiry, both strip and pulses must settle completely.
-			tt.Advance(500 * time.Millisecond)
+			tt.Advance(220 * time.Millisecond)
 			if app.quoteStrip.Active || len(app.skillPulses) != 0 {
 				t.Fatalf("expected quote strip & skill pulses cleared after lifecycle: strip=%v pulses=%d",
 					app.quoteStrip.Active, len(app.skillPulses))
@@ -574,7 +632,18 @@ func TestMemeUnlockGoldenStripFirstOnlyAndTimedDuel(t *testing.T) {
 		t.Fatal("golden meme strip blocked wheel zoom pass-through")
 	}
 
-	tt.Advance(memeStripDuration + 50*time.Millisecond)
+	// Advance into the final 200ms exit slide (duel settled ~100ms before tt.Advance(1100ms) ended).
+	tt.Advance(memeStripDuration - 220*time.Millisecond)
+	if !app.memeStrip.Active {
+		t.Fatal("expected golden meme strip still visible during exit slide")
+	}
+	if memeRect, ok := tt.Find("★ 一辈子！"); ok {
+		wantMemeBg := memeStripColorsFor(app.darkMode).Bg
+		if !rectContainsColor(tt.Image(), ui.Rect{X: memeRect.X - 4, Y: max(float32(0), memeRect.Y), W: memeRect.W + 8, H: memeRect.H}, wantMemeBg, 4) {
+			t.Errorf("meme strip exit frame faded Bg away from opaque %s", hexOf(wantMemeBg))
+		}
+	}
+	tt.Advance(260 * time.Millisecond)
 	if app.memeStrip.Active {
 		t.Fatal("expected golden meme strip expired")
 	}

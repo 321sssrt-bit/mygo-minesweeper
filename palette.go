@@ -608,17 +608,11 @@ func knotSVG(c ui.Color) string {
 // avatarInk writes on a 代表色 avatar; every 代表色 is a light pastel.
 var avatarInk = ui.Hex("#2E2A25")
 
-// memberAvatarEl creates the circular member avatar element so callers can
-// chain modifiers such as PassThrough on decorative overlays.
-func memberAvatarEl(c *ui.Context, m Member, size float32, pal *palette) ui.Element {
-	return ui.Avatar(c, m.Glyph, nil).Label(m.Name).Size(size, size).Radius(size/2).
-		Background(ui.Hex(m.ColorHex)).TextColor(avatarInk).Shadow(0, 1, 2, 0, pal.SlipShade)
-}
-
 // memberAvatar is mygo's ui.Avatar showing one 文楷 character on the
 // member's 代表色, in place of the colour Avatar hashes from a name.
 func memberAvatar(c *ui.Context, m Member, size float32, pal *palette) {
-	memberAvatarEl(c, m, size, pal)
+	ui.Avatar(c, m.Glyph, nil).Label(m.Name).Size(size, size).Radius(size/2).
+		Background(ui.Hex(m.ColorHex)).TextColor(avatarInk).Shadow(0, 1, 2, 0, pal.SlipShade)
 }
 
 // quoteStripColors holds the palette-derived paper slip, masking tape, and

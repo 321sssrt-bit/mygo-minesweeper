@@ -1004,9 +1004,6 @@ func (a *minesweeperApp) enqueueSkillPulses(memberID MemberID, targets []int, no
 	}
 	a.pruneSkillPulses(now)
 	for _, idx := range targets {
-		if idx < 0 || idx >= len(a.game.Cells) {
-			continue
-		}
 		a.skillPulses = append(a.skillPulses, skillTargetPulse{
 			Index:    idx,
 			MemberID: memberID,
@@ -1030,7 +1027,7 @@ func (a *minesweeperApp) pruneSkillPulses(now time.Time) {
 }
 
 func (a *minesweeperApp) enqueueKnotBurst(now time.Time, idx int) {
-	if a.motionReducedActive || idx < 0 || idx >= len(a.game.Cells) {
+	if a.motionReducedActive {
 		return
 	}
 	a.pruneKnotBursts(now)
@@ -1057,21 +1054,16 @@ func (a *minesweeperApp) pruneKnotBursts(now time.Time) {
 	a.knotBursts = kept
 }
 
-func explodedCellIndex(g *Game, fallbackRow, fallbackCol int) int {
-	if g.duel != nil && g.duel.LastAction >= 0 && g.duel.LastAction < len(g.Cells) && g.Cells[g.duel.LastAction].Exploded {
+func explodedCellIndex(g *Game) int {
+	if g.duel != nil {
 		return g.duel.LastAction
 	}
-	if g.duel == nil {
-		for i := range g.Cells {
-			if g.Cells[i].Exploded {
-				return i
-			}
+	for i := range g.Cells {
+		if g.Cells[i].Exploded {
+			return i
 		}
 	}
-	if fallbackRow >= 0 && fallbackRow < g.Rows && fallbackCol >= 0 && fallbackCol < g.Cols {
-		return fallbackRow*g.Cols + fallbackCol
-	}
-	return -1
+	return 0
 }
 
 // buildConfettiPieces creates a deterministic, bounded cascade of five-member
@@ -1274,25 +1266,27 @@ func (a *minesweeperApp) paintConfetti(p *ui.Painter, r ui.Rect, pal *palette, n
 	p.AnimationFrame()
 }
 
-func stripMotion(elapsed, total, enter, exit time.Duration, reduced bool) (alpha, offsetY float32, animFrame bool) {
-	fadeStart := total - exit
+// stripSlide returns the vertical slide offset and next wake delay for a stage
+// strip. Strips stay at full opacity across enter, hold, and exit—sliding out
+// from and back under the clipped stage top edge—so text keeps >= 4.5:1
+// contrast on every visible frame; reduced motion holds statically at 0 offset.
+func stripSlide(elapsed, total, enter, exit time.Duration, reduced bool) (offsetY float32, nextWake time.Duration) {
+	remain := total - elapsed
 	if reduced {
-		if elapsed >= fadeStart {
-			u := float32(elapsed-fadeStart) / float32(exit)
-			return max(0, 1-u), 0, true
-		}
-		return 1, 0, false
+		return 0, max(time.Millisecond, remain)
 	}
+	exitStart := total - exit
 	if elapsed < enter {
 		u := float32(elapsed) / float32(enter)
 		ease := 1 - (1-u)*(1-u)*(1-u)
-		return 0.28 + 0.72*ease, -12 * (1 - ease), true
+		return -36 * (1 - ease), min(16*time.Millisecond, max(time.Millisecond, enter-elapsed))
 	}
-	if elapsed >= fadeStart {
-		u := float32(elapsed-fadeStart) / float32(exit)
-		return max(0, 1-u), -8 * u, true
+	if elapsed >= exitStart {
+		u := float32(elapsed-exitStart) / float32(exit)
+		ease := u * u
+		return -56 * ease, min(16*time.Millisecond, max(time.Millisecond, remain))
 	}
-	return 1, 0, false
+	return 0, max(time.Millisecond, exitStart-elapsed)
 }
 
 func (a *minesweeperApp) stageHighlightsOverlay(c *ui.Context, pal *palette, now time.Time) {
@@ -1305,7 +1299,7 @@ func (a *minesweeperApp) stageHighlightsOverlay(c *ui.Context, pal *palette, now
 
 	if confettiActive {
 		ui.Box(c.Key("stage-confetti")).Absolute().Top(0).Bottom(0).Start(0).End(0).
-			PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
+			IgnoreInput(true).Draw(func(p *ui.Painter, r ui.Rect) {
 			a.paintConfetti(p, r, pal, p.Now())
 		})
 	}
@@ -1320,22 +1314,17 @@ func (a *minesweeperApp) stageHighlightsOverlay(c *ui.Context, pal *palette, now
 	}
 
 	ui.Column(c.Key("stage-highlights-stack")).Absolute().Top(topOffset).Start(12).End(12).
-		AlignItems(ui.Center).Gap(6).PassThrough().Children(func() {
+		AlignItems(ui.Center).Gap(6).IgnoreInput(true).Children(func() {
 		if quoteActive {
 			qs := a.quoteStrip
 			elapsed := now.Sub(qs.Start)
-			alpha, offsetY, anim := stripMotion(elapsed, quoteStripDuration, 140*time.Millisecond, 260*time.Millisecond, a.motionReducedActive)
-			remain := quoteStripDuration - elapsed
-			if anim {
-				c.After(min(16*time.Millisecond, max(time.Millisecond, remain)))
-			} else {
-				c.After(min(50*time.Millisecond, max(time.Millisecond, remain)))
-			}
+			offsetY, nextWake := stripSlide(elapsed, quoteStripDuration, 140*time.Millisecond, 180*time.Millisecond, a.motionReducedActive)
+			c.After(nextWake)
 			m := FindMember(qs.MemberID)
 			sc := quoteStripColorsFor(qs.MemberID, pal.Dark)
 			strip := ui.Row(c.Key("stage-quote-strip")).MaxWidth(480).Padding(8, 12).Gap(9).Radius(4).
 				AlignItems(ui.Center).Background(sc.Bg).Border(1, sc.Border).
-				Shadow(0, 2, 7, 0, pal.SlipShade).Opacity(alpha).PassThrough().
+				Shadow(0, 2, 7, 0, pal.SlipShade).Label("台词").
 				Draw(func(p *ui.Painter, r ui.Rect) {
 					p.Fill(ui.Rect{X: r.X, Y: r.Y, W: 3.5, H: r.H}, sc.Accent, 2)
 					tape := ui.Rect{X: r.X + 20, Y: r.Y - 5, W: 48, H: 11}
@@ -1347,13 +1336,13 @@ func (a *minesweeperApp) stageHighlightsOverlay(c *ui.Context, pal *palette, now
 				strip.Translate(0, offsetY)
 			}
 			strip.Children(func() {
-				memberAvatarEl(c, m, 26, pal).PassThrough()
-				ui.Column(c).Gap(1).PassThrough().Children(func() {
-					ui.Row(c).AlignItems(ui.Baseline).Gap(6).PassThrough().Children(func() {
-						ui.Text(c, m.Name).FontSize(12.5).Bold().TextColor(sc.NameInk).SingleLine().PassThrough()
-						ui.Text(c, m.Role).FontSize(10.5).TextColor(sc.RoleInk).SingleLine().PassThrough()
+				memberAvatar(c, m, 26, pal)
+				ui.Column(c).Gap(1).Children(func() {
+					ui.Row(c).AlignItems(ui.Baseline).Gap(6).Children(func() {
+						ui.Text(c, m.Name).FontSize(12.5).Bold().TextColor(sc.NameInk).SingleLine()
+						ui.Text(c, m.Role).FontSize(10.5).TextColor(sc.RoleInk).SingleLine()
 					})
-					ui.Text(c, qs.Text).FontSize(12.5).TextColor(sc.TextInk).PassThrough()
+					ui.Text(c, qs.Text).FontSize(12.5).TextColor(sc.TextInk)
 				})
 			})
 		}
@@ -1361,17 +1350,12 @@ func (a *minesweeperApp) stageHighlightsOverlay(c *ui.Context, pal *palette, now
 		if memeActive {
 			ms := a.memeStrip
 			elapsed := now.Sub(ms.Start)
-			alpha, offsetY, anim := stripMotion(elapsed, memeStripDuration, 160*time.Millisecond, 320*time.Millisecond, a.motionReducedActive)
-			remain := memeStripDuration - elapsed
-			if anim {
-				c.After(min(16*time.Millisecond, max(time.Millisecond, remain)))
-			} else {
-				c.After(min(50*time.Millisecond, max(time.Millisecond, remain)))
-			}
+			offsetY, nextWake := stripSlide(elapsed, memeStripDuration, 160*time.Millisecond, 200*time.Millisecond, a.motionReducedActive)
+			c.After(nextWake)
 			mc := memeStripColorsFor(pal.Dark)
 			card := ui.Column(c.Key("stage-meme-strip")).MaxWidth(460).Padding(7, 13).Gap(2).Radius(4).
 				Background(mc.Bg).Border(1.2, mc.Border).
-				Shadow(0, 2, 7, 0, pal.SlipShade).Opacity(alpha).PassThrough().
+				Shadow(0, 2, 7, 0, pal.SlipShade).
 				Draw(func(p *ui.Painter, r ui.Rect) {
 					p.Fill(ui.Rect{X: r.X, Y: r.Y, W: 4, H: r.H}, mc.Accent, 2)
 					tape := ui.Rect{X: r.X + r.W - 58, Y: r.Y - 5, W: 44, H: 10}
@@ -1383,9 +1367,9 @@ func (a *minesweeperApp) stageHighlightsOverlay(c *ui.Context, pal *palette, now
 				card.Translate(0, offsetY)
 			}
 			card.Children(func() {
-				ui.Text(c, "名场面解锁").FontSize(11).Bold().TextColor(mc.EyebrowInk).SingleLine().PassThrough()
+				ui.Text(c, "名场面解锁").FontSize(11).Bold().TextColor(mc.EyebrowInk).SingleLine()
 				for _, meme := range ms.Memes {
-					ui.Text(c, "★ "+meme.Title).FontSize(13).Bold().TextColor(mc.TitleInk).SingleLine().PassThrough()
+					ui.Text(c, "★ "+meme.Title).FontSize(13).Bold().TextColor(mc.TitleInk).SingleLine()
 				}
 			})
 		}
@@ -1565,7 +1549,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 	case ActionSkill:
 		c.Toast(fmt.Sprintf("%s 发动「%s」", m.Name, m.SkillName))
 	case ActionLost:
-		a.enqueueKnotBurst(now, explodedCellIndex(a.game, clickRow, clickCol))
+		a.enqueueKnotBurst(now, explodedCellIndex(a.game))
 		a.triggerShake(now, 9.0, 320*time.Millisecond)
 		if a.isDuel() {
 			c.Toast("踩雷 −100 · 硬直 2.4 秒！小心被灯拉开比分")
@@ -2668,7 +2652,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					byHeight := (availableH - 230 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
 					cellSize = max(22, min(64, min(byWidth, byHeight)))
 					cellFont = max(12, cellSize*0.48)
-					ui.Column(c.Key("classic-grid-stage")).Grow(1).FillWidth().Children(func() {
+					ui.Column(c.Key("classic-grid-stage")).Grow(1).FillWidth().Clip().Children(func() {
 						stage := ui.ScrollBoth(c).Grow(1).FillWidth().Clip().Draw(func(p *ui.Painter, bounds ui.Rect) {
 							byWidth := (bounds.W - 28 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
 							byHeight := (bounds.H - 28 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
@@ -2934,8 +2918,8 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									flagBmp, shieldBmp := art.FlagBitmap, art.ShieldBitmap
 									sx, sy := shakeX, shakeY
 									palCopy := pal
-									nowCopy := now
 									grid.DrawOver(func(p *ui.Painter, r ui.Rect) {
+										drawNow := p.Now()
 										drawOverlays := func() {
 											for _, ls := range liftingCopy {
 												cellRect := ui.Rect{
@@ -2964,7 +2948,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 											}
 											if hasGridPulses {
 												for _, pulse := range pulsesCopy {
-													elapsed := nowCopy.Sub(pulse.Start)
+													elapsed := drawNow.Sub(pulse.Start)
 													if elapsed < 0 || elapsed >= skillPulseDuration {
 														continue
 													}
@@ -2980,7 +2964,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 											}
 											if hasGridBursts {
 												for _, burst := range burstsCopy {
-													elapsed := nowCopy.Sub(burst.Start)
+													elapsed := drawNow.Sub(burst.Start)
 													if elapsed < 0 || elapsed >= knotBurstDuration {
 														continue
 													}

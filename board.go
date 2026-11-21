@@ -546,7 +546,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 	v := a.board
 	a.syncMotionState(a.reducedMotion(c))
 	v.clamp(a.game)
-	ui.Column(c.Key(stageKey)).Grow(1).FillWidth().Children(func() {
+	ui.Column(c.Key(stageKey)).Grow(1).FillWidth().Clip().Children(func() {
 		boardBox := ui.Box(c.Key(boardKey)).Grow(1).FillWidth().Label(label).
 			Cursor(ui.CursorPointer).Focusable()
 		if v.HoverRow >= 0 && v.HoverCol >= 0 {
