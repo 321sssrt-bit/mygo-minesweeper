@@ -559,11 +559,61 @@ func (a *minesweeperApp) enqueueRipple(now time.Time, wave []RevealWaveEntry, lo
 	if a.ripples == nil {
 		a.ripples = make(map[int]tileRipple, len(wave))
 	}
+	if len(wave) > MaxRevealWaveEntries {
+		wave = wave[:MaxRevealWaveEntries]
+	}
+	needed := 0
+	for _, entry := range wave {
+		if _, exists := a.ripples[entry.Index]; !exists {
+			needed++
+		}
+	}
+	if overflow := len(a.ripples) + needed - MaxRevealWaveEntries; overflow > 0 {
+		type candidate struct {
+			idx      int
+			washOnly bool
+			start    time.Time
+			delay    time.Duration
+		}
+		cands := make([]candidate, 0, len(a.ripples))
+		for idx, rip := range a.ripples {
+			elapsed := now.Sub(rip.Start)
+			cands = append(cands, candidate{
+				idx:      idx,
+				washOnly: elapsed >= rip.Delay+peelDuration,
+				start:    rip.Start,
+				delay:    rip.Delay,
+			})
+		}
+		// Prefer evicting older wash-only entries first, then the furthest-delayed
+		// waiting slips of older waves so a brand-new move always gets its peel.
+		slices.SortFunc(cands, func(x, y candidate) int {
+			if x.washOnly != y.washOnly {
+				if x.washOnly {
+					return -1
+				}
+				return 1
+			}
+			if !x.start.Equal(y.start) {
+				if x.start.Before(y.start) {
+					return -1
+				}
+				return 1
+			}
+			if x.delay != y.delay {
+				if x.delay > y.delay {
+					return -1
+				}
+				return 1
+			}
+			return x.idx - y.idx
+		})
+		for i := 0; i < overflow && i < len(cands); i++ {
+			delete(a.ripples, cands[i].idx)
+		}
+	}
 	for _, entry := range wave {
 		delete(a.bandages, entry.Index)
-		if _, exists := a.ripples[entry.Index]; !exists && len(a.ripples) >= MaxRevealWaveEntries {
-			break
-		}
 		delay := time.Duration(waveStep(entry.Depth)) * rippleStepDelay
 		a.ripples[entry.Index] = tileRipple{Start: now, Delay: delay, Color: lockedColor}
 	}
@@ -611,7 +661,7 @@ func (a *minesweeperApp) tilePeelAt(idx int, now time.Time) tilePeelState {
 }
 
 func (a *minesweeperApp) enqueueBandage(now time.Time, idx int, kind bandageAnimKind, shield bool) {
-	if a.motionReducedActive || idx < 0 {
+	if a.motionReducedActive {
 		return
 	}
 	a.pruneBandages(now)
@@ -705,7 +755,7 @@ func paintPeelOverlay(
 		return
 	}
 
-	t := max(float32(0), min(float32(1), peelT))
+	t := peelT
 	ease := 1 - (1-t)*(1-t)*(1-t)
 	alpha := 1 - t
 	shadeAlpha := (1 - t) * (1 - t)
@@ -733,15 +783,11 @@ func paintPeelOverlay(
 // paintBandagePeel draws a removed band-aid lifting diagonally and fading out
 // over the restored paper slip (or ? mark).
 func paintBandagePeel(p *ui.Painter, tile ui.Rect, bmp *ui.Bitmap, iconScale, peelT float32) {
-	if bmp == nil {
-		return
-	}
-	t := max(float32(0), min(float32(1), peelT))
-	alpha := 1 - t
+	alpha := 1 - peelT
 	if alpha <= 0.01 {
 		return
 	}
-	ease := 1 - (1-t)*(1-t)
+	ease := 1 - (1-peelT)*(1-peelT)
 	s := min(tile.W, tile.H) * iconScale
 	dst := ui.Rect{
 		X: tile.X + (tile.W-s)/2,
@@ -758,6 +804,22 @@ func paintBandagePeel(p *ui.Painter, tile ui.Rect, bmp *ui.Bitmap, iconScale, pe
 	p.Transform(xf, cx, cy, func() {
 		p.ImageRegion(bmp, ui.Rect{}, dst, ui.ImageOptions{Tint: fadeTint(alpha)})
 	})
+}
+
+// cellAccessValue returns the immediate frame-0 accessibility value for a cell
+// ("0".."8" for revealed safe cells, "?" for questioned slips, "" otherwise).
+func cellAccessValue(cell *Cell) string {
+	switch {
+	case cell.Revealed && !cell.IsMine:
+		if cell.Adjacent > 0 {
+			return strconv.Itoa(cell.Adjacent)
+		}
+		return "0"
+	case cell.Questioned:
+		return "?"
+	default:
+		return ""
+	}
 }
 
 func (a *minesweeperApp) spawnDuelPopup(row, col int, res ActionResult, now time.Time) {
@@ -839,9 +901,9 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 		lockedWash = memberImage(a.memberID)
 	}
 	a.enqueueRipple(now, res.RevealWave, lockedWash)
-	if res.Kind == ActionSkill && !a.motionReducedActive && a.game != nil {
+	if res.Kind == ActionSkill && !a.motionReducedActive {
 		for _, idx := range res.SkillTargets {
-			if idx >= 0 && idx < len(a.game.Cells) && a.game.Cells[idx].Flagged {
+			if a.game.Cells[idx].Flagged {
 				a.enqueueBandage(now, idx, bandageBounce, a.game.Cells[idx].ShieldSaved)
 			}
 		}
@@ -1019,7 +1081,7 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 		a.elapsed = int(d.Elapsed)
 		if tick.AITurn != nil && tick.AITurn.Kind != ActionNoop {
 			a.enqueueRipple(now, tick.AITurn.RevealWave, ui.Color{})
-			if tick.AITurn.Kind == ActionFlagged && tick.AICell >= 0 && tick.AICell < len(a.game.Cells) {
+			if tick.AITurn.Kind == ActionFlagged {
 				a.enqueueBandage(now, tick.AICell, bandageBounce, a.game.Cells[tick.AICell].ShieldSaved)
 			}
 			if tick.AITurn.RevealedCount > 0 {
@@ -2077,6 +2139,19 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									}
 								})
 							})
+							type gridLiftingSlip struct {
+								row, col, idx int
+								peelT         float32
+								tilt          float32
+							}
+							type gridPeelingBandage struct {
+								row, col int
+								shield   bool
+								peelT    float32
+								tilt     float32
+							}
+							var gridLifting []gridLiftingSlip
+							var gridPeeling []gridPeelingBandage
 							grid.Children(func() {
 								for i := range a.game.Cells {
 									cell := &a.game.Cells[i]
@@ -2110,6 +2185,9 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									var tileTextColor ui.Color
 									var tileArt *ui.SVG
 
+									if val := cellAccessValue(cell); val != "" {
+										tile.Value(val)
+									}
 									switch {
 									case cell.Revealed:
 										switch {
@@ -2131,12 +2209,10 @@ func (a *minesweeperApp) view(c *ui.Context) {
 											tileText = fmt.Sprintf("%d", cell.Adjacent)
 											tileTextSize = cellFont * 1.08
 											tileTextColor = numberInk(cell.Adjacent, pal.Dark)
-											tile.Value(tileText)
 										default:
 											if washActive {
 												tileBg = washColor.Alpha(0.26 * peel.washAlpha)
 											}
-											tile.Value("0")
 										}
 									case cell.WrongFlag:
 										slip, tileArt = true, art.WrongFlag
@@ -2148,7 +2224,6 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									case cell.Questioned:
 										slip, tileCursor = true, true
 										tileText, tileTextSize, tileTextColor = "?", cellFont*1.08, pal.Graphite
-										tile.Value("?")
 									default:
 										slip, tileCursor = true, true
 									}
@@ -2213,7 +2288,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 												el = ui.Text(c, tileText).FontSize(tileTextSize).Bold().TextColor(tileTextColor).PassThrough()
 											}
 											switch {
-											case tileArt != nil && hasBounce:
+											case hasBounce:
 												xf := ui.Scaling(bounceScale, bounceScale).Then(ui.Rotation(tiltCopy + bounceRot))
 												if shakeX != 0 || shakeY != 0 {
 													xf = xf.Then(ui.Translation(shakeX, shakeY))
@@ -2230,21 +2305,18 @@ func (a *minesweeperApp) view(c *ui.Context) {
 											}
 										})
 									}
-									if peel.stage == tilePeelCovered || peel.stage == tilePeelLifting {
+									switch {
+									case peel.stage == tilePeelCovered:
 										coverBg := pal.Slip
-										if isHintTarget {
-											coverBg = hintColor.Alpha(0.42).Over(pal.Slip)
-										} else if peel.stage == tilePeelCovered && tile.Hovered() {
+										if tile.Hovered() {
 											coverBg = pal.Slip.Mix(pal.Sheet, 0.45)
 										}
-										lifting := peel.stage == tilePeelLifting
-										peelT := peel.peelT
 										shadeCopy := pal.SlipShade
 										cellIdx := i
 										sx, sy := shakeX, shakeY
 										tile.DrawOver(func(p *ui.Painter, r ui.Rect) {
 											draw := func() {
-												paintPeelOverlay(p, r, 4, coverBg, shadeCopy, tiltCopy, cellIdx, lifting, peelT, true)
+												paintPeelOverlay(p, r, 4, coverBg, shadeCopy, tiltCopy, cellIdx, false, 0, true)
 											}
 											if sx != 0 || sy != 0 {
 												p.Transform(ui.Translation(sx, sy), 0, 0, draw)
@@ -2252,22 +2324,17 @@ func (a *minesweeperApp) view(c *ui.Context) {
 												draw()
 											}
 										})
-									} else if !cell.Revealed && !cell.Flagged && hasBandage && bAnim.Kind == bandagePeel {
-										bmp := art.FlagBitmap
-										if bAnim.Shield {
-											bmp = art.ShieldBitmap
-										}
-										peelT := float32(now.Sub(bAnim.Start)) / float32(bandagePeelDuration)
-										sx, sy := shakeX, shakeY
-										tile.DrawOver(func(p *ui.Painter, r ui.Rect) {
-											cx, cy := r.X+r.W/2, r.Y+r.H/2
-											xf := ui.Rotation(tiltCopy)
-											if sx != 0 || sy != 0 {
-												xf = xf.Then(ui.Translation(sx, sy))
-											}
-											p.Transform(xf, cx, cy, func() {
-												paintBandagePeel(p, r, bmp, 0.82, peelT)
-											})
+									case peel.stage == tilePeelLifting:
+										gridLifting = append(gridLifting, gridLiftingSlip{
+											row: row, col: col, idx: i, peelT: peel.peelT, tilt: tiltCopy,
+										})
+									case !cell.Flagged && hasBandage && bAnim.Kind == bandagePeel:
+										gridPeeling = append(gridPeeling, gridPeelingBandage{
+											row:    row,
+											col:    col,
+											shield: bAnim.Shield,
+											peelT:  float32(now.Sub(bAnim.Start)) / float32(bandagePeelDuration),
+											tilt:   tiltCopy,
 										})
 									}
 
@@ -2278,6 +2345,47 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									}
 								}
 							})
+							if len(gridLifting) > 0 || len(gridPeeling) > 0 {
+								liftingCopy := gridLifting
+								peelingCopy := gridPeeling
+								slipCol, shadeCol := pal.Slip, pal.SlipShade
+								flagBmp, shieldBmp := art.FlagBitmap, art.ShieldBitmap
+								sx, sy := shakeX, shakeY
+								grid.DrawOver(func(p *ui.Painter, r ui.Rect) {
+									drawOverlays := func() {
+										for _, ls := range liftingCopy {
+											cellRect := ui.Rect{
+												X: r.X + gridPad + float32(ls.col)*pitch,
+												Y: r.Y + gridPad + float32(ls.row)*pitch,
+												W: cellSize,
+												H: cellSize,
+											}
+											paintPeelOverlay(p, cellRect, 4, slipCol, shadeCol, ls.tilt, ls.idx, true, ls.peelT, true)
+										}
+										for _, pb := range peelingCopy {
+											cellRect := ui.Rect{
+												X: r.X + gridPad + float32(pb.col)*pitch,
+												Y: r.Y + gridPad + float32(pb.row)*pitch,
+												W: cellSize,
+												H: cellSize,
+											}
+											bmp := flagBmp
+											if pb.shield {
+												bmp = shieldBmp
+											}
+											cx, cy := cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2
+											p.Transform(ui.Rotation(pb.tilt), cx, cy, func() {
+												paintBandagePeel(p, cellRect, bmp, 0.82, pb.peelT)
+											})
+										}
+									}
+									if sx != 0 || sy != 0 {
+										p.Transform(ui.Translation(sx, sy), 0, 0, drawOverlays)
+									} else {
+										drawOverlays()
+									}
+								})
+							}
 						})
 					})
 					if nextHoverRow != a.classicHoverRow || nextHoverCol != a.classicHoverCol {

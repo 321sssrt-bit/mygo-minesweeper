@@ -558,7 +558,7 @@ var dayArt, nightArt = newPaperArt(dayPaper), newPaperArt(nightPaper)
 var propTintWhite = ui.Hex("#FFFFFF")
 
 func fadeTint(alpha float32) ui.Color {
-	return propTintWhite.Alpha(max(float32(0), min(float32(1), alpha)))
+	return propTintWhite.Alpha(alpha)
 }
 
 func artFor(dark bool) *paperArt {

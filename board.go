@@ -456,17 +456,15 @@ type cellFlagSnapshot struct {
 func (a *minesweeperApp) applyCellAction(row, col, button int, now time.Time) ActionResult {
 	var before [9]cellFlagSnapshot
 	beforeCount := 0
-	if a.game != nil {
-		for dr := -1; dr <= 1; dr++ {
-			for dc := -1; dc <= 1; dc++ {
-				if c := a.game.Cell(row+dr, col+dc); c != nil {
-					before[beforeCount] = cellFlagSnapshot{
-						idx:     c.Row*a.game.Cols + c.Col,
-						flagged: c.Flagged,
-						shield:  c.ShieldSaved,
-					}
-					beforeCount++
+	for dr := -1; dr <= 1; dr++ {
+		for dc := -1; dc <= 1; dc++ {
+			if c := a.game.Cell(row+dr, col+dc); c != nil {
+				before[beforeCount] = cellFlagSnapshot{
+					idx:     c.Row*a.game.Cols + c.Col,
+					flagged: c.Flagged,
+					shield:  c.ShieldSaved,
 				}
+				beforeCount++
 			}
 		}
 	}
@@ -551,6 +549,13 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 	ui.Column(c.Key(stageKey)).Grow(1).FillWidth().Children(func() {
 		boardBox := ui.Box(c.Key(boardKey)).Grow(1).FillWidth().Label(label).
 			Cursor(ui.CursorPointer).Focusable()
+		if v.HoverRow >= 0 && v.HoverCol >= 0 {
+			if hoverCell := a.game.Cell(v.HoverRow, v.HoverCol); hoverCell != nil {
+				if val := cellAccessValue(hoverCell); val != "" {
+					boardBox.Value(val)
+				}
+			}
+		}
 		hovered := boardBox.Hovered()
 		if v.WasHovered && !hovered && !v.Pressed {
 			v.HasHover = false
@@ -834,17 +839,11 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 						peel = a.tilePeelAt(idx, now)
 					}
 					if peel.stage == tilePeelCovered {
-						bg, outline := pal.Slip, ui.Color{}
-						if isHintTarget {
-							if classic {
-								bg = hintFill.Alpha(0.42).Over(pal.Slip)
-							} else {
-								bg, outline = hintFill.Alpha(0.32).Over(pal.Slip), hintStroke
-							}
-						} else if hoverHint.Kind == HintNone && isHovered {
+						bg := pal.Slip
+						if hoverHint.Kind == HintNone && isHovered {
 							bg = pal.Slip.Mix(pal.Sheet, 0.45)
 						}
-						paintSlip(p, tile, radius, bg, pal.SlipShade, outline, nil, ui.Color{}, detail)
+						paintSlip(p, tile, radius, bg, pal.SlipShade, ui.Color{}, nil, ui.Color{}, detail)
 						continue
 					}
 					washActive := peel.stage == tilePeelLifting || peel.stage == tilePeelWashOnly
@@ -924,6 +923,16 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 					}
 					if peel.stage == tilePeelLifting {
 						liftingSlips = append(liftingSlips, liftingSlipDraw{tile: tile, idx: idx, peelT: peel.peelT})
+					} else if hasBandages && detail {
+						// Unflagging a duel Soyorin shield leaves cell.Revealed == true while
+						// peeling the golden band-aid off the revealed mine.
+						if bAnim, ok := a.bandageAnimAt(idx, now); ok && bAnim.Kind == bandagePeel {
+							peelingBandages = append(peelingBandages, peelingBandageDraw{
+								tile:   tile,
+								shield: bAnim.Shield,
+								peelT:  float32(now.Sub(bAnim.Start)) / float32(bandagePeelDuration),
+							})
+						}
 					}
 				}
 			}

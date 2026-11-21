@@ -125,6 +125,20 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 					if !ok || accEmpty.Value != "0" {
 						t.Fatalf("expected frame-0 screen reader value \"0\" on cell-0-0, got ok=%v node=%+v", ok, accEmpty)
 					}
+				} else {
+					accOrigin, ok := tt.Access("经典棋盘")
+					if !ok || accOrigin.Value != "0" {
+						t.Fatalf("expected frame-0 canvas screen reader value \"0\" at (0,0), got ok=%v node=%+v", ok, accOrigin)
+					}
+					tt.Move(farRectBefore.X+farRectBefore.W/2, farRectBefore.Y+farRectBefore.H/2)
+					tt.Frame()
+					accFar, ok := tt.Access("经典棋盘")
+					if !ok || accFar.Value != "1" {
+						t.Fatalf("expected frame-0 canvas screen reader value \"1\" while hovering still-covered (0,11), got ok=%v node=%+v", ok, accFar)
+					}
+					// Move pointer back to origin so (0,11) paints unhovered pal.Slip for stage-1 check.
+					tt.Move(originRectBefore.X+originRectBefore.W/2, originRectBefore.Y+originRectBefore.H/2)
+					tt.Frame()
 				}
 
 				rip6 := app.ripples[0*13+6]
@@ -261,6 +275,54 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 		}
 		r00, _ := stt.Find("cell-0-0")
 		assertColorNear(t, "pre-staged revealed cell frame 0 bare paper", sampleCanvasPixel(stt.Image(), r00.X+r00.W/2, r00.Y+r00.H/2, 2), staged.paper().Board)
+	})
+
+	// When a previous flood filled all 256 wave slots, a subsequent click 50ms later
+	// still evicts an older slot and peels crisply while keeping the map bounded at 256.
+	t.Run("second-move-peels-when-wave-full", func(t *testing.T) {
+		var mines [][2]int
+		for col := range 20 {
+			mines = append(mines, [2]int{18, col})
+		}
+		app := newMinesweeperApp(7)
+		app.game = makeCorridorGame(20, 20, true, MemberTomori, mines)
+		tt := ui.NewTester(classicCanvasTestView(app), 1280, 900)
+		tt.SetScale(2)
+		tt.Frame()
+		board, _ := tt.Find("经典棋盘")
+
+		app.board.center(app.game, 0, 0)
+		tt.Frame()
+		r00 := classicCanvasCellRect(board, app.board, 0, 0)
+		tt.ClickAt(r00.X+r00.W/2, r00.Y+r00.H/2)
+		if len(app.ripples) != MaxRevealWaveEntries {
+			t.Fatalf("expected full %d-entry wave from upper flood, got %d", MaxRevealWaveEntries, len(app.ripples))
+		}
+
+		// 50ms later, reveal (19,0) below the mine barrier: must get its own zero-delay peel!
+		tt.Advance(50 * time.Millisecond)
+		app.board.center(app.game, 19, 0)
+		tt.Frame()
+		r19 := classicCanvasCellRect(board, app.board, 19, 0)
+		tt.ClickAt(r19.X+r19.W/2, r19.Y+r19.H/2)
+		idx19 := 19 * 20
+		if len(app.ripples) > MaxRevealWaveEntries {
+			t.Fatalf("wave map exceeded budget %d: got %d", MaxRevealWaveEntries, len(app.ripples))
+		}
+		rip19, ok := app.ripples[idx19]
+		if !ok || rip19.Delay != 0 {
+			t.Fatalf("expected second move (19,0) to enqueue with 0 delay, got ok=%v rip=%+v", ok, rip19)
+		}
+		// Mid-peel at +75ms: neither pure slip nor pure bare paper.
+		tt.Advance(75 * time.Millisecond)
+		pal := app.paper()
+		gotMid := sampleCanvasPixel(tt.Image(), r19.X+r19.W/2, r19.Y+r19.H/2, 2)
+		if near(gotMid.R, pal.Slip.R) && near(gotMid.G, pal.Slip.G) && near(gotMid.B, pal.Slip.B) {
+			t.Errorf("(19,0) slip did not lift after 75ms: still %s", hexOf(gotMid))
+		}
+		if near(gotMid.R, pal.Board.R) && near(gotMid.G, pal.Board.G) && near(gotMid.B, pal.Board.B) {
+			t.Errorf("(19,0) skipped peel and jumped straight to bare board %s", hexOf(gotMid))
+		}
 	})
 }
 
@@ -520,6 +582,56 @@ func TestBandageBounceAndPeelOffBothBackends(t *testing.T) {
 		}
 		if b, ok := app.bandages[5*6+5]; !ok || b.Kind != bandageBounce {
 			t.Fatalf("expected bandageBounce on AI flag (5,5), got ok=%v b=%+v", ok, b)
+		}
+	})
+
+	// Unflagging a Soyorin-shielded mine in duel leaves cell.Revealed == true while
+	// still rendering the golden shield band-aid's 110ms diagonal peel-off.
+	t.Run("duel-shield-unflag-peels-golden-bandage", func(t *testing.T) {
+		app := newMinesweeperApp(7)
+		app.diffIdx = findDifficultyIdx("duel")
+		app.memberID = MemberSoyorin
+		app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 6, Cols: 6, Mines: 2, SkillCharges: 1, DuelDuration: 60, AIInterval: 100}, true, MemberSoyorin, 7)
+		g := app.game
+		g.FirstClick = true
+		g.Status = StatusPlaying
+		g.Cell(0, 0).IsMine = true
+		g.Cell(5, 5).IsMine = true
+		g.RecomputeAdjacency()
+		g.duel.NextAI = 1e9
+
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.SetScale(2)
+		app.board.center(g, 0, 0)
+		tt.Frame()
+		br, _ := tt.Find("决斗棋盘")
+		r00 := classicCanvasCellRect(br, app.board, 0, 0)
+
+		// Trigger Soyorin shield on (0,0), let bounce & shake settle, then right-click to unflag.
+		tt.ClickAt(r00.X+r00.W/2, r00.Y+r00.H/2)
+		if !g.Cell(0, 0).ShieldSaved || !g.Cell(0, 0).Revealed || !g.Cell(0, 0).Flagged {
+			t.Fatalf("expected shielded revealed+flagged duel cell, got %+v", g.Cell(0, 0))
+		}
+		tt.Advance(260 * time.Millisecond)
+
+		tt.RightClickAt(r00.X+r00.W/2, r00.Y+r00.H/2)
+		if g.Cell(0, 0).Flagged || !g.Cell(0, 0).Revealed {
+			t.Fatalf("expected duel shield unflagged while keeping Revealed=true, got %+v", g.Cell(0, 0))
+		}
+		if b, ok := app.bandages[0]; !ok || b.Kind != bandagePeel || !b.Shield {
+			t.Fatalf("expected golden shield bandagePeel on (0,0), got ok=%v b=%+v", ok, b)
+		}
+		tt.Advance(35 * time.Millisecond)
+		peelProbe := ui.Rect{X: r00.X, Y: r00.Y - 8, W: r00.W + 10, H: r00.H + 8}
+		soyoGold := memberImage(MemberSoyorin)
+		pxMid := countMatchingPixels(tt.Image(), peelProbe, 2, soyoGold, 56)
+		tt.Advance(bandagePeelDuration)
+		if len(app.bandages) != 0 {
+			t.Fatalf("expected duel shield peel settled, remaining=%d", len(app.bandages))
+		}
+		pxAfter := countMatchingPixels(tt.Image(), peelProbe, 2, soyoGold, 28)
+		if pxMid == 0 || pxAfter != 0 {
+			t.Errorf("expected golden shield peel visible mid-flight and gone after settle: mid=%d after=%d", pxMid, pxAfter)
 		}
 	})
 }
