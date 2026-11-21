@@ -681,11 +681,12 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 					Shadow(0, 2, 8, 0, pal.SlipShade).
 					PassThrough().Children(func() {
 					ui.Textf(c, "踩雷硬直中 · %.1f 秒", max(0, d.StunnedUntil-d.Elapsed)).
-						FontSize(15).Bold().TextColor(stun.Title)
-					ui.Text(c, hint).FontSize(12).TextColor(stun.Sub)
+						FontSize(15).Bold().TextColor(stun.Title).PassThrough()
+					ui.Text(c, hint).FontSize(12).TextColor(stun.Sub).PassThrough()
 				})
 			})
 		}
+		a.stageHighlightsOverlay(c, paperFor(a.darkMode), c.Now())
 	})
 }
 
@@ -977,12 +978,46 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 					p.AnimationFrame()
 				}
 			}
+			if !a.motionReducedActive && len(a.skillPulses) > 0 {
+				for _, pulse := range a.skillPulses {
+					elapsed := now.Sub(pulse.Start)
+					if elapsed < 0 || elapsed >= skillPulseDuration {
+						continue
+					}
+					row, col := pulse.Index/g.Cols, pulse.Index%g.Cols
+					if row < firstRow-2 || row > lastRow+2 || col < firstCol-2 || col > lastCol+2 {
+						continue
+					}
+					x := r.X + float32(col)*v.Cell - v.X
+					y := r.Y + float32(row)*v.Cell - v.Y
+					tile := ui.Rect{X: x + 1, Y: y + 1, W: v.Cell - 2, H: v.Cell - 2}
+					paintSkillTargetPulse(p, tile, radius, pulse.MemberID, pal, float32(elapsed)/float32(skillPulseDuration))
+				}
+			}
+			if !a.motionReducedActive && len(a.knotBursts) > 0 {
+				for _, burst := range a.knotBursts {
+					elapsed := now.Sub(burst.Start)
+					if elapsed < 0 || elapsed >= knotBurstDuration {
+						continue
+					}
+					row, col := burst.Index/g.Cols, burst.Index%g.Cols
+					if row < firstRow-2 || row > lastRow+2 || col < firstCol-2 || col > lastCol+2 {
+						continue
+					}
+					x := r.X + float32(col)*v.Cell - v.X
+					y := r.Y + float32(row)*v.Cell - v.Y
+					tile := ui.Rect{X: x + 1, Y: y + 1, W: v.Cell - 2, H: v.Cell - 2}
+					paintKnotBurst(p, tile, pal, float32(elapsed)/float32(knotBurstDuration))
+				}
+			}
 			a.pruneAndDrawPopups(p, r, now)
 		})
 
 		a.pruneRipples(now)
 		a.pruneBandages(now)
-		if len(a.ripples) > 0 || len(a.bandages) > 0 {
+		a.pruneSkillPulses(now)
+		a.pruneKnotBursts(now)
+		if len(a.ripples) > 0 || len(a.bandages) > 0 || len(a.skillPulses) > 0 || len(a.knotBursts) > 0 {
 			p.AnimationFrame()
 		}
 		if count, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {

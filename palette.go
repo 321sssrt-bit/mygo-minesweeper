@@ -608,11 +608,98 @@ func knotSVG(c ui.Color) string {
 // avatarInk writes on a 代表色 avatar; every 代表色 is a light pastel.
 var avatarInk = ui.Hex("#2E2A25")
 
+// memberAvatarEl creates the circular member avatar element so callers can
+// chain modifiers such as PassThrough on decorative overlays.
+func memberAvatarEl(c *ui.Context, m Member, size float32, pal *palette) ui.Element {
+	return ui.Avatar(c, m.Glyph, nil).Label(m.Name).Size(size, size).Radius(size/2).
+		Background(ui.Hex(m.ColorHex)).TextColor(avatarInk).Shadow(0, 1, 2, 0, pal.SlipShade)
+}
+
 // memberAvatar is mygo's ui.Avatar showing one 文楷 character on the
 // member's 代表色, in place of the colour Avatar hashes from a name.
 func memberAvatar(c *ui.Context, m Member, size float32, pal *palette) {
-	ui.Avatar(c, m.Glyph, nil).Label(m.Name).Size(size, size).Radius(size/2).
-		Background(ui.Hex(m.ColorHex)).TextColor(avatarInk).Shadow(0, 1, 2, 0, pal.SlipShade)
+	memberAvatarEl(c, m, size, pal)
+}
+
+// quoteStripColors holds the palette-derived paper slip, masking tape, and
+// WCAG-AA inks for one member's stage quote strip.
+type quoteStripColors struct {
+	Bg, Border, Tape, Accent  ui.Color
+	NameInk, TextInk, RoleInk ui.Color
+}
+
+func quoteStripColorsFor(id MemberID, dark bool) quoteStripColors {
+	p := paperFor(dark)
+	base := memberImage(id)
+	bgAlpha := float32(0.14)
+	tapeAlpha := float32(0.58)
+	borderAlpha := float32(0.62)
+	if p.Dark {
+		bgAlpha = 0.18
+		tapeAlpha = 0.48
+		borderAlpha = 0.55
+	}
+	bg := base.Alpha(bgAlpha).Over(p.Sheet)
+	return quoteStripColors{
+		Bg:      bg,
+		Border:  base.Alpha(borderAlpha).Over(bg),
+		Tape:    base.Alpha(tapeAlpha),
+		Accent:  base,
+		NameInk: p.inkOn(bg, base),
+		TextInk: p.inkOn(bg, p.Ink),
+		RoleInk: p.inkOn(bg, p.InkMuted),
+	}
+}
+
+// memeStripColors holds the warm gold-highlighter surface and WCAG-AA inks
+// for the first-unlock meme commemorative strip.
+type memeStripColors struct {
+	Bg, Border, Tape, Accent ui.Color
+	EyebrowInk, TitleInk     ui.Color
+}
+
+var dayMemeStrip, nightMemeStrip = newMemeStripColors(dayPaper), newMemeStripColors(nightPaper)
+
+func memeStripColorsFor(dark bool) memeStripColors {
+	if dark {
+		return nightMemeStrip
+	}
+	return dayMemeStrip
+}
+
+func newMemeStripColors(p *palette) memeStripColors {
+	bgAlpha := float32(0.20)
+	tapeAlpha := float32(0.56)
+	if p.Dark {
+		bgAlpha = 0.22
+		tapeAlpha = 0.46
+	}
+	bg := goldHighlighter.Alpha(bgAlpha).Over(p.Sheet)
+	goldInk := p.inkOn(bg, goldHighlighter)
+	border := goldInk.Alpha(0.55).Over(bg)
+	if p.Dark {
+		border = goldHighlighter.Alpha(0.65).Over(bg)
+	}
+	return memeStripColors{
+		Bg:         bg,
+		Border:     border,
+		Tape:       goldHighlighter.Alpha(tapeAlpha),
+		Accent:     goldHighlighter,
+		EyebrowInk: goldInk,
+		TitleInk:   p.inkOn(bg, p.Ink),
+	}
+}
+
+// confettiPieceColors returns the fill and crisp outline/mark colours for one
+// member's confetti slip or hand-drawn exclamation mark.
+func confettiPieceColors(id MemberID, dark bool) (fill, mark ui.Color) {
+	p := paperFor(dark)
+	base := memberImage(id)
+	ink := p.InkOf(base)
+	if p.Dark {
+		return base, base
+	}
+	return base, base.Mix(ink, 0.35)
 }
 
 // iconOrder is the band order the icon's five exclamation marks follow.

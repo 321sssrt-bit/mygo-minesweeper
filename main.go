@@ -28,7 +28,17 @@ const (
 	maxBandageAnims         = MaxRevealWaveEntries
 	duelPopupDuration       = 950 * time.Millisecond
 	maxDuelPopups           = 16
+	quoteStripDuration      = 1200 * time.Millisecond
+	memeStripDuration       = 2400 * time.Millisecond
+	skillPulseDuration      = 720 * time.Millisecond
+	knotBurstDuration       = 520 * time.Millisecond
+	maxKnotBursts           = 8
+	confettiDuration        = 1800 * time.Millisecond
+	confettiCount           = 32
 	haruhikageIntroDuration = 1600 * time.Millisecond
+	haruhikageScrimFade     = 260 * time.Millisecond
+	haruhikageBeatDelay     = 250 * time.Millisecond
+	haruhikageLineFade      = 240 * time.Millisecond
 )
 
 // waveSteps is the last step of a reveal wave; deeper cells share it.
@@ -109,6 +119,46 @@ type memeUnlockNotice struct {
 	At   time.Time
 }
 
+type stageQuoteStrip struct {
+	Active   bool
+	MemberID MemberID
+	Text     string
+	Start    time.Time
+}
+
+type stageMemeStrip struct {
+	Active bool
+	Memes  []MemeAchievement
+	Start  time.Time
+}
+
+type skillTargetPulse struct {
+	Index    int
+	MemberID MemberID
+	Start    time.Time
+}
+
+type knotBurstPulse struct {
+	Index int
+	Start time.Time
+}
+
+type confettiPiece struct {
+	MemberID MemberID
+	StartX   float32
+	StartY   float32
+	DriftX   float32
+	FallY    float32
+	SwayFreq float32
+	SwayAmp  float32
+	Phase    float32
+	Rot0     float32
+	RotSpeed float32
+	W, H     float32
+	Exclaim  bool
+	Delay    time.Duration
+}
+
 type minesweeperApp struct {
 	diffIdx             int
 	modeIdx             int // 0 = Band Live Mode, 1 = Classic Mode
@@ -160,6 +210,12 @@ type minesweeperApp struct {
 	ripples              map[int]tileRipple
 	bandages             map[int]bandageAnim
 	duelPopups           []duelPopup
+	quoteStrip           stageQuoteStrip
+	memeStrip            stageMemeStrip
+	skillPulses          []skillTargetPulse
+	knotBursts           []knotBurstPulse
+	confetti             []confettiPiece
+	confettiStart        time.Time
 	shakeStart           time.Time
 	shakeAmplitude       float32
 	shakeDuration        time.Duration
@@ -281,6 +337,10 @@ func (a *minesweeperApp) syncMotionState(reduced bool) {
 	if reduced {
 		a.ripples = nil
 		a.bandages = nil
+		a.skillPulses = nil
+		a.knotBursts = nil
+		a.confetti = nil
+		a.confettiStart = time.Time{}
 		a.shakeStart = time.Time{}
 		a.shakeAmplitude = 0
 		a.shakeDuration = 0
@@ -519,6 +579,12 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.clearCues()
 	a.duelTickFocused = false
 	a.duelPopups = nil
+	a.quoteStrip = stageQuoteStrip{}
+	a.memeStrip = stageMemeStrip{}
+	a.skillPulses = nil
+	a.knotBursts = nil
+	a.confetti = nil
+	a.confettiStart = time.Time{}
 	a.shakeStart = time.Time{}
 	a.shakeAmplitude = 0
 	a.shakeDuration = 0
@@ -886,10 +952,566 @@ func (a *minesweeperApp) currentShakeOffset(now time.Time) (float32, float32) {
 	return dx, dy
 }
 
+func (a *minesweeperApp) showQuoteStrip(memberID MemberID, text string, now time.Time) {
+	a.quoteStrip = stageQuoteStrip{
+		Active:   true,
+		MemberID: memberID,
+		Text:     text,
+		Start:    now,
+	}
+}
+
+func (a *minesweeperApp) pruneQuoteStrip(now time.Time) bool {
+	if !a.quoteStrip.Active {
+		return false
+	}
+	elapsed := now.Sub(a.quoteStrip.Start)
+	if elapsed < 0 || elapsed >= quoteStripDuration {
+		a.quoteStrip = stageQuoteStrip{}
+		return false
+	}
+	return true
+}
+
+func (a *minesweeperApp) enqueueMemeStrip(meme MemeAchievement, now time.Time) {
+	if a.pruneMemeStrip(now) {
+		a.memeStrip.Memes = append(a.memeStrip.Memes, meme)
+		a.memeStrip.Start = now
+		return
+	}
+	a.memeStrip = stageMemeStrip{
+		Active: true,
+		Memes:  []MemeAchievement{meme},
+		Start:  now,
+	}
+}
+
+func (a *minesweeperApp) pruneMemeStrip(now time.Time) bool {
+	if !a.memeStrip.Active {
+		return false
+	}
+	elapsed := now.Sub(a.memeStrip.Start)
+	if elapsed < 0 || elapsed >= memeStripDuration {
+		a.memeStrip = stageMemeStrip{}
+		return false
+	}
+	return true
+}
+
+func (a *minesweeperApp) enqueueSkillPulses(memberID MemberID, targets []int, now time.Time) {
+	if a.motionReducedActive || len(targets) == 0 {
+		return
+	}
+	a.pruneSkillPulses(now)
+	for _, idx := range targets {
+		if idx < 0 || idx >= len(a.game.Cells) {
+			continue
+		}
+		a.skillPulses = append(a.skillPulses, skillTargetPulse{
+			Index:    idx,
+			MemberID: memberID,
+			Start:    now,
+		})
+	}
+}
+
+func (a *minesweeperApp) pruneSkillPulses(now time.Time) {
+	if len(a.skillPulses) == 0 {
+		return
+	}
+	kept := a.skillPulses[:0]
+	for _, pulse := range a.skillPulses {
+		elapsed := now.Sub(pulse.Start)
+		if elapsed >= 0 && elapsed < skillPulseDuration {
+			kept = append(kept, pulse)
+		}
+	}
+	a.skillPulses = kept
+}
+
+func (a *minesweeperApp) enqueueKnotBurst(now time.Time, idx int) {
+	if a.motionReducedActive || idx < 0 || idx >= len(a.game.Cells) {
+		return
+	}
+	a.pruneKnotBursts(now)
+	a.knotBursts = append(a.knotBursts, knotBurstPulse{
+		Index: idx,
+		Start: now,
+	})
+	if len(a.knotBursts) > maxKnotBursts {
+		a.knotBursts = a.knotBursts[len(a.knotBursts)-maxKnotBursts:]
+	}
+}
+
+func (a *minesweeperApp) pruneKnotBursts(now time.Time) {
+	if len(a.knotBursts) == 0 {
+		return
+	}
+	kept := a.knotBursts[:0]
+	for _, burst := range a.knotBursts {
+		elapsed := now.Sub(burst.Start)
+		if elapsed >= 0 && elapsed < knotBurstDuration {
+			kept = append(kept, burst)
+		}
+	}
+	a.knotBursts = kept
+}
+
+func explodedCellIndex(g *Game, fallbackRow, fallbackCol int) int {
+	if g.duel != nil && g.duel.LastAction >= 0 && g.duel.LastAction < len(g.Cells) && g.Cells[g.duel.LastAction].Exploded {
+		return g.duel.LastAction
+	}
+	if g.duel == nil {
+		for i := range g.Cells {
+			if g.Cells[i].Exploded {
+				return i
+			}
+		}
+	}
+	if fallbackRow >= 0 && fallbackRow < g.Rows && fallbackCol >= 0 && fallbackCol < g.Cols {
+		return fallbackRow*g.Cols + fallbackCol
+	}
+	return -1
+}
+
+// buildConfettiPieces creates a deterministic, bounded cascade of five-member
+// paper scraps and hand-drawn exclamation marks so victory frames never drift
+// across runs.
+func buildConfettiPieces() []confettiPiece {
+	pieces := make([]confettiPiece, confettiCount)
+	state := uint32(0x5A17C0DE)
+	nextUnit := func() float32 {
+		state = state*1664525 + 1013904223
+		return float32(state>>8) / float32(1<<24)
+	}
+	for i := range confettiCount {
+		exclaim := i%4 == 0
+		baseX := (float32(i) + 0.5) / float32(confettiCount)
+		jitterX := (nextUnit() - 0.5) * 0.045
+		startX := max(float32(0.05), min(float32(0.95), baseX+jitterX))
+		pieces[i] = confettiPiece{
+			MemberID: iconOrder[i%len(iconOrder)],
+			StartX:   startX,
+			StartY:   -0.02 + nextUnit()*0.18,
+			DriftX:   (nextUnit() - 0.5) * 110,
+			FallY:    280 + nextUnit()*300,
+			SwayFreq: 2.2 + nextUnit()*2.4,
+			SwayAmp:  10 + nextUnit()*14,
+			Phase:    nextUnit() * 6.2831853,
+			Rot0:     (nextUnit() - 0.5) * 70,
+			RotSpeed: (nextUnit() - 0.5) * 280,
+			W:        9 + nextUnit()*5,
+			H:        5 + nextUnit()*3,
+			Exclaim:  exclaim,
+			Delay:    time.Duration(int(nextUnit()*140)) * time.Millisecond,
+		}
+	}
+	return pieces
+}
+
+func (a *minesweeperApp) spawnConfetti(now time.Time) {
+	if a.motionReducedActive {
+		return
+	}
+	a.confetti = buildConfettiPieces()
+	a.confettiStart = now
+}
+
+func (a *minesweeperApp) pruneConfetti(now time.Time) bool {
+	if len(a.confetti) == 0 || a.confettiStart.IsZero() {
+		a.confetti = nil
+		a.confettiStart = time.Time{}
+		return false
+	}
+	elapsed := now.Sub(a.confettiStart)
+	if elapsed < 0 || elapsed >= confettiDuration {
+		a.confetti = nil
+		a.confettiStart = time.Time{}
+		return false
+	}
+	return true
+}
+
+func paintSkillTargetPulse(p *ui.Painter, tile ui.Rect, radius float32, memberID MemberID, pal *palette, t float32) {
+	base := memberImage(memberID)
+	ink := pal.InkOf(base)
+	ease := 1 - (1-t)*(1-t)
+	fade := (1 - t) * (1 - t)
+
+	p.Fill(tile, base.Alpha(0.28*fade), radius)
+
+	grow := min(tile.W, tile.H) * 0.44 * ease
+	ring := ui.Rect{
+		X: tile.X - grow,
+		Y: tile.Y - grow,
+		W: tile.W + grow*2,
+		H: tile.H + grow*2,
+	}
+	ringRadius := radius + grow*0.45
+	ringWidth := 2.6 * (1 - 0.35*t)
+	p.Stroke(ring, base.Alpha(0.90*fade), ringRadius, ringWidth)
+	p.Stroke(ring, ink.Alpha(0.42*fade), ringRadius, 1.1)
+
+	if t > 0.14 {
+		t2 := (t - 0.14) / 0.86
+		ease2 := 1 - (1-t2)*(1-t2)
+		fade2 := (1 - t2) * (1 - t2)
+		grow2 := min(tile.W, tile.H) * 0.32 * ease2
+		ring2 := ui.Rect{
+			X: tile.X - grow2,
+			Y: tile.Y - grow2,
+			W: tile.W + grow2*2,
+			H: tile.H + grow2*2,
+		}
+		p.Stroke(ring2, base.Alpha(0.65*fade2), radius+grow2*0.45, 1.8*(1-0.3*t2))
+	}
+}
+
+var knotBurstRays = [...]struct {
+	angle float64
+	r0    float32
+	r1    float32
+	bend  float32
+	red   bool
+}{
+	{0.18, 0.55, 1.85, 0.18, false},
+	{0.84, 0.50, 1.55, -0.22, true},
+	{1.42, 0.60, 1.95, 0.14, false},
+	{2.08, 0.52, 1.68, -0.16, true},
+	{2.68, 0.58, 1.90, 0.20, false},
+	{3.32, 0.48, 1.62, -0.18, true},
+	{3.95, 0.56, 2.02, 0.15, false},
+	{4.62, 0.50, 1.72, -0.20, true},
+	{5.24, 0.58, 1.88, 0.16, false},
+	{5.84, 0.52, 1.60, -0.14, true},
+}
+
+func paintKnotBurst(p *ui.Painter, tile ui.Rect, pal *palette, t float32) {
+	ease := 1 - (1-t)*(1-t)*(1-t)
+	fade := 1 - t
+	cx, cy := tile.X+tile.W/2, tile.Y+tile.H/2
+	baseR := min(tile.W, tile.H) * 0.5
+
+	// Expanding red-ink bloom wash and crisp ink ring around the hit knot.
+	bloomR := baseR * (0.60 + 0.95*ease)
+	p.Fill(ui.Rect{X: cx - bloomR, Y: cy - bloomR, W: bloomR * 2, H: bloomR * 2}, pal.BoomInk.Alpha(0.24*fade*fade), bloomR)
+	ringR := baseR * (0.85 + 1.25*ease)
+	p.Stroke(ui.Rect{X: cx - ringR, Y: cy - ringR, W: ringR * 2, H: ringR * 2}, pal.BoomInk.Alpha(0.86*fade), ringR, 2.2*(1-0.4*t))
+
+	// Irregular outward pencil scribbles radiating from the knot.
+	for _, ray := range knotBurstRays {
+		cosA := float32(math.Cos(ray.angle))
+		sinA := float32(math.Sin(ray.angle))
+		perpX, perpY := -sinA, cosA
+		inner := baseR * (ray.r0 + 0.35*ease)
+		outer := baseR * (ray.r0 + (ray.r1-ray.r0)*ease)
+		mid := (inner + outer) * 0.5
+		jitter := baseR * ray.bend * (0.4 + 0.6*ease)
+
+		x0, y0 := cx+cosA*inner, cy+sinA*inner
+		xm, ym := cx+cosA*mid+perpX*jitter, cy+sinA*mid+perpY*jitter
+		x1, y1 := cx+cosA*outer, cy+sinA*outer
+
+		col := pal.Graphite
+		width := float32(1.45)
+		if ray.red {
+			col = pal.BoomInk
+			width = 1.65
+		}
+		p.StrokePolyline([][2]float32{{x0, y0}, {xm, ym}, {x1, y1}}, width*(1-0.3*t), col.Alpha(0.92*fade))
+	}
+}
+
+func paintHandExclaim(p *ui.Painter, cx, cy, scale, rotDeg float32, col ui.Color) {
+	p.Transform(ui.Rotation(rotDeg), cx, cy, func() {
+		// Slightly slanted hand-drawn stem + dot using pure primitives (zero extra glyphs).
+		stemTopY := cy - 6.5*scale
+		stemBotY := cy + 2.2*scale
+		p.Line(cx+0.6*scale, stemTopY, cx-0.3*scale, stemBotY, 2.6*scale, col)
+		dotR := 1.6 * scale
+		p.Fill(ui.Rect{X: cx - 0.3*scale - dotR, Y: cy + 4.4*scale - dotR, W: dotR * 2, H: dotR * 2}, col, dotR)
+	})
+}
+
+func (a *minesweeperApp) paintConfetti(p *ui.Painter, r ui.Rect, pal *palette, now time.Time) {
+	if a.motionReducedActive || !a.pruneConfetti(now) {
+		return
+	}
+	elapsed := now.Sub(a.confettiStart)
+	p.Clip(r, 8, func() {
+		for _, pc := range a.confetti {
+			if elapsed < pc.Delay {
+				continue
+			}
+			life := confettiDuration - pc.Delay
+			u := float32(elapsed-pc.Delay) / float32(life)
+			fallEase := u * (0.35 + 0.65*u)
+			sway := float32(math.Sin(float64(pc.Phase+u*pc.SwayFreq*6.2831853))) * pc.SwayAmp
+			cx := r.X + pc.StartX*r.W + pc.DriftX*u + sway
+			cy := r.Y + pc.StartY*r.H + pc.FallY*fallEase
+			rot := pc.Rot0 + pc.RotSpeed*u
+			alpha := float32(1)
+			if u < 0.08 {
+				alpha = u / 0.08
+			} else if u > 0.68 {
+				alpha = 1 - (u-0.68)/0.32
+			}
+			if alpha <= 0.01 {
+				continue
+			}
+			fillCol, markCol := confettiPieceColors(pc.MemberID, pal.Dark)
+			if pc.Exclaim {
+				paintHandExclaim(p, cx, cy, 1.05, rot, markCol.Alpha(alpha))
+				continue
+			}
+			rect := ui.Rect{X: cx - pc.W/2, Y: cy - pc.H/2, W: pc.W, H: pc.H}
+			p.Transform(ui.Rotation(rot), cx, cy, func() {
+				p.Fill(rect, fillCol.Alpha(alpha), 1.5)
+				p.Stroke(rect, markCol.Alpha(0.45*alpha), 1.5, 0.8)
+			})
+		}
+	})
+	p.AnimationFrame()
+}
+
+func stripMotion(elapsed, total, enter, exit time.Duration, reduced bool) (alpha, offsetY float32, animFrame bool) {
+	fadeStart := total - exit
+	if reduced {
+		if elapsed >= fadeStart {
+			u := float32(elapsed-fadeStart) / float32(exit)
+			return max(0, 1-u), 0, true
+		}
+		return 1, 0, false
+	}
+	if elapsed < enter {
+		u := float32(elapsed) / float32(enter)
+		ease := 1 - (1-u)*(1-u)*(1-u)
+		return 0.28 + 0.72*ease, -12 * (1 - ease), true
+	}
+	if elapsed >= fadeStart {
+		u := float32(elapsed-fadeStart) / float32(exit)
+		return max(0, 1-u), -8 * u, true
+	}
+	return 1, 0, false
+}
+
+func (a *minesweeperApp) stageHighlightsOverlay(c *ui.Context, pal *palette, now time.Time) {
+	quoteActive := a.pruneQuoteStrip(now)
+	memeActive := a.pruneMemeStrip(now)
+	confettiActive := !a.motionReducedActive && a.pruneConfetti(now)
+	if !quoteActive && !memeActive && !confettiActive {
+		return
+	}
+
+	if confettiActive {
+		ui.Box(c.Key("stage-confetti")).Absolute().Top(0).Bottom(0).Start(0).End(0).
+			PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
+			a.paintConfetti(p, r, pal, p.Now())
+		})
+	}
+
+	if !quoteActive && !memeActive {
+		return
+	}
+
+	topOffset := float32(10)
+	if a.isDuel() && a.game.Status == StatusPlaying && a.game.duel.playerStunned() {
+		topOffset = 78
+	}
+
+	ui.Column(c.Key("stage-highlights-stack")).Absolute().Top(topOffset).Start(12).End(12).
+		AlignItems(ui.Center).Gap(6).PassThrough().Children(func() {
+		if quoteActive {
+			qs := a.quoteStrip
+			elapsed := now.Sub(qs.Start)
+			alpha, offsetY, anim := stripMotion(elapsed, quoteStripDuration, 140*time.Millisecond, 260*time.Millisecond, a.motionReducedActive)
+			remain := quoteStripDuration - elapsed
+			if anim {
+				c.After(min(16*time.Millisecond, max(time.Millisecond, remain)))
+			} else {
+				c.After(min(50*time.Millisecond, max(time.Millisecond, remain)))
+			}
+			m := FindMember(qs.MemberID)
+			sc := quoteStripColorsFor(qs.MemberID, pal.Dark)
+			strip := ui.Row(c.Key("stage-quote-strip")).MaxWidth(480).Padding(8, 12).Gap(9).Radius(4).
+				AlignItems(ui.Center).Background(sc.Bg).Border(1, sc.Border).
+				Shadow(0, 2, 7, 0, pal.SlipShade).Opacity(alpha).PassThrough().
+				Draw(func(p *ui.Painter, r ui.Rect) {
+					p.Fill(ui.Rect{X: r.X, Y: r.Y, W: 3.5, H: r.H}, sc.Accent, 2)
+					tape := ui.Rect{X: r.X + 20, Y: r.Y - 5, W: 48, H: 11}
+					p.Transform(ui.Rotation(-4), tape.X+tape.W/2, tape.Y+tape.H/2, func() {
+						p.Fill(tape, sc.Tape, 1)
+					})
+				})
+			if offsetY != 0 {
+				strip.Translate(0, offsetY)
+			}
+			strip.Children(func() {
+				memberAvatarEl(c, m, 26, pal).PassThrough()
+				ui.Column(c).Gap(1).PassThrough().Children(func() {
+					ui.Row(c).AlignItems(ui.Baseline).Gap(6).PassThrough().Children(func() {
+						ui.Text(c, m.Name).FontSize(12.5).Bold().TextColor(sc.NameInk).SingleLine().PassThrough()
+						ui.Text(c, m.Role).FontSize(10.5).TextColor(sc.RoleInk).SingleLine().PassThrough()
+					})
+					ui.Text(c, qs.Text).FontSize(12.5).TextColor(sc.TextInk).PassThrough()
+				})
+			})
+		}
+
+		if memeActive {
+			ms := a.memeStrip
+			elapsed := now.Sub(ms.Start)
+			alpha, offsetY, anim := stripMotion(elapsed, memeStripDuration, 160*time.Millisecond, 320*time.Millisecond, a.motionReducedActive)
+			remain := memeStripDuration - elapsed
+			if anim {
+				c.After(min(16*time.Millisecond, max(time.Millisecond, remain)))
+			} else {
+				c.After(min(50*time.Millisecond, max(time.Millisecond, remain)))
+			}
+			mc := memeStripColorsFor(pal.Dark)
+			card := ui.Column(c.Key("stage-meme-strip")).MaxWidth(460).Padding(7, 13).Gap(2).Radius(4).
+				Background(mc.Bg).Border(1.2, mc.Border).
+				Shadow(0, 2, 7, 0, pal.SlipShade).Opacity(alpha).PassThrough().
+				Draw(func(p *ui.Painter, r ui.Rect) {
+					p.Fill(ui.Rect{X: r.X, Y: r.Y, W: 4, H: r.H}, mc.Accent, 2)
+					tape := ui.Rect{X: r.X + r.W - 58, Y: r.Y - 5, W: 44, H: 10}
+					p.Transform(ui.Rotation(3.5), tape.X+tape.W/2, tape.Y+tape.H/2, func() {
+						p.Fill(tape, mc.Tape, 1)
+					})
+				})
+			if offsetY != 0 {
+				card.Translate(0, offsetY)
+			}
+			card.Children(func() {
+				ui.Text(c, "名场面解锁").FontSize(11).Bold().TextColor(mc.EyebrowInk).SingleLine().PassThrough()
+				for _, meme := range ms.Memes {
+					ui.Text(c, "★ "+meme.Title).FontSize(13).Bold().TextColor(mc.TitleInk).SingleLine().PassThrough()
+				}
+			})
+		}
+	})
+}
+
+func (a *minesweeperApp) haruhikageOverlay(c *ui.Context, pal *palette, baseTheme *ui.Theme, now time.Time) {
+	if a.haruhikageIntro {
+		elapsedIntro := now.Sub(a.haruhikageIntroStart)
+		if elapsedIntro < 0 {
+			elapsedIntro = 0
+		}
+		if elapsedIntro >= haruhikageIntroDuration {
+			a.haruhikageIntro = false
+			a.haruhikageAlert = true
+		} else {
+			remain := haruhikageIntroDuration - elapsedIntro
+			step := 50 * time.Millisecond
+			if !a.motionReducedActive && elapsedIntro < haruhikageBeatDelay+haruhikageLineFade {
+				step = 16 * time.Millisecond
+			}
+			c.After(min(step, max(time.Millisecond, remain)))
+			drama := haruhikageFor(pal.Dark)
+
+			scrimFrac := float32(1)
+			showCard := true
+			cardAlpha := float32(1)
+			cardOffsetY := float32(0)
+			if !a.motionReducedActive {
+				scrimT := min(float32(1), float32(elapsedIntro)/float32(haruhikageScrimFade))
+				scrimEase := 1 - (1-scrimT)*(1-scrimT)
+				scrimFrac = 0.52 + 0.48*scrimEase
+				if elapsedIntro < haruhikageBeatDelay {
+					showCard = false
+				} else {
+					lineT := min(float32(1), float32(elapsedIntro-haruhikageBeatDelay)/float32(haruhikageLineFade))
+					lineEase := 1 - (1-lineT)*(1-lineT)*(1-lineT)
+					cardAlpha = 0.18 + 0.82*lineEase
+					cardOffsetY = 10 * (1 - lineEase)
+				}
+			}
+
+			ui.Overlay(c, func() {
+				overlay := ui.Box(c.Key("haruhikage-drama-overlay")).Fill().Modal().
+					Background(drama.Scrim.Alpha(scrimFrac)).Center().
+					Cursor(ui.CursorPointer).Focusable().FocusRing(false).Label("春日影演出遮罩").
+					HandleInput(func(ev ui.InputEvent) bool {
+						switch ev.Kind {
+						case ui.InputScroll, ui.InputZoom:
+							return true
+						case ui.InputPointerDown, ui.InputPointerUp:
+							if ev.Button != 0 {
+								return true
+							}
+						}
+						return false
+					})
+				if a.focusDuelSettlement {
+					a.focusDuelSettlement = false
+					overlay.Focus()
+				}
+				if showCard {
+					overlay.Children(func() {
+						card := ui.Column(c).AlignItems(ui.Center).Gap(10).Padding(26, 32).Radius(6).
+							Background(drama.CardBg).Border(1.5, drama.CardBorder).
+							Shadow(0, 12, 32, 0, drama.CardShadow).Opacity(cardAlpha).PassThrough().
+							Draw(func(p *ui.Painter, r ui.Rect) {
+								p.Clip(r, 6, func() {
+									p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: 3}, drama.AccentBar, 0)
+									for y := r.Y + 24; y < r.Y+r.H-8; y += 22 {
+										p.Line(r.X+14, y, r.X+r.W-14, y, 1, drama.CardRule)
+									}
+								})
+							})
+						if cardOffsetY != 0 {
+							card.Translate(0, cardOffsetY)
+						}
+						card.Children(func() {
+							ui.Text(c, "♪ 《春日影》 — 乐声骤停").FontSize(13).Bold().TextColor(drama.Eyebrow).PassThrough()
+							ui.Text(c, "「……为什么要演奏春日影？！」").FontSize(22).Bold().TextColor(drama.Title).PassThrough()
+							ui.Text(c, "（长崎爽世的眼神失去了高光 · 点击任意处继续）").FontSize(12).TextColor(drama.Subtitle).PassThrough()
+						})
+					})
+				}
+				if overlay.Clicked() {
+					a.haruhikageIntro = false
+					a.haruhikageAlert = true
+				}
+				if overlay.OverlayShortcut(0, ui.KeyM) && !c.ShortcutRepeated() {
+					a.toggleMute()
+				}
+			})
+		}
+	}
+
+	// 春日影名场面弹窗
+	// Scope AlertDialog via a zero-size ui.Themed container so mygo/ui's
+	// overlay binds the dialog theme (focus ring, text, buttons) locally
+	// instead of falling back to the window theme.
+	ui.Themed(c, haruhikageFor(pal.Dark).dialogTheme(baseTheme)).Absolute().Size(0, 0).Children(func() {
+		switch ui.AlertDialog(c, &a.haruhikageAlert,
+			"为什么要演奏春日影？！",
+			"「明明说好不再弹这首曲子的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
+			"对不起，我错了", "一辈子重开") {
+		case 0:
+			a.pushChat("长崎爽世", FindMember(MemberSoyorin).ColorHex, "「道歉的话，下次别再擅自演奏这首曲子了呢。」")
+		case 1:
+			a.resetGame(false)
+		}
+	})
+	if a.haruhikageAlert {
+		// Modal dialogs block root shortcuts; keep unmodified M mute active above AlertDialog.
+		ui.Overlay(c, func() {
+			if ui.Box(c.Key("haruhikage-alert-mute")).Size(0, 0).PassThrough().
+				OverlayShortcut(0, ui.KeyM) && !c.ShortcutRepeated() {
+				a.toggleMute()
+			}
+		})
+	}
+}
+
 func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.Time) {
 	if res.Kind == ActionNoop {
 		return
 	}
+	clickRow, clickCol := a.pendingRow, a.pendingCol
 	if a.game.Status == StatusPlaying && !a.isDuel() && a.startedAt.IsZero() {
 		a.startedAt = now
 	}
@@ -906,7 +1528,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 		}
 	}
 	if a.isDuel() {
-		popRow, popCol := a.pendingRow, a.pendingCol
+		popRow, popCol := clickRow, clickCol
 		if popRow < 0 || popCol < 0 {
 			if a.game.duel.LastCell >= 0 {
 				popRow, popCol = a.game.duel.LastCell/a.game.Cols, a.game.duel.LastCell%a.game.Cols
@@ -920,9 +1542,21 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 	}
 	a.pendingRow, a.pendingCol = -1, -1
 
-	m := FindMember(a.memberID)
-	a.applyQuote(res.QuoteEvent)
+	actorID := a.memberID
+	if res.Kind == ActionShielded {
+		actorID = MemberSoyorin
+	}
+	m := FindMember(actorID)
+	quote := a.applyQuoteFor(actorID, res.QuoteEvent)
 	a.highlightSound(res, now)
+
+	fromSkill := res.Kind == ActionSkill || (res.Kind == ActionWon && len(res.SkillTargets) > 0)
+	if fromSkill || res.Kind == ActionShielded {
+		a.showQuoteStrip(actorID, quote, now)
+	}
+	if len(res.SkillTargets) > 0 {
+		a.enqueueSkillPulses(actorID, res.SkillTargets, now)
+	}
 
 	switch res.Kind {
 	case ActionShielded:
@@ -931,6 +1565,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 	case ActionSkill:
 		c.Toast(fmt.Sprintf("%s 发动「%s」", m.Name, m.SkillName))
 	case ActionLost:
+		a.enqueueKnotBurst(now, explodedCellIndex(a.game, clickRow, clickCol))
 		a.triggerShake(now, 9.0, 320*time.Millisecond)
 		if a.isDuel() {
 			c.Toast("踩雷 −100 · 硬直 2.4 秒！小心被灯拉开比分")
@@ -951,6 +1586,7 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 		if a.isDuel() {
 			break
 		}
+		a.spawnConfetti(now)
 		if !a.startedAt.IsZero() {
 			a.elapsed = int(now.Sub(a.startedAt).Seconds())
 		}
@@ -965,12 +1601,17 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 }
 
 func (a *minesweeperApp) applyQuote(event string) {
+	a.applyQuoteFor(a.memberID, event)
+}
+
+func (a *minesweeperApp) applyQuoteFor(memberID MemberID, event string) string {
 	if event == "" {
-		return
+		return ""
 	}
-	m := FindMember(a.memberID)
-	a.quote = PickQuote(a.memberID, event)
+	m := FindMember(memberID)
+	a.quote = PickQuote(memberID, event)
 	a.pushChat(m.Name, m.ColorHex, a.quote)
+	return a.quote
 }
 
 func findMeme(id string) (MemeAchievement, bool) {
@@ -998,6 +1639,7 @@ func (a *minesweeperApp) recordMemeUnlock(memeID string, now time.Time) (MemeAch
 		Meme: meme,
 		At:   now,
 	})
+	a.enqueueMemeStrip(meme, now)
 	return meme, true
 }
 
@@ -1056,6 +1698,9 @@ func (a *minesweeperApp) settleDuel(c *ui.Context, now time.Time, result string)
 	a.pushChat("决斗结算", hexOf(goldHighlighter), result)
 	a.applyQuote(d.QuoteEvent)
 	a.unlockMemes(c, d.NewMemes)
+	if d.PlayerScore > d.AIScore {
+		a.spawnConfetti(now)
+	}
 	if slices.Contains(d.NewMemes, MemeHaruhikage) {
 		a.haruhikageIntro = true
 		a.haruhikageIntroStart = now
@@ -1087,6 +1732,7 @@ func (a *minesweeperApp) tickDuel(c *ui.Context, now time.Time) {
 			}
 			a.voiceAITurn(tick.AITurn.Kind, tick.AICell)
 			if tick.AITurn.Kind == ActionLost {
+				a.enqueueKnotBurst(now, tick.AICell)
 				c.Toast("高松灯踩雷 −100")
 			}
 		}
@@ -1725,76 +2371,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	memberInk := pal.InkOf(memberColor)
 	memberTheme := baseTheme.WithAccent(memberInk)
 
-	if a.haruhikageIntro {
-		elapsedIntro := now.Sub(a.haruhikageIntroStart)
-		if elapsedIntro >= haruhikageIntroDuration {
-			a.haruhikageIntro = false
-			a.haruhikageAlert = true
-		} else {
-			remain := haruhikageIntroDuration - elapsedIntro
-			c.After(min(50*time.Millisecond, max(time.Millisecond, remain)))
-			drama := haruhikageFor(pal.Dark)
-			ui.Overlay(c, func() {
-				overlay := ui.Box(c.Key("haruhikage-drama-overlay")).Fill().Modal().
-					Background(drama.Scrim).Center().
-					Cursor(ui.CursorPointer).Focusable().FocusRing(false).Label("春日影演出遮罩")
-				if a.focusDuelSettlement {
-					a.focusDuelSettlement = false
-					overlay.Focus()
-				}
-				overlay.Children(func() {
-					ui.Column(c).AlignItems(ui.Center).Gap(10).Padding(26, 32).Radius(6).
-						Background(drama.CardBg).Border(1.5, drama.CardBorder).
-						Shadow(0, 12, 32, 0, drama.CardShadow).
-						Draw(func(p *ui.Painter, r ui.Rect) {
-							p.Clip(r, 6, func() {
-								p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: 3}, drama.AccentBar, 0)
-								for y := r.Y + 24; y < r.Y+r.H-8; y += 22 {
-									p.Line(r.X+14, y, r.X+r.W-14, y, 1, drama.CardRule)
-								}
-							})
-						}).
-						Children(func() {
-							ui.Text(c, "♪ 《春日影》 — 乐声骤停").FontSize(13).Bold().TextColor(drama.Eyebrow)
-							ui.Text(c, "「……为什么要演奏春日影？！」").FontSize(22).Bold().TextColor(drama.Title)
-							ui.Text(c, "（长崎爽世的眼神失去了高光 · 点击任意处继续）").FontSize(12).TextColor(drama.Subtitle)
-						})
-				})
-				if overlay.Clicked() {
-					a.haruhikageIntro = false
-					a.haruhikageAlert = true
-				}
-				if overlay.OverlayShortcut(0, ui.KeyM) && !c.ShortcutRepeated() {
-					a.toggleMute()
-				}
-			})
-		}
-	}
-
-	// 春日影名场面弹窗
-	// Scope AlertDialog via a zero-size ui.Themed container so mygo/ui's
-	// overlay binds the dialog theme (focus ring, text, buttons) locally
-	// instead of falling back to the window theme.
-	ui.Themed(c, haruhikageFor(pal.Dark).dialogTheme(baseTheme)).Absolute().Size(0, 0).Children(func() {
-		switch ui.AlertDialog(c, &a.haruhikageAlert,
-			"为什么要演奏春日影？！",
-			"「明明说好不再弹这首曲子的……」\n（长崎爽世失去了高光，并把你移出了排练室群聊）",
-			"对不起，我错了", "一辈子重开") {
-		case 0:
-			a.pushChat("长崎爽世", FindMember(MemberSoyorin).ColorHex, "「道歉的话，下次别再擅自演奏这首曲子了呢。」")
-		case 1:
-			a.resetGame(false)
-		}
-	})
-	if a.haruhikageAlert {
-		// Modal dialogs block root shortcuts; keep unmodified M mute active above AlertDialog.
-		ui.Overlay(c, func() {
-			if ui.Box(c.Key("haruhikage-alert-mute")).Size(0, 0).PassThrough().
-				OverlayShortcut(0, ui.KeyM) && !c.ShortcutRepeated() {
-				a.toggleMute()
-			}
-		})
-	}
+	a.haruhikageOverlay(c, pal, baseTheme, now)
 
 	root := ui.Column(c).Fill().Padding(14).Gap(10)
 	if pal.Lamp.A > 0 {
@@ -2091,306 +2668,353 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					byHeight := (availableH - 230 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
 					cellSize = max(22, min(64, min(byWidth, byHeight)))
 					cellFont = max(12, cellSize*0.48)
-					stage := ui.ScrollBoth(c).Grow(1).Clip().Draw(func(p *ui.Painter, bounds ui.Rect) {
-						byWidth := (bounds.W - 28 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
-						byHeight := (bounds.H - 28 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
-						size := max(22, min(64, min(byWidth, byHeight)))
-						if size != a.classicSize {
-							a.classicSize = size
-							p.After(time.Millisecond)
-						}
-					})
-					if a.classicSize > 0 {
-						cellSize = a.classicSize
-						cellFont = max(12, cellSize*0.48)
-					}
-					a.pruneRipples(now)
-					a.pruneBandages(now)
-					if len(a.ripples) > 0 || len(a.bandages) > 0 {
-						c.After(16 * time.Millisecond)
-					}
-					shakeX, shakeY := a.currentShakeOffset(now)
-					if shakeX != 0 || shakeY != 0 {
-						c.After(16 * time.Millisecond)
-					}
-					hoverHint := a.game.InspectNumberHover(a.classicHoverRow, a.classicHoverCol, a.flagMode)
-					a.classicHoverHint = hoverHint
-					hintColor := memberColor
-					nextHoverRow, nextHoverCol := -1, -1
-
-					stage.Children(func() {
-						ui.Column(c).FillWidth().AlignItems(ui.Center).Padding(4).Children(func() {
-							// Graph paper: ruled lines run through the gaps between cells.
-							const gridGap, gridPad = float32(3), float32(8)
-							grid := ui.Grid(c).Columns(a.game.Cols).Gap(gridGap).Padding(gridPad).Radius(4).
-								Shadow(0, 1, 3, 0, pal.SlipShade)
-							pitch := cellSize + gridGap
-							grid.Draw(func(p *ui.Painter, r ui.Rect) {
-								p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
-									p.Fill(r, pal.Board, 4)
-									for x := r.X + gridPad - gridGap/2; x <= r.X+r.W; x += pitch {
-										p.Line(x, r.Y, x, r.Y+r.H, 1, pal.Grid)
-									}
-									for y := r.Y + gridPad - gridGap/2; y <= r.Y+r.H; y += pitch {
-										p.Line(r.X, y, r.X+r.W, y, 1, pal.Grid)
-									}
-								})
-							})
-							type gridLiftingSlip struct {
-								row, col, idx int
-								peelT         float32
-								tilt          float32
-							}
-							type gridPeelingBandage struct {
-								row, col int
-								shield   bool
-								peelT    float32
-								tilt     float32
-							}
-							var gridLifting []gridLiftingSlip
-							var gridPeeling []gridPeelingBandage
-							grid.Children(func() {
-								for i := range a.game.Cells {
-									cell := &a.game.Cells[i]
-									row, col := cell.Row, cell.Col
-									tile := ui.Box(c.Key(i)).Size(cellSize, cellSize).Radius(4).Center().
-										Label(fmt.Sprintf("cell-%d-%d", row, col))
-									if tile.Hovered() {
-										nextHoverRow, nextHoverCol = row, col
-									}
-									isHintCenter := hoverHint.Kind != HintNone && i == hoverHint.Center
-									isHintTarget := hoverHint.Kind != HintNone && containsIndex(hoverHint.Targets, i)
-
-									var peel tilePeelState
-									if cell.Revealed && !cell.Flagged {
-										peel = a.tilePeelAt(i, now)
-									}
-									washActive := peel.stage == tilePeelLifting || peel.stage == tilePeelWashOnly
-									washColor := bandColor
-									if peel.washColor.A > 0 {
-										washColor = peel.washColor
-									}
-									bAnim, hasBandage := a.bandageAnimAt(i, now)
-
-									// Revealed cells are the bare graph paper (no fill); hidden
-									// ones are paper slips stuck on it, each a touch askew.
-									var tileBg ui.Color
-									var slip bool
-									var tileCursor bool
-									var tileText string
-									var tileTextSize float32
-									var tileTextColor ui.Color
-									var tileArt *ui.SVG
-
-									if val := cellAccessValue(cell); val != "" {
-										tile.Value(val).Description(val)
-									}
-									switch {
-									case cell.Revealed:
-										switch {
-										case cell.Exploded:
-											tileBg, tileArt = pal.Boom, art.KnotHit
-										case cell.IsMine:
-											tileArt = art.Knot
-										case cell.Adjacent > 0:
-											if peel.stage != tilePeelCovered {
-												if isHintCenter {
-													tileBg = hintColor.Alpha(0.38)
-												} else if washActive {
-													tileBg = washColor.Alpha(0.22 * peel.washAlpha)
-												} else if tile.Hovered() {
-													tileBg = pal.Ink.Alpha(0.05)
-												}
-											}
-											tileCursor = true
-											tileText = fmt.Sprintf("%d", cell.Adjacent)
-											tileTextSize = cellFont * 1.08
-											tileTextColor = numberInk(cell.Adjacent, pal.Dark)
-										default:
-											if washActive {
-												tileBg = washColor.Alpha(0.26 * peel.washAlpha)
-											}
-										}
-									case cell.WrongFlag:
-										slip, tileArt = true, art.WrongFlag
-									case cell.Flagged:
-										slip, tileArt, tileCursor = true, art.Flag, true
-										if cell.ShieldSaved {
-											tileArt = art.Shield
-										}
-									case cell.Questioned:
-										slip, tileCursor = true, true
-										tileText, tileTextSize, tileTextColor = "?", cellFont*1.08, pal.Graphite
-									default:
-										slip, tileCursor = true, true
-									}
-									if slip {
-										tileBg = pal.Slip
-										if isHintTarget {
-											tileBg = hintColor.Alpha(0.42).Over(pal.Slip)
-										} else if tile.Hovered() {
-											tileBg = pal.Slip.Mix(pal.Sheet, 0.45)
-										}
-									}
-
-									tiltCopy := tileSlipTilt(i)
-									if slip {
-										// Paint the slip's subtle hand-stuck tilt and shadow in the
-										// decorative layer so the cell's hit-test and focus bounds
-										// never shift when revealed, flagged, or shaken.
-										bgCopy := tileBg
-										shadeCopy := pal.SlipShade
-										sx, sy := shakeX, shakeY
-										tile.Draw(func(p *ui.Painter, r ui.Rect) {
-											cx, cy := r.X+r.W/2, r.Y+r.H/2
-											xf := ui.Rotation(tiltCopy)
-											if sx != 0 || sy != 0 {
-												xf = xf.Then(ui.Translation(sx, sy))
-											}
-											p.Transform(xf, cx, cy, func() {
-												p.Shadow(r, 4, 0, 1, 1.5, 0, shadeCopy)
-												if bgCopy.A > 0 {
-													p.Fill(r, bgCopy, 4)
-												}
-											})
-										})
-									} else if shakeX != 0 || shakeY != 0 {
-										bgCopy := tileBg
-										sx, sy := shakeX, shakeY
-										tile.Draw(func(p *ui.Painter, r ui.Rect) {
-											if bgCopy.A == 0 {
-												return
-											}
-											p.Transform(ui.Translation(sx, sy), 0, 0, func() {
-												p.Fill(r, bgCopy, 4)
-											})
-										})
-									} else {
-										tile.Background(tileBg)
-									}
-									if tileCursor {
-										tile.Cursor(ui.CursorPointer)
-									}
-									if tileText != "" || tileArt != nil {
-										hasBounce := cell.Flagged && !cell.WrongFlag && hasBandage && bAnim.Kind == bandageBounce
-										var bounceScale, bounceRot float32
-										if hasBounce {
-											bounceScale, bounceRot = bandageBounceTransform(now.Sub(bAnim.Start))
-										}
-										tile.Children(func() {
-											var el ui.Element
-											if tileArt != nil {
-												el = ui.Image(c, tileArt).Size(cellSize*0.82, cellSize*0.82).PassThrough()
-											} else {
-												el = ui.Text(c, tileText).FontSize(tileTextSize).Bold().TextColor(tileTextColor).PassThrough()
-											}
-											switch {
-											case hasBounce:
-												xf := ui.Scaling(bounceScale, bounceScale).Then(ui.Rotation(tiltCopy + bounceRot))
-												if shakeX != 0 || shakeY != 0 {
-													xf = xf.Then(ui.Translation(shakeX, shakeY))
-												}
-												el.Transform(xf)
-											case slip:
-												xf := ui.Rotation(tiltCopy)
-												if shakeX != 0 || shakeY != 0 {
-													xf = xf.Then(ui.Translation(shakeX, shakeY))
-												}
-												el.Transform(xf)
-											case shakeX != 0 || shakeY != 0:
-												el.Translate(shakeX, shakeY)
-											}
-										})
-									}
-									switch {
-									case peel.stage == tilePeelCovered:
-										coverBg := pal.Slip
-										if tile.Hovered() {
-											coverBg = pal.Slip.Mix(pal.Sheet, 0.45)
-										}
-										shadeCopy := pal.SlipShade
-										cellIdx := i
-										sx, sy := shakeX, shakeY
-										tile.DrawOver(func(p *ui.Painter, r ui.Rect) {
-											draw := func() {
-												paintPeelOverlay(p, r, 4, coverBg, shadeCopy, tiltCopy, cellIdx, false, 0, true)
-											}
-											if sx != 0 || sy != 0 {
-												p.Transform(ui.Translation(sx, sy), 0, 0, draw)
-											} else {
-												draw()
-											}
-										})
-									case peel.stage == tilePeelLifting:
-										gridLifting = append(gridLifting, gridLiftingSlip{
-											row: row, col: col, idx: i, peelT: peel.peelT, tilt: tiltCopy,
-										})
-									case !cell.Flagged && hasBandage && bAnim.Kind == bandagePeel:
-										gridPeeling = append(gridPeeling, gridPeelingBandage{
-											row:    row,
-											col:    col,
-											shield: bAnim.Shield,
-											peelT:  float32(now.Sub(bAnim.Start)) / float32(bandagePeelDuration),
-											tilt:   tiltCopy,
-										})
-									}
-
-									if tile.RightClicked() {
-										a.cellMove(c, row, col, 1, now)
-									} else if tile.Clicked() {
-										a.cellMove(c, row, col, 0, now)
-									}
-								}
-							})
-							if len(gridLifting) > 0 || len(gridPeeling) > 0 {
-								liftingCopy := gridLifting
-								peelingCopy := gridPeeling
-								slipCol, shadeCol := pal.Slip, pal.SlipShade
-								flagBmp, shieldBmp := art.FlagBitmap, art.ShieldBitmap
-								sx, sy := shakeX, shakeY
-								grid.DrawOver(func(p *ui.Painter, r ui.Rect) {
-									drawOverlays := func() {
-										for _, ls := range liftingCopy {
-											cellRect := ui.Rect{
-												X: r.X + gridPad + float32(ls.col)*pitch,
-												Y: r.Y + gridPad + float32(ls.row)*pitch,
-												W: cellSize,
-												H: cellSize,
-											}
-											paintPeelOverlay(p, cellRect, 4, slipCol, shadeCol, ls.tilt, ls.idx, true, ls.peelT, true)
-										}
-										for _, pb := range peelingCopy {
-											cellRect := ui.Rect{
-												X: r.X + gridPad + float32(pb.col)*pitch,
-												Y: r.Y + gridPad + float32(pb.row)*pitch,
-												W: cellSize,
-												H: cellSize,
-											}
-											bmp := flagBmp
-											if pb.shield {
-												bmp = shieldBmp
-											}
-											cx, cy := cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2
-											p.Transform(ui.Rotation(pb.tilt), cx, cy, func() {
-												paintBandagePeel(p, cellRect, bmp, 0.82, pb.peelT)
-											})
-										}
-									}
-									if sx != 0 || sy != 0 {
-										p.Transform(ui.Translation(sx, sy), 0, 0, drawOverlays)
-									} else {
-										drawOverlays()
-									}
-								})
+					ui.Column(c.Key("classic-grid-stage")).Grow(1).FillWidth().Children(func() {
+						stage := ui.ScrollBoth(c).Grow(1).FillWidth().Clip().Draw(func(p *ui.Painter, bounds ui.Rect) {
+							byWidth := (bounds.W - 28 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
+							byHeight := (bounds.H - 28 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
+							size := max(22, min(64, min(byWidth, byHeight)))
+							if size != a.classicSize {
+								a.classicSize = size
+								p.After(time.Millisecond)
 							}
 						})
+						if a.classicSize > 0 {
+							cellSize = a.classicSize
+							cellFont = max(12, cellSize*0.48)
+						}
+						a.pruneRipples(now)
+						a.pruneBandages(now)
+						a.pruneSkillPulses(now)
+						a.pruneKnotBursts(now)
+						if len(a.ripples) > 0 || len(a.bandages) > 0 || len(a.skillPulses) > 0 || len(a.knotBursts) > 0 {
+							c.After(16 * time.Millisecond)
+						}
+						shakeX, shakeY := a.currentShakeOffset(now)
+						if shakeX != 0 || shakeY != 0 {
+							c.After(16 * time.Millisecond)
+						}
+						hoverHint := a.game.InspectNumberHover(a.classicHoverRow, a.classicHoverCol, a.flagMode)
+						a.classicHoverHint = hoverHint
+						hintColor := memberColor
+						nextHoverRow, nextHoverCol := -1, -1
+
+						stage.Children(func() {
+							ui.Column(c).FillWidth().AlignItems(ui.Center).Padding(4).Children(func() {
+								// Graph paper: ruled lines run through the gaps between cells.
+								const gridGap, gridPad = float32(3), float32(8)
+								grid := ui.Grid(c).Columns(a.game.Cols).Gap(gridGap).Padding(gridPad).Radius(4).
+									Shadow(0, 1, 3, 0, pal.SlipShade)
+								pitch := cellSize + gridGap
+								grid.Draw(func(p *ui.Painter, r ui.Rect) {
+									p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
+										p.Fill(r, pal.Board, 4)
+										for x := r.X + gridPad - gridGap/2; x <= r.X+r.W; x += pitch {
+											p.Line(x, r.Y, x, r.Y+r.H, 1, pal.Grid)
+										}
+										for y := r.Y + gridPad - gridGap/2; y <= r.Y+r.H; y += pitch {
+											p.Line(r.X, y, r.X+r.W, y, 1, pal.Grid)
+										}
+									})
+								})
+								type gridLiftingSlip struct {
+									row, col, idx int
+									peelT         float32
+									tilt          float32
+								}
+								type gridPeelingBandage struct {
+									row, col int
+									shield   bool
+									peelT    float32
+									tilt     float32
+								}
+								var gridLifting []gridLiftingSlip
+								var gridPeeling []gridPeelingBandage
+								grid.Children(func() {
+									for i := range a.game.Cells {
+										cell := &a.game.Cells[i]
+										row, col := cell.Row, cell.Col
+										tile := ui.Box(c.Key(i)).Size(cellSize, cellSize).Radius(4).Center().
+											Label(fmt.Sprintf("cell-%d-%d", row, col))
+										if tile.Hovered() {
+											nextHoverRow, nextHoverCol = row, col
+										}
+										isHintCenter := hoverHint.Kind != HintNone && i == hoverHint.Center
+										isHintTarget := hoverHint.Kind != HintNone && containsIndex(hoverHint.Targets, i)
+
+										var peel tilePeelState
+										if cell.Revealed && !cell.Flagged {
+											peel = a.tilePeelAt(i, now)
+										}
+										washActive := peel.stage == tilePeelLifting || peel.stage == tilePeelWashOnly
+										washColor := bandColor
+										if peel.washColor.A > 0 {
+											washColor = peel.washColor
+										}
+										bAnim, hasBandage := a.bandageAnimAt(i, now)
+
+										// Revealed cells are the bare graph paper (no fill); hidden
+										// ones are paper slips stuck on it, each a touch askew.
+										var tileBg ui.Color
+										var slip bool
+										var tileCursor bool
+										var tileText string
+										var tileTextSize float32
+										var tileTextColor ui.Color
+										var tileArt *ui.SVG
+
+										if val := cellAccessValue(cell); val != "" {
+											tile.Value(val).Description(val)
+										}
+										switch {
+										case cell.Revealed:
+											switch {
+											case cell.Exploded:
+												tileBg, tileArt = pal.Boom, art.KnotHit
+											case cell.IsMine:
+												tileArt = art.Knot
+											case cell.Adjacent > 0:
+												if peel.stage != tilePeelCovered {
+													if isHintCenter {
+														tileBg = hintColor.Alpha(0.38)
+													} else if washActive {
+														tileBg = washColor.Alpha(0.22 * peel.washAlpha)
+													} else if tile.Hovered() {
+														tileBg = pal.Ink.Alpha(0.05)
+													}
+												}
+												tileCursor = true
+												tileText = fmt.Sprintf("%d", cell.Adjacent)
+												tileTextSize = cellFont * 1.08
+												tileTextColor = numberInk(cell.Adjacent, pal.Dark)
+											default:
+												if washActive {
+													tileBg = washColor.Alpha(0.26 * peel.washAlpha)
+												}
+											}
+										case cell.WrongFlag:
+											slip, tileArt = true, art.WrongFlag
+										case cell.Flagged:
+											slip, tileArt, tileCursor = true, art.Flag, true
+											if cell.ShieldSaved {
+												tileArt = art.Shield
+											}
+										case cell.Questioned:
+											slip, tileCursor = true, true
+											tileText, tileTextSize, tileTextColor = "?", cellFont*1.08, pal.Graphite
+										default:
+											slip, tileCursor = true, true
+										}
+										if slip {
+											tileBg = pal.Slip
+											if isHintTarget {
+												tileBg = hintColor.Alpha(0.42).Over(pal.Slip)
+											} else if tile.Hovered() {
+												tileBg = pal.Slip.Mix(pal.Sheet, 0.45)
+											}
+										}
+
+										tiltCopy := tileSlipTilt(i)
+										if slip {
+											// Paint the slip's subtle hand-stuck tilt and shadow in the
+											// decorative layer so the cell's hit-test and focus bounds
+											// never shift when revealed, flagged, or shaken.
+											bgCopy := tileBg
+											shadeCopy := pal.SlipShade
+											sx, sy := shakeX, shakeY
+											tile.Draw(func(p *ui.Painter, r ui.Rect) {
+												cx, cy := r.X+r.W/2, r.Y+r.H/2
+												xf := ui.Rotation(tiltCopy)
+												if sx != 0 || sy != 0 {
+													xf = xf.Then(ui.Translation(sx, sy))
+												}
+												p.Transform(xf, cx, cy, func() {
+													p.Shadow(r, 4, 0, 1, 1.5, 0, shadeCopy)
+													if bgCopy.A > 0 {
+														p.Fill(r, bgCopy, 4)
+													}
+												})
+											})
+										} else if shakeX != 0 || shakeY != 0 {
+											bgCopy := tileBg
+											sx, sy := shakeX, shakeY
+											tile.Draw(func(p *ui.Painter, r ui.Rect) {
+												if bgCopy.A == 0 {
+													return
+												}
+												p.Transform(ui.Translation(sx, sy), 0, 0, func() {
+													p.Fill(r, bgCopy, 4)
+												})
+											})
+										} else {
+											tile.Background(tileBg)
+										}
+										if tileCursor {
+											tile.Cursor(ui.CursorPointer)
+										}
+										if tileText != "" || tileArt != nil {
+											hasBounce := cell.Flagged && !cell.WrongFlag && hasBandage && bAnim.Kind == bandageBounce
+											var bounceScale, bounceRot float32
+											if hasBounce {
+												bounceScale, bounceRot = bandageBounceTransform(now.Sub(bAnim.Start))
+											}
+											tile.Children(func() {
+												var el ui.Element
+												if tileArt != nil {
+													el = ui.Image(c, tileArt).Size(cellSize*0.82, cellSize*0.82).PassThrough()
+												} else {
+													el = ui.Text(c, tileText).FontSize(tileTextSize).Bold().TextColor(tileTextColor).PassThrough()
+												}
+												switch {
+												case hasBounce:
+													xf := ui.Scaling(bounceScale, bounceScale).Then(ui.Rotation(tiltCopy + bounceRot))
+													if shakeX != 0 || shakeY != 0 {
+														xf = xf.Then(ui.Translation(shakeX, shakeY))
+													}
+													el.Transform(xf)
+												case slip:
+													xf := ui.Rotation(tiltCopy)
+													if shakeX != 0 || shakeY != 0 {
+														xf = xf.Then(ui.Translation(shakeX, shakeY))
+													}
+													el.Transform(xf)
+												case shakeX != 0 || shakeY != 0:
+													el.Translate(shakeX, shakeY)
+												}
+											})
+										}
+										switch {
+										case peel.stage == tilePeelCovered:
+											coverBg := pal.Slip
+											if tile.Hovered() {
+												coverBg = pal.Slip.Mix(pal.Sheet, 0.45)
+											}
+											shadeCopy := pal.SlipShade
+											cellIdx := i
+											sx, sy := shakeX, shakeY
+											tile.DrawOver(func(p *ui.Painter, r ui.Rect) {
+												draw := func() {
+													paintPeelOverlay(p, r, 4, coverBg, shadeCopy, tiltCopy, cellIdx, false, 0, true)
+												}
+												if sx != 0 || sy != 0 {
+													p.Transform(ui.Translation(sx, sy), 0, 0, draw)
+												} else {
+													draw()
+												}
+											})
+										case peel.stage == tilePeelLifting:
+											gridLifting = append(gridLifting, gridLiftingSlip{
+												row: row, col: col, idx: i, peelT: peel.peelT, tilt: tiltCopy,
+											})
+										case !cell.Flagged && hasBandage && bAnim.Kind == bandagePeel:
+											gridPeeling = append(gridPeeling, gridPeelingBandage{
+												row:    row,
+												col:    col,
+												shield: bAnim.Shield,
+												peelT:  float32(now.Sub(bAnim.Start)) / float32(bandagePeelDuration),
+												tilt:   tiltCopy,
+											})
+										}
+
+										if tile.RightClicked() {
+											a.cellMove(c, row, col, 1, now)
+										} else if tile.Clicked() {
+											a.cellMove(c, row, col, 0, now)
+										}
+									}
+								})
+								hasGridPulses := !a.motionReducedActive && len(a.skillPulses) > 0
+								hasGridBursts := !a.motionReducedActive && len(a.knotBursts) > 0
+								if len(gridLifting) > 0 || len(gridPeeling) > 0 || hasGridPulses || hasGridBursts {
+									liftingCopy := gridLifting
+									peelingCopy := gridPeeling
+									pulsesCopy := slices.Clone(a.skillPulses)
+									burstsCopy := slices.Clone(a.knotBursts)
+									cols := a.game.Cols
+									slipCol, shadeCol := pal.Slip, pal.SlipShade
+									flagBmp, shieldBmp := art.FlagBitmap, art.ShieldBitmap
+									sx, sy := shakeX, shakeY
+									palCopy := pal
+									nowCopy := now
+									grid.DrawOver(func(p *ui.Painter, r ui.Rect) {
+										drawOverlays := func() {
+											for _, ls := range liftingCopy {
+												cellRect := ui.Rect{
+													X: r.X + gridPad + float32(ls.col)*pitch,
+													Y: r.Y + gridPad + float32(ls.row)*pitch,
+													W: cellSize,
+													H: cellSize,
+												}
+												paintPeelOverlay(p, cellRect, 4, slipCol, shadeCol, ls.tilt, ls.idx, true, ls.peelT, true)
+											}
+											for _, pb := range peelingCopy {
+												cellRect := ui.Rect{
+													X: r.X + gridPad + float32(pb.col)*pitch,
+													Y: r.Y + gridPad + float32(pb.row)*pitch,
+													W: cellSize,
+													H: cellSize,
+												}
+												bmp := flagBmp
+												if pb.shield {
+													bmp = shieldBmp
+												}
+												cx, cy := cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2
+												p.Transform(ui.Rotation(pb.tilt), cx, cy, func() {
+													paintBandagePeel(p, cellRect, bmp, 0.82, pb.peelT)
+												})
+											}
+											if hasGridPulses {
+												for _, pulse := range pulsesCopy {
+													elapsed := nowCopy.Sub(pulse.Start)
+													if elapsed < 0 || elapsed >= skillPulseDuration {
+														continue
+													}
+													row, col := pulse.Index/cols, pulse.Index%cols
+													cellRect := ui.Rect{
+														X: r.X + gridPad + float32(col)*pitch,
+														Y: r.Y + gridPad + float32(row)*pitch,
+														W: cellSize,
+														H: cellSize,
+													}
+													paintSkillTargetPulse(p, cellRect, 4, pulse.MemberID, palCopy, float32(elapsed)/float32(skillPulseDuration))
+												}
+											}
+											if hasGridBursts {
+												for _, burst := range burstsCopy {
+													elapsed := nowCopy.Sub(burst.Start)
+													if elapsed < 0 || elapsed >= knotBurstDuration {
+														continue
+													}
+													row, col := burst.Index/cols, burst.Index%cols
+													cellRect := ui.Rect{
+														X: r.X + gridPad + float32(col)*pitch,
+														Y: r.Y + gridPad + float32(row)*pitch,
+														W: cellSize,
+														H: cellSize,
+													}
+													paintKnotBurst(p, cellRect, palCopy, float32(elapsed)/float32(knotBurstDuration))
+												}
+											}
+										}
+										if sx != 0 || sy != 0 {
+											p.Transform(ui.Translation(sx, sy), 0, 0, drawOverlays)
+										} else {
+											drawOverlays()
+										}
+										if hasGridPulses || hasGridBursts {
+											p.AnimationFrame()
+										}
+									})
+								}
+							})
+						})
+						a.stageHighlightsOverlay(c, pal, now)
+						if nextHoverRow != a.classicHoverRow || nextHoverCol != a.classicHoverCol {
+							a.classicHoverRow = nextHoverRow
+							a.classicHoverCol = nextHoverCol
+							a.classicHoverHint = a.game.InspectNumberHover(nextHoverRow, nextHoverCol, a.flagMode)
+							c.After(time.Millisecond)
+						}
 					})
-					if nextHoverRow != a.classicHoverRow || nextHoverCol != a.classicHoverCol {
-						a.classicHoverRow = nextHoverRow
-						a.classicHoverCol = nextHoverCol
-						a.classicHoverHint = a.game.InspectNumberHover(nextHoverRow, nextHoverCol, a.flagMode)
-						c.After(time.Millisecond)
-					}
 				})
 			})
 
