@@ -27,6 +27,7 @@ func TestSettingsColorsContrastMeetsWCAGAA(t *testing.T) {
 			{"control-label", sc.LabelInk, pal.Sheet},
 			{"muted-text", sc.MutedInk, pal.Sheet},
 			{"keycap-hint", sc.KeyInk, sc.KeyBg},
+			{"seg-idle-text", sc.SegIdleInk, sc.SegTrackBg},
 		}
 		for _, p := range pairs {
 			if got := contrast(p.fg, p.bg); got < minInkContrast {
@@ -306,26 +307,19 @@ func TestSettingsMutedVolumeSliderLocksPointerAndKeyboardAndRestores(t *testing.
 		t.Fatalf("expected enabled 音量 slider, ok=%v info=%+v", ok, slider)
 	}
 
-	// While unmuted, clicking the slider changes volume and persists it.
+	// While unmuted, clicking the slider changes volume, moves focus directly
+	// to the slider, and lets arrow keys adjust volume immediately without Tab.
 	tt.ClickAt(slider.Bounds.X+slider.Bounds.W*0.25, slider.Bounds.Y+slider.Bounds.H/2)
 	if app.volume == 68 {
 		t.Fatal("clicking enabled 音量 slider did not change volume")
 	}
-	beforeMuteVol := app.volume
-
-	// Focus the enabled slider via Tab and verify keyboard arrows adjust volume.
-	for range 10 {
-		if tt.Focused("音量") {
-			break
-		}
-		tt.Key(0, ui.KeyTab)
-	}
 	if !tt.Focused("音量") {
-		t.Fatal("failed to focus enabled 音量 slider via Tab")
+		t.Fatal("clicking enabled 音量 slider must move keyboard focus onto the slider")
 	}
+	beforeMuteVol := app.volume
 	tt.Key(0, ui.KeyRight)
 	if app.volume != beforeMuteVol+1 {
-		t.Fatalf("KeyRight on focused enabled slider gave volume=%d, want %d", app.volume, beforeMuteVol+1)
+		t.Fatalf("KeyRight immediately after clicking 音量 slider gave volume=%d, want %d", app.volume, beforeMuteVol+1)
 	}
 	lockedVol := app.volume
 
@@ -338,6 +332,9 @@ func TestSettingsMutedVolumeSliderLocksPointerAndKeyboardAndRestores(t *testing.
 	}
 	if !app.popoverOpen(popoverSettings) {
 		t.Fatal("muting via M while volume slider was focused must keep 设置 popover open")
+	}
+	if !tt.Focused("音效") {
+		t.Fatal("muting while volume slider was focused should hand focus to 音效 switch")
 	}
 	sliderDisabled, ok := tt.AccessByRole(ui.RoleSlider, "音量")
 	if !ok || !sliderDisabled.Disabled {
@@ -353,18 +350,27 @@ func TestSettingsMutedVolumeSliderLocksPointerAndKeyboardAndRestores(t *testing.
 		}
 	}
 
-	// Try pointer click and drag across the disabled slider.
+	// Tab from 音效 while muted skips the disabled 音量 slider and lands on 右键 ? 标记.
+	tt.Key(0, ui.KeyTab)
+	if !tt.Focused("右键 ? 标记") {
+		t.Fatal("Tab from 音效 while muted must skip disabled 音量 slider to 右键 ? 标记")
+	}
+
+	// Try pointer click and drag across the disabled slider: popover stays open and volume stays locked.
 	sr := sliderDisabled.Bounds
 	tt.ClickAt(sr.X+sr.W*0.85, sr.Y+sr.H/2)
 	tt.Press(sr.X+sr.W*0.2, sr.Y+sr.H/2)
 	tt.Move(sr.X+sr.W*0.9, sr.Y+sr.H/2)
 	tt.Release(sr.X+sr.W*0.9, sr.Y+sr.H/2)
+	if !app.popoverOpen(popoverSettings) {
+		t.Fatal("clicking/dragging disabled 音量 slider must keep 设置 popover open")
+	}
 	if app.volume != lockedVol || len(saved) != savedBeforeMutedInput {
 		t.Fatalf("pointer input on disabled slider mutated volume: vol=%d (want %d) saves=%d->%d",
 			app.volume, lockedVol, savedBeforeMutedInput, len(saved))
 	}
 
-	// Unmute via 音效 switch: restores original volume and re-enables slider.
+	// Unmute via 音效 switch: focuses 音效, restores original volume, and re-enables slider.
 	soundSw, ok := tt.AccessByRole(ui.RoleSwitch, "音效")
 	if !ok {
 		t.Fatal("missing 音效 switch")
@@ -373,6 +379,9 @@ func TestSettingsMutedVolumeSliderLocksPointerAndKeyboardAndRestores(t *testing.
 	if !app.soundEnabled || app.volume != lockedVol {
 		t.Fatalf("unmuting failed to restore volume: enabled=%v vol=%d want %d", app.soundEnabled, app.volume, lockedVol)
 	}
+	if !tt.Focused("音效") {
+		t.Fatal("clicking 音效 switch must move focus to 音效 switch")
+	}
 	sliderRestored, ok := tt.AccessByRole(ui.RoleSlider, "音量")
 	if !ok || sliderRestored.Disabled {
 		t.Fatalf("expected re-enabled 音量 slider after unmute, ok=%v info=%+v", ok, sliderRestored)
@@ -380,6 +389,29 @@ func TestSettingsMutedVolumeSliderLocksPointerAndKeyboardAndRestores(t *testing.
 	tt.ClickAt(sliderRestored.Bounds.X+sliderRestored.Bounds.W*0.85, sliderRestored.Bounds.Y+sliderRestored.Bounds.H/2)
 	if app.volume == lockedVol {
 		t.Fatal("clicking re-enabled 音量 slider did not change volume")
+	}
+	// Clicking a motion segment moves focus to that segment so arrow keys immediately step motion modes,
+	// and clicking internal header/whitespace keeps the popover open without dropping focus.
+	if err := tt.Click("标准"); err != nil {
+		t.Fatalf("click 标准 segment: %v", err)
+	}
+	if app.motion != motionStandard {
+		t.Fatalf("clicking 标准 segment gave motion=%q, want %q", app.motion, motionStandard)
+	}
+	tt.Key(0, ui.KeyRight)
+	if app.motion != motionReduced {
+		t.Fatalf("KeyRight immediately after clicking 标准 segment gave motion=%q, want %q", app.motion, motionReduced)
+	}
+	if hdr, ok := tt.AccessByRole(ui.RoleText, "偏好设置"); ok {
+		tt.ClickAt(hdr.Bounds.X+hdr.Bounds.W/2, hdr.Bounds.Y+hdr.Bounds.H/2)
+		tt.ClickAt(hdr.Bounds.X+hdr.Bounds.W+40, hdr.Bounds.Y+hdr.Bounds.H/2)
+	}
+	if !app.popoverOpen(popoverSettings) {
+		t.Fatal("clicking internal header or whitespace inside 设置 must keep popover open")
+	}
+	tt.Key(0, ui.KeyLeft)
+	if app.motion != motionStandard {
+		t.Fatalf("KeyLeft after clicking internal header/whitespace gave motion=%q, want %q", app.motion, motionStandard)
 	}
 }
 

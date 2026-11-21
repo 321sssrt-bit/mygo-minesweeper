@@ -661,6 +661,7 @@ type settingsColors struct {
 	TriggerIdleIcon, TriggerHoverIcon               ui.Color
 	GroupInk, LabelInk, MutedInk                    ui.Color
 	KeyBg, KeyInk                                   ui.Color
+	SegTrackBg, SegIdleInk                          ui.Color
 }
 
 var daySettings, nightSettings = newSettingsColors(dayPaper), newSettingsColors(nightPaper)
@@ -681,6 +682,7 @@ func newSettingsColors(p *palette) *settingsColors {
 	hoverBg := p.Slip.Alpha(0.85).Over(p.Sheet)
 	openBg := accent.Alpha(0.14).Over(p.Sheet)
 	keyBg := p.Slip.Alpha(0.65).Over(p.Sheet)
+	segTrackBg := p.Slip.Alpha(0.35).Over(p.Sheet)
 	return &settingsColors{
 		TriggerIdleBg:     idleBg,
 		TriggerHoverBg:    hoverBg,
@@ -699,5 +701,7 @@ func newSettingsColors(p *palette) *settingsColors {
 		MutedInk:          p.inkOn(p.Sheet, p.InkMuted),
 		KeyBg:             keyBg,
 		KeyInk:            p.inkOn(keyBg, p.InkMuted),
+		SegTrackBg:        segTrackBg,
+		SegIdleInk:        p.inkOn(segTrackBg, p.Ink),
 	}
 }

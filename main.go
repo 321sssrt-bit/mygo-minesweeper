@@ -1177,7 +1177,7 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 					dark := a.darkMode
 					sw := ui.Switch(c.Key("settings-dark-mode"), &dark).LabelledBy(lampLabel).
 						Tooltip("切换日间方格纸与深夜台灯下的笔记本")
-					if focusFirst {
+					if focusFirst || sw.Pressed() {
 						sw.Focus()
 					}
 					if sw.Changed() {
@@ -1188,8 +1188,34 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 				ui.Column(c).FillWidth().Padding(2, 4).Gap(6).Children(func() {
 					motionLabel := ui.Text(c, "动效").FontSize(13).TextColor(sc.LabelInk)
 					motionIdx := motionToIndex(a.motion)
-					if ui.Segmented(c.Key("settings-motion"), &motionIdx, "跟随系统", "标准", "减弱").
-						FillEqually().LabelledBy(motionLabel).Changed() {
+					motionLabels := [3]string{"跟随系统", "标准", "减弱"}
+					parts := ui.SegmentedBase(c.Key("settings-motion"), &motionIdx, len(motionLabels))
+					parts.Track.FillWidth().AlignItems(ui.Stretch).Padding(2).Gap(2).Radius(7).
+						Background(sc.SegTrackBg).Border(1, pal.Rule).LabelledBy(motionLabel).
+						Children(func() {
+							for i, label := range motionLabels {
+								seg := parts.Segment(i).Grow(1).Padding(5, 8).Radius(5).Cursor(ui.CursorPointer)
+								if seg.Pressed() {
+									seg.Focus()
+								}
+								active := i == motionIdx
+								textColor := sc.SegIdleInk
+								if active {
+									seg.Background(sc.TriggerOpenBg).Shadow(0, 1, 2, 0, pal.SlipShade.Alpha(0.45))
+									textColor = sc.TriggerOpenInk
+								} else if seg.Hovered() {
+									seg.Background(sc.TriggerHoverBg)
+									textColor = sc.TriggerHoverText
+								}
+								seg.Children(func() {
+									txt := ui.Text(c, label).FontSize(12).TextColor(textColor).SingleLine().PassThrough()
+									if active {
+										txt.Bold()
+									}
+								})
+							}
+						})
+					if parts.Track.Changed() {
 						a.updatePrefs(func(p *prefs) { p.Motion = indexToMotion(motionIdx) })
 					}
 				})
@@ -1215,6 +1241,9 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 					soundOn := a.soundEnabled
 					soundSwitch = ui.Switch(c.Key("settings-sound"), &soundOn).LabelledBy(soundLabel).
 						KeyShortcuts(0, ui.KeyM).Tooltip("开关文具与乐器音效（按 M 切换）")
+					if soundSwitch.Pressed() {
+						soundSwitch.Focus()
+					}
 					if soundSwitch.Changed() {
 						a.updatePrefs(func(p *prefs) { p.SoundEnabled = soundOn })
 					}
@@ -1234,6 +1263,9 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 					volSlider := ui.Slider(c.Key("settings-volume"), &vol, 0, 100).
 						Step(1).FillWidth().LabelledBy(volLabel).Value(fmt.Sprintf("%d%%", a.volume)).
 						Disabled(!a.soundEnabled)
+					if volSlider.Pressed() {
+						volSlider.Focus()
+					}
 					if !a.soundEnabled && volSlider.Focused() {
 						// Muting via M while the slider holds focus disables it;
 						// keep focus inside the popover so FocusLeft does not close it.
@@ -1256,8 +1288,12 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 				ui.Row(c).FillWidth().Padding(2, 4).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
 					qLabel := ui.Text(c, "右键 ? 标记").FontSize(13).TextColor(sc.LabelInk)
 					allowQ := a.allowQuestion
-					if ui.Switch(c.Key("settings-allow-question"), &allowQ).LabelledBy(qLabel).
-						Tooltip("右键循环加入「？」不确定标记").Changed() {
+					qSwitch := ui.Switch(c.Key("settings-allow-question"), &allowQ).LabelledBy(qLabel).
+						Tooltip("右键循环加入「？」不确定标记")
+					if qSwitch.Pressed() {
+						qSwitch.Focus()
+					}
+					if qSwitch.Changed() {
 						a.updatePrefs(func(p *prefs) { p.AllowQuestion = allowQ })
 					}
 				})
