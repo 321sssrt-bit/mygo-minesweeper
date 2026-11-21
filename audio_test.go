@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"math"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -16,15 +17,25 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// soundRecorder is the in-memory output headless tests inject.
-type soundRecorder struct{ cues []soundCue }
+// soundRecorder is the in-memory output headless tests inject. With a clock
+// it also stamps each cue with the time it played.
+type soundRecorder struct {
+	cues  []soundCue
+	at    []time.Time
+	clock func() time.Time
+}
 
-func (r *soundRecorder) Play(c soundCue) { r.cues = append(r.cues, c) }
+func (r *soundRecorder) Play(c soundCue) {
+	r.cues = append(r.cues, c)
+	if r.clock != nil {
+		r.at = append(r.at, r.clock())
+	}
+}
 
 // take returns the cues played since the last take.
 func (r *soundRecorder) take() []soundCue {
 	c := r.cues
-	r.cues = nil
+	r.cues, r.at = nil, nil
 	return c
 }
 
@@ -420,7 +431,7 @@ func TestSoundShieldSticksBandage(t *testing.T) {
 	if !g.Cell(2, 2).ShieldSaved || app.chatPosted == posted {
 		t.Fatal("expected the shield to save the cell and post Soyo's line")
 	}
-	assertSoundIDs(t, "shield", rec.take(), SoundBandageOn)
+	assertSoundIDs(t, "shield", rec.take(), SoundBandageOn, SoundMotifSoyo)
 }
 
 func TestSoundSwitchesToggleOnce(t *testing.T) {
@@ -584,4 +595,492 @@ func TestSoundDuelChatSilentInBackground(t *testing.T) {
 		t.Fatal("expected a timed duel line in front")
 	}
 	assertSoundIDs(t, "foreground duel line", rec.take(), SoundChatNote)
+}
+
+// wallBoard stages a started 10×20 classic board cut by two columns of 雷,
+// at cols 12 and 16, and settles its layout: a click in column 0 floods the
+// left side, column 13 holds single number cells, and no skill can clear
+// all three sides at once.
+func wallBoard(tt *ui.Tester, app *minesweeperApp, charges int) *Game {
+	g := NewGame(Difficulty{ID: "wall", Rows: 10, Cols: 20, Mines: 20, SkillCharges: charges}, app.bandMode(), app.memberID, 7)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	for row := range g.Rows {
+		g.Cell(row, 12).IsMine = true
+		g.Cell(row, 16).IsMine = true
+	}
+	g.RecomputeAdjacency()
+	app.game = g
+	// Let the grid's cells settle to the new board's size.
+	tt.Advance(time.Second)
+	tt.Frame()
+	return g
+}
+
+// cornerBoard stages a started 5×5 classic board whose only 雷 is cell 0-0,
+// so clicking 4-4 wins and clicking 0-0 loses.
+func cornerBoard(tt *ui.Tester, app *minesweeperApp, haruhikage bool) *Game {
+	g := NewGame(Difficulty{ID: "corner", Rows: 5, Cols: 5, Mines: 1, Haruhikage: haruhikage}, app.bandMode(), app.memberID, 7)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	g.Cell(0, 0).IsMine = true
+	g.RecomputeAdjacency()
+	app.game = g
+	// Let the grid's cells settle to the new board's size.
+	tt.Advance(time.Second)
+	tt.Frame()
+	return g
+}
+
+func newClockedApp(p prefs) (*minesweeperApp, *soundRecorder, *ui.Tester) {
+	app, rec := newRecordedApp(7, p)
+	tt := ui.NewTester(app.view, 1280, 900)
+	rec.clock = tt.Now
+	return app, rec, tt
+}
+
+// grainsOf returns the paper grains among cues with the times they played.
+func grainsOf(rec *soundRecorder) ([]soundCue, []time.Time) {
+	var cues []soundCue
+	var at []time.Time
+	for i, c := range rec.cues {
+		if c.ID == SoundPaperLift {
+			cues = append(cues, c)
+			at = append(at, rec.at[i])
+		}
+	}
+	return cues, at
+}
+
+func assertGrainGaps(t *testing.T, at []time.Time) {
+	t.Helper()
+	for i := 1; i < len(at); i++ {
+		if gap := at[i].Sub(at[i-1]); gap < 38*time.Millisecond {
+			t.Fatalf("grains %d and %d only %v apart", i-1, i, gap)
+		}
+	}
+}
+
+func TestSoundFloodGrainsThrottled(t *testing.T) {
+	app, rec, tt := newClockedApp(defaultPrefs())
+	g := wallBoard(tt, app, 0)
+	tt.Frame()
+	rec.take()
+
+	start := tt.Now()
+	must(t, tt.Click("cell-9-0"))
+	if !g.Cell(0, 0).Revealed || g.Cell(0, 13).Revealed {
+		t.Fatal("expected the click to flood the left side at once")
+	}
+	// Mid-flood, a quick reveal elsewhere keeps clear of the grains in flight.
+	tt.Advance(10 * time.Millisecond)
+	must(t, tt.Click("cell-0-13"))
+	if !g.Cell(0, 13).Revealed {
+		t.Fatal("a reveal must take effect even when its grain is held back")
+	}
+	tt.Advance(time.Second)
+
+	grains, at := grainsOf(rec)
+	if len(grains) < 2 || len(grains) > 6 {
+		t.Fatalf("one flood lifted %d grains, want 2 to 6", len(grains))
+	}
+	if !at[0].Equal(start) {
+		t.Fatalf("first grain at +%v, want at the click", at[0].Sub(start))
+	}
+	assertGrainGaps(t, at)
+	for i, c := range grains {
+		if c.Pan != columnPan(0, g.Cols) {
+			t.Fatalf("grain %d pan %v, want the flood's column %v", i, c.Pan, columnPan(0, g.Cols))
+		}
+		if i > 0 && c.Speed <= grains[i-1].Speed {
+			t.Fatalf("grain %d speed %v not above %v", i, c.Speed, grains[i-1].Speed)
+		}
+	}
+	if grains[0].Speed != 1 || grains[len(grains)-1].Speed > 1.2 {
+		t.Fatalf("pitch should rise gently from 1, got %v..%v", grains[0].Speed, grains[len(grains)-1].Speed)
+	}
+	// The big flood closes on the leader's motif once its wave has spread.
+	last := len(rec.cues) - 1
+	if len(rec.cues) != len(grains)+1 || rec.cues[last].ID != SoundMotifTomori {
+		t.Fatalf("flood sounds = %v, want grains then motif-tomori", soundIDs(rec.cues))
+	}
+	if motifAt := rec.at[last]; motifAt.Before(at[len(at)-1]) || motifAt.Sub(start) > 300*time.Millisecond {
+		t.Fatalf("motif at +%v, want after the last grain and within the wave", motifAt.Sub(start))
+	}
+	rec.take()
+
+	// Quick single reveals share the gap; the next one past it sounds again.
+	must(t, tt.Click("cell-2-13"))
+	tt.Advance(10 * time.Millisecond)
+	must(t, tt.Click("cell-4-13"))
+	tt.Advance(30 * time.Millisecond)
+	must(t, tt.Click("cell-6-13"))
+	tt.Advance(time.Second)
+	grains, at = grainsOf(rec)
+	if len(grains) != 2 || at[1].Sub(at[0]) != 40*time.Millisecond {
+		t.Fatalf("quick reveals played %d grains at %v, want the first and the third", len(grains), at)
+	}
+	for _, row := range []int{2, 4, 6} {
+		if !g.Cell(row, 13).Revealed {
+			t.Fatalf("cell-%d-13 should be revealed", row)
+		}
+	}
+	if grains[0].Pan != columnPan(13, g.Cols) {
+		t.Fatalf("single reveal pan %v", grains[0].Pan)
+	}
+}
+
+func TestSoundFloodDropsStaleGrains(t *testing.T) {
+	app, rec := newRecordedApp(7, defaultPrefs())
+	stalled := false
+	tt := ui.NewTester(func(c *ui.Context) {
+		if stalled {
+			c.After(16 * time.Millisecond)
+			return
+		}
+		app.view(c)
+	}, 1280, 900)
+	wallBoard(tt, app, 0)
+	tt.Frame()
+	rec.take()
+
+	must(t, tt.Click("cell-9-0"))
+	assertSoundIDs(t, "flood starts", rec.take(), SoundPaperLift)
+	// A stall swallows the frames the rest of the wave was due in: those
+	// grains and the closing motif are dropped, never played late.
+	stalled = true
+	tt.Advance(400 * time.Millisecond)
+	stalled = false
+	tt.Advance(time.Second)
+	assertSoundIDs(t, "after the stall", rec.take())
+
+	// So are those due while the window was hidden.
+	wallBoard(tt, app, 0)
+	tt.Advance(time.Second)
+	rec.take()
+	must(t, tt.Click("cell-9-0"))
+	assertSoundIDs(t, "second flood starts", rec.take(), SoundPaperLift)
+	tt.SetWindowHidden(true)
+	tt.Advance(400 * time.Millisecond)
+	tt.SetWindowHidden(false)
+	tt.Advance(time.Second)
+	assertSoundIDs(t, "after the window comes back", rec.take())
+}
+
+func TestSoundNewGameClearsQueuedGrains(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		do   func(t *testing.T, tt *ui.Tester)
+	}{
+		{"R", func(t *testing.T, tt *ui.Tester) { tt.Key(0, ui.KeyR) }},
+		{"track", func(t *testing.T, tt *ui.Tester) {
+			must(t, tt.Click("歌单"))
+			must(t, tt.Click(Difficulties[1].Song))
+		}},
+		{"mode", func(t *testing.T, tt *ui.Tester) { must(t, tt.Click("纯正经典")) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, rec, tt := newClockedApp(defaultPrefs())
+			wallBoard(tt, app, 0)
+			tt.Frame()
+			rec.take()
+			must(t, tt.Click("cell-9-0"))
+			assertSoundIDs(t, "flood starts", rec.take(), SoundPaperLift)
+			tc.do(t, tt)
+			tt.Advance(time.Second)
+			for _, c := range rec.take() {
+				if c.ID == SoundPaperLift || c.ID == SoundMotifTomori {
+					t.Fatalf("%v sounded after the new game started", c.ID)
+				}
+			}
+		})
+	}
+}
+
+var wantMotif = map[MemberID]SoundID{
+	MemberTomori:  SoundMotifTomori,
+	MemberAnon:    SoundMotifAnon,
+	MemberRana:    SoundMotifRana,
+	MemberSoyorin: SoundMotifSoyo,
+	MemberTaki:    SoundMotifTaki,
+}
+
+func TestSoundMotifsFollowLeaderInBothModes(t *testing.T) {
+	for _, mode := range []int{0, 1} {
+		for _, m := range Members {
+			t.Run(fmt.Sprintf("%s/mode%d", m.ID, mode), func(t *testing.T) {
+				motif := wantMotif[m.ID]
+				stage := func() (*minesweeperApp, *soundRecorder, *ui.Tester) {
+					app, rec, tt := newClockedApp(defaultPrefs())
+					app.memberID, app.modeIdx = m.ID, mode
+					return app, rec, tt
+				}
+
+				app, rec, tt := stage()
+				wallBoard(tt, app, 0)
+				must(t, tt.Click("cell-9-0"))
+				tt.Advance(time.Second)
+				if got := rec.take(); got[len(got)-1].ID != motif {
+					t.Fatalf("big flood sounds = %v, want them to close on %v", soundIDs(got), motif)
+				}
+
+				app, rec, tt = stage()
+				cornerBoard(tt, app, false)
+				must(t, tt.Click("cell-4-4"))
+				if app.game.Status != StatusWon {
+					t.Fatal("expected a win")
+				}
+				assertSoundIDs(t, "win", rec.take(), SoundPaperLift, motif, SoundWinChord)
+
+				app, rec, tt = stage()
+				cornerBoard(tt, app, false)
+				must(t, tt.Click("cell-0-0"))
+				if app.game.Status != StatusLost {
+					t.Fatal("expected a loss")
+				}
+				assertSoundIDs(t, "loss", rec.take(), SoundPaperLift, motif)
+
+				app, rec, tt = stage()
+				cornerBoard(tt, app, true)
+				must(t, tt.Click("cell-0-0"))
+				assertSoundIDs(t, "春日影 loss", rec.take(), SoundPaperLift, SoundHaruhikageStop)
+			})
+		}
+	}
+}
+
+func TestSoundSkillMotifOnlyWhenItTakesEffect(t *testing.T) {
+	for _, id := range []MemberID{MemberTomori, MemberAnon, MemberRana, MemberTaki} {
+		app, rec, tt := newClockedApp(defaultPrefs())
+		app.memberID = id
+		g := wallBoard(tt, app, 2)
+		rec.take()
+		posted := app.chatPosted
+		tt.Key(0, ui.KeyE)
+		if g.SkillUsesLeft != 1 || app.chatPosted == posted {
+			t.Fatalf("%s: expected the skill to take effect and post its line", id)
+		}
+		// The skill's line rides on its motif.
+		assertSoundIDs(t, string(id)+" skill", rec.take(), wantMotif[id])
+	}
+
+	for _, tc := range []struct {
+		name  string
+		stage func(tt *ui.Tester, app *minesweeperApp) *Game
+	}{
+		{"before the first click", func(tt *ui.Tester, app *minesweeperApp) *Game {
+			g := wallBoard(tt, app, 2)
+			g.FirstClick, g.Status = false, StatusIdle
+			return g
+		}},
+		{"no charge left", func(tt *ui.Tester, app *minesweeperApp) *Game { return wallBoard(tt, app, 0) }},
+		{"纯正经典", func(tt *ui.Tester, app *minesweeperApp) *Game { app.modeIdx = 1; return wallBoard(tt, app, 2) }},
+		{"Soyo's passive", func(tt *ui.Tester, app *minesweeperApp) *Game {
+			app.memberID = MemberSoyorin
+			return wallBoard(tt, app, 2)
+		}},
+	} {
+		app, rec, tt := newClockedApp(defaultPrefs())
+		g := tc.stage(tt, app)
+		rec.take()
+		before := *g
+		tt.Key(0, ui.KeyE)
+		if g.SkillUsesLeft != before.SkillUsesLeft || g.RevealedSafe != before.RevealedSafe || g.FlagsPlaced != before.FlagsPlaced {
+			t.Fatalf("%s: empty E press changed the game", tc.name)
+		}
+		assertSoundIDs(t, tc.name, rec.take())
+	}
+}
+
+// newDuelSoundApp starts a 100×100 duel at volume 80 whose AI moves once
+// staged and whose timed chatter stays quiet.
+func newDuelSoundApp() (*minesweeperApp, *soundRecorder, *ui.Tester) {
+	p := defaultPrefs()
+	p.Volume = 80
+	app, rec, tt := newClockedApp(p)
+	app.game = NewGame(Difficulty{
+		ID:           "duel-cues",
+		Gameplay:     GameplayDuel,
+		Rows:         100,
+		Cols:         100,
+		Mines:        10,
+		DuelDuration: 300,
+		AIInterval:   1000,
+	}, true, MemberTomori, 7)
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	app.game.duel.NextAI = app.game.duel.Duration + 1
+	app.duelNoticeAt = tt.Now().Add(time.Hour)
+	tt.Frame()
+	rec.take()
+	return app, rec, tt
+}
+
+// stageAITurn makes (row, col) 高松灯's next move: every other cell is the
+// player's, and a 雷 lies beside it, or under it when mine is set.
+func stageAITurn(g *Game, row, col int, mine bool) {
+	for i := range g.Cells {
+		c := &g.Cells[i]
+		*c = Cell{Row: c.Row, Col: c.Col, Owner: DuelPlayer}
+	}
+	g.Cell(row, col).Owner = DuelNobody
+	if mine {
+		g.Cell(row, col).IsMine = true
+	} else {
+		g.Cell(row, col+1).IsMine = true
+	}
+	g.RecomputeAdjacency()
+	g.duel.frontier = map[int]bool{row*g.Cols + col: true}
+	g.duel.NextAI = g.duel.Elapsed
+}
+
+// stageAIFlag makes 高松灯's next move a lone flag on the 雷 at (row, col),
+// which the revealed 1 to its left gives away.
+func stageAIFlag(g *Game, row, col int) {
+	stageAITurn(g, row, col, true)
+	g.Cell(row, col-1).Revealed = true
+}
+
+func gainNear(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+func TestSoundDuelAIPenOnlyInView(t *testing.T) {
+	app, rec, tt := newDuelSoundApp()
+	g := app.game
+
+	stageAITurn(g, 50, 50, false)
+	app.board.center(g, 50, 50)
+	tt.Advance(100 * time.Millisecond)
+	if !g.Cell(50, 50).Revealed || g.Cell(50, 50).Owner != DuelAI {
+		t.Fatal("expected 高松灯 to open 50-50")
+	}
+	got := rec.take()
+	assertSoundIDs(t, "AI opens a cell in view", got, SoundDuelPen)
+	if !gainNear(got[0].Gain, 0.25*0.8) || got[0].Pan != columnPan(50, g.Cols) {
+		t.Fatalf("pen cue = %+v, want a quarter of volume 80 panned to column 50", got[0])
+	}
+
+	stageAITurn(g, 90, 90, false)
+	app.board.center(g, 10, 10)
+	tt.Advance(100 * time.Millisecond)
+	if !g.Cell(90, 90).Revealed {
+		t.Fatal("expected 高松灯 to open 90-90")
+	}
+	assertSoundIDs(t, "AI opens a cell out of view", rec.take())
+
+	stageAIFlag(g, 50, 50)
+	app.board.center(g, 50, 50)
+	tt.Advance(100 * time.Millisecond)
+	if c := g.Cell(50, 50); !c.Flagged || c.FlagOwner != DuelAI {
+		t.Fatal("expected 高松灯 to flag 50-50")
+	}
+	assertSoundIDs(t, "AI flags a cell in view", rec.take())
+
+	stageAITurn(g, 90, 90, true)
+	app.board.center(g, 10, 10)
+	tt.Advance(100 * time.Millisecond)
+	if !g.Cell(90, 90).Exploded {
+		t.Fatal("expected 高松灯 to hit the 雷 at 90-90")
+	}
+	got = rec.take()
+	assertSoundIDs(t, "AI hits a 雷 out of view", got, SoundDuelMineCue)
+	if !gainNear(got[0].Gain, 0.5*0.8) {
+		t.Fatalf("雷 cue gain %v", got[0].Gain)
+	}
+}
+
+func TestSoundDuelCountdownTicksWholeSeconds(t *testing.T) {
+	app, rec, tt := newDuelSoundApp()
+	d := app.game.duel
+	d.Elapsed = d.Duration - 12.5
+	tt.Advance(2 * time.Second)
+	assertSoundIDs(t, "before the last ten seconds", rec.take())
+
+	tt.Advance(10*time.Second + 400*time.Millisecond)
+	ticks, at := rec.cues, rec.at
+	if len(ticks) != countdownFrom {
+		t.Fatalf("last ten seconds played %v, want %d ticks", soundIDs(ticks), countdownFrom)
+	}
+	for i, c := range ticks {
+		if c.ID != SoundDuelTick || !gainNear(c.Gain, 0.5*0.8) {
+			t.Fatalf("tick %d = %+v", i, c)
+		}
+		if i > 0 {
+			if gap := at[i].Sub(at[i-1]); gap < 950*time.Millisecond || gap > 1050*time.Millisecond {
+				t.Fatalf("ticks %d and %d are %v apart", i-1, i, gap)
+			}
+		}
+	}
+	rec.take()
+	tt.Advance(time.Second)
+	if app.game.Status != StatusWon {
+		t.Fatal("expected the duel to settle")
+	}
+	// A 0 : 0 draw settles on the leader's motif alone.
+	assertSoundIDs(t, "settlement", rec.take(), SoundMotifTomori)
+}
+
+func TestSoundDuelCountdownSkipsStalledSeconds(t *testing.T) {
+	app, rec := newRecordedApp(7, func() prefs { p := defaultPrefs(); p.Volume = 80; return p }())
+	stalled := false
+	tt := ui.NewTester(func(c *ui.Context) {
+		if stalled {
+			c.After(16 * time.Millisecond)
+			return
+		}
+		app.view(c)
+	}, 1280, 900)
+	app.game = NewGame(Difficulty{ID: "duel-stall", Gameplay: GameplayDuel, Rows: 100, Cols: 100, Mines: 10, DuelDuration: 300, AIInterval: 1000}, true, MemberTomori, 7)
+	app.game.FirstClick = true
+	app.game.Status = StatusPlaying
+	d := app.game.duel
+	d.NextAI = d.Duration + 1
+	d.Elapsed = d.Duration - 10.5
+	app.duelNoticeAt = tt.Now().Add(time.Hour)
+	tt.Frame()
+	rec.take()
+
+	stalled = true
+	tt.Advance(3 * time.Second)
+	stalled = false
+	tt.Advance(50 * time.Millisecond)
+	assertSoundIDs(t, "stall across three seconds", rec.take(), SoundDuelTick)
+}
+
+func TestSoundDuelPassiveCuesHushInBackground(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		want  SoundID
+		stage func(app *minesweeperApp)
+	}{
+		{"pen", SoundDuelPen, func(app *minesweeperApp) {
+			stageAITurn(app.game, 50, 50, false)
+			app.board.center(app.game, 50, 50)
+		}},
+		{"雷 cue", SoundDuelMineCue, func(app *minesweeperApp) {
+			stageAITurn(app.game, 50, 50, true)
+		}},
+		{"tick", SoundDuelTick, func(app *minesweeperApp) {
+			// First 10.6 s left; the second time the clock runs on into 9.
+			if d := app.game.duel; d.remaining() > 11 {
+				d.Elapsed = d.Duration - 10.6
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, rec, tt := newDuelSoundApp()
+			tt.SetWindowActive(false)
+			tt.Frame()
+			tc.stage(app)
+			tt.Advance(time.Second)
+			assertSoundIDs(t, "in the background", rec.take())
+
+			tt.SetWindowActive(true)
+			tt.Frame()
+			assertSoundIDs(t, "back in front", rec.take())
+
+			tc.stage(app)
+			tt.Advance(time.Second)
+			assertSoundIDs(t, "next cue in front", rec.take(), tc.want)
+		})
+	}
 }
