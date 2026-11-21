@@ -1,0 +1,1085 @@
+package main
+
+import (
+	"fmt"
+	"image"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+)
+
+func diffBoundsInRect(a, b *image.RGBA, r ui.Rect, tol uint8) (minX, minY, maxX, maxY, count int) {
+	const scale = 2
+	x0 := max(a.Bounds().Min.X, int(r.X*scale))
+	x1 := min(a.Bounds().Max.X-1, int((r.X+r.W)*scale))
+	y0 := max(a.Bounds().Min.Y, int(r.Y*scale))
+	y1 := min(a.Bounds().Max.Y-1, int((r.Y+r.H)*scale))
+	minX, minY = x1+1, y1+1
+	maxX, maxY = x0-1, y0-1
+	for y := y0; y <= y1; y++ {
+		for x := x0; x <= x1; x++ {
+			o := a.PixOffset(x, y)
+			dr := absInt(int(a.Pix[o]) - int(b.Pix[o]))
+			dg := absInt(int(a.Pix[o+1]) - int(b.Pix[o+1]))
+			db := absInt(int(a.Pix[o+2]) - int(b.Pix[o+2]))
+			if dr > int(tol) || dg > int(tol) || db > int(tol) {
+				count++
+				if x < minX {
+					minX = x
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	return minX, minY, maxX, maxY, count
+}
+
+func uiColorNear(a, b ui.Color, tol int) bool {
+	return absInt(int(a.R)-int(b.R)) <= tol &&
+		absInt(int(a.G)-int(b.G)) <= tol &&
+		absInt(int(a.B)-int(b.B)) <= tol
+}
+
+func hatchBarFilledExtent(img *image.RGBA, r ui.Rect, scale float32, ink ui.Color, tol int) int {
+	x0 := max(img.Bounds().Min.X, int((r.X+2)*scale))
+	x1 := min(img.Bounds().Max.X-1, int((r.X+r.W-2)*scale))
+	y0 := max(img.Bounds().Min.Y, int((r.Y+2)*scale))
+	y1 := min(img.Bounds().Max.Y-1, int((r.Y+r.H-2)*scale))
+	maxX := -1
+	for x := x0; x <= x1; x++ {
+		for y := y0; y <= y1; y++ {
+			if pixelNearColor(img.At(x, y), ink, tol) {
+				maxX = x
+				break
+			}
+		}
+	}
+	if maxX < 0 {
+		return 0
+	}
+	return maxX - x0 + 1
+}
+
+func TestChatNoteStableKeysEnterShiftAndEviction(t *testing.T) {
+	app := newMinesweeperApp(42)
+	app.darkMode = false
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.Frame()
+
+	// Opening notes sit steady on frame 0 with strictly increasing stable IDs.
+	if len(app.chatLog) < 2 {
+		t.Fatalf("expected >= 2 opening chat messages, got %d", len(app.chatLog))
+	}
+	for i := 1; i < len(app.chatLog); i++ {
+		if app.chatLog[i].ID <= app.chatLog[i-1].ID {
+			t.Fatalf("chat IDs not strictly increasing: %+v", app.chatLog)
+		}
+	}
+	if len(app.chatAnims) != 0 {
+		t.Fatalf("opening chat notes must not animate on frame 0, got %+v", app.chatAnims)
+	}
+	if tt.FramePending() {
+		t.Fatal("initial idle screen must not leave pending animation frames")
+	}
+
+	olderText := app.chatLog[len(app.chatLog)-1].Text
+	olderBefore, ok := tt.Find(olderText)
+	if !ok {
+		t.Fatalf("could not locate existing chat note %q", olderText)
+	}
+
+	// Push a runtime note: new note enters from top while older note slides smoothly down.
+	app.pushChat("千早爱音", FindMember(MemberAnon).ColorHex, "排练室新贴上的便签！")
+	tt.Frame()
+	newID := app.chatLog[len(app.chatLog)-1].ID
+	if _, active := app.chatAnims[newID]; !active {
+		t.Fatalf("expected new chat note ID=%d to enter chatAnims", newID)
+	}
+	if !tt.FramePending() {
+		t.Fatal("expected pending animation frames during chat note enter")
+	}
+
+	olderAt0, ok := tt.Find(olderText)
+	if !ok {
+		t.Fatalf("existing note %q missing at t=0", olderText)
+	}
+	tt.Advance(70 * time.Millisecond)
+	olderMid, ok := tt.Find(olderText)
+	if !ok {
+		t.Fatalf("existing note %q missing at t=70ms", olderText)
+	}
+	tt.Advance(chatNoteEnterDuration)
+	olderSettled, ok := tt.Find(olderText)
+	if !ok {
+		t.Fatalf("existing note %q missing after settle", olderText)
+	}
+
+	if !(olderAt0.Y < olderMid.Y && olderMid.Y < olderSettled.Y) {
+		t.Fatalf("expected existing chat note to slide smoothly downward: before=%.2f t0=%.2f mid=%.2f settled=%.2f",
+			olderBefore.Y, olderAt0.Y, olderMid.Y, olderSettled.Y)
+	}
+	if len(app.chatAnims) != 0 {
+		t.Fatalf("expected chatAnims pruned after settle, remaining=%+v", app.chatAnims)
+	}
+	if tt.FramePending() {
+		t.Fatal("expected FramePending()==false once chat note transition converges")
+	}
+
+	// Fill past the 18-message cap and push a 19th message: surviving notes must keep
+	// their stable IDs and NEVER replay enter animations; only the single new ID animates.
+	for i := range 20 {
+		app.pushChat("高松灯", FindMember(MemberTomori).ColorHex, fmt.Sprintf("排练记录 #%d", i+1))
+	}
+	tt.Frame()
+	tt.Advance(chatNoteEnterDuration + 30*time.Millisecond)
+	if len(app.chatLog) != 18 || len(app.chatAnims) != 0 {
+		t.Fatalf("expected settled 18-message log, len=%d anims=%d", len(app.chatLog), len(app.chatAnims))
+	}
+	survivingIDs := make([]int, 0, 17)
+	for _, msg := range app.chatLog[1:] {
+		survivingIDs = append(survivingIDs, msg.ID)
+	}
+
+	app.pushChat("椎名立希", FindMember(MemberTaki).ColorHex, "裁剪旧便签后只动画这一条")
+	tt.Frame()
+	newestID := app.chatLog[len(app.chatLog)-1].ID
+	if len(app.chatAnims) != 1 {
+		t.Fatalf("expected exactly 1 animating note after >18 eviction, got %+v", app.chatAnims)
+	}
+	if _, ok := app.chatAnims[newestID]; !ok {
+		t.Fatalf("expected only newest ID=%d animating, got %+v", newestID, app.chatAnims)
+	}
+	for i, id := range survivingIDs {
+		if app.chatLog[i].ID != id {
+			t.Fatalf("surviving note index %d ID drifted: got %d want %d", i, app.chatLog[i].ID, id)
+		}
+		if _, replayed := app.chatAnims[id]; replayed {
+			t.Fatalf("surviving note ID=%d unexpectedly replayed enter animation", id)
+		}
+	}
+	tt.Advance(chatNoteEnterDuration + 30*time.Millisecond)
+	if len(app.chatAnims) != 0 || tt.FramePending() {
+		t.Fatalf("expected clean settle after eviction animation: anims=%d pending=%v", len(app.chatAnims), tt.FramePending())
+	}
+}
+
+func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		firstTrig   string
+		firstKind   appPopover
+		secondTrig  string
+		secondKind  appPopover
+		secondFocus string
+		rightClick  bool
+	}{
+		{"setlist-exiting-to-settings", "歌单", popoverSetlist, "设置", popoverSettings, "夜间台灯", false},
+		{"settings-exiting-to-setlist", "设置", popoverSettings, "歌单", popoverSetlist, "迷星叫", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newMinesweeperApp(12345)
+			app.darkMode = false
+			tt := ui.NewTester(app.view, 1280, 900)
+			tt.SetScale(2)
+			tt.Frame()
+
+			closedBaseline := image.NewRGBA(tt.Image().Bounds())
+			copy(closedBaseline.Pix, tt.Image().Pix)
+
+			// 1. Open first popover, settle its enter transition, then sit idle well past
+			// popoverExitDuration (500ms) so an outside click must anchor exit start to the click frame.
+			if err := tt.Click(tc.firstTrig); err != nil {
+				t.Fatalf("open %s: %v", tc.firstTrig, err)
+			}
+			tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+			if !app.popoverOpen(tc.firstKind) {
+				t.Fatalf("expected %s open", tc.firstTrig)
+			}
+			tt.Advance(500 * time.Millisecond)
+
+			// 2. Dismiss via outside left/right click on a board cell: anti-leak shield
+			// must swallow the click (zero reveal/flag) and start a real exit transition.
+			cellRect, ok := tt.Find("cell-4-4")
+			if !ok {
+				t.Fatal("cell-4-4 missing")
+			}
+			if tc.rightClick {
+				tt.RightClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
+			} else {
+				tt.ClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
+			}
+			if app.hasOpenPopover() {
+				t.Fatalf("outside board click did not start closing %s", tc.firstTrig)
+			}
+			if app.game.Moves != 0 || app.game.FirstClick || app.game.FlagsPlaced != 0 {
+				t.Fatalf("outside dismiss click leaked through shield onto board: moves=%d first=%v flags=%d",
+					app.game.Moves, app.game.FirstClick, app.game.FlagsPlaced)
+			}
+			tt.Advance(45 * time.Millisecond)
+			if !app.popoverExiting(tt.Now()) || !tt.FramePending() {
+				t.Fatalf("expected %s actively exiting at 45ms: exiting=%v pending=%v",
+					tc.firstTrig, app.popoverExiting(tt.Now()), tt.FramePending())
+			}
+			// Visually confirm the exiting ghost is still fading over the closed baseline.
+			fullRect := ui.Rect{X: 0, Y: 0, W: 1280, H: 900}
+			if diff := diffPixelCountInRect(closedBaseline, tt.Image(), fullRect, 2); diff < 500 {
+				t.Fatalf("expected visible exiting popover ghost at 45ms, pixel diff=%d", diff)
+			}
+
+			// 3. Directly single-click the other trigger while the first popover is still mid-exit!
+			if err := tt.Click(tc.secondTrig); err != nil {
+				t.Fatalf("single-click %s mid-exit: %v", tc.secondTrig, err)
+			}
+			if !app.popoverOpen(tc.secondKind) || app.popoverOpen(tc.firstKind) {
+				t.Fatalf("single-click mid-exit failed to open %s cleanly: active=%v", tc.secondTrig, app.activePopover)
+			}
+			if !tt.Focused(tc.secondFocus) {
+				t.Fatalf("expected focus on %q after mid-exit single-click switch", tc.secondFocus)
+			}
+
+			// 4. Immediately clicking or right-clicking the board while the switched popover is open
+			// (overlapping the old popover's exit) must be caught by popoverWorkspaceShield.
+			if tc.rightClick {
+				tt.ClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
+			} else {
+				tt.RightClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
+			}
+			if app.hasOpenPopover() {
+				t.Fatalf("outside click did not dismiss %s after mid-exit switch", tc.secondTrig)
+			}
+			if app.game.Moves != 0 || app.game.FirstClick || app.game.FlagsPlaced != 0 {
+				t.Fatalf("post-switch outside click leaked onto board: moves=%d first=%v flags=%d",
+					app.game.Moves, app.game.FirstClick, app.game.FlagsPlaced)
+			}
+
+			// 5. Re-open second popover mid-exit, close via Escape, verify focus restoration,
+			// immediate board playability & clean screen reader tree while ghost is fading,
+			// and full convergence (FramePending() == false).
+			tt.Advance(45 * time.Millisecond)
+			if err := tt.Click(tc.secondTrig); err != nil {
+				t.Fatalf("re-open %s mid-exit: %v", tc.secondTrig, err)
+			}
+			tt.Key(0, ui.KeyEscape)
+			if !tt.Focused(tc.secondTrig) {
+				t.Fatalf("Escape did not restore focus to %s", tc.secondTrig)
+			}
+			tt.Advance(45 * time.Millisecond)
+			if !app.popoverExiting(tt.Now()) {
+				t.Fatalf("expected %s exit ghost still visible at 45ms after Escape", tc.secondTrig)
+			}
+			tt.UseScreenReader()
+			for _, node := range tt.AccessAll() {
+				if node.Name == "排练歌单" || node.Name == "偏好设置" || node.Name == "夜间台灯" {
+					t.Fatalf("exiting popover leaked into screen reader tree: %+v", node)
+				}
+			}
+			// Clicking a board cell immediately after Escape while the inert ghost is fading must work on frame 0.
+			tt.ClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
+			if !app.game.FirstClick || app.game.Moves == 0 {
+				t.Fatalf("board was not immediately playable after Escape while exit ghost faded: first=%v moves=%d",
+					app.game.FirstClick, app.game.Moves)
+			}
+			tt.Advance(popoverExitDuration + rippleMaxDelay + rippleDuration + 40*time.Millisecond)
+			if app.hasOpenPopover() || app.popoverExiting(tt.Now()) || tt.FramePending() {
+				t.Fatalf("popover exit did not settle cleanly: open=%v exiting=%v pending=%v",
+					app.hasOpenPopover(), app.popoverExiting(tt.Now()), tt.FramePending())
+			}
+		})
+	}
+
+	// 6. Reset paths (KeyR, setlist track switch, mode switch) and duel settlement must cancel
+	// popover exit ghosts immediately with FramePending()==false and zero leaked suppression.
+	t.Run("reset-and-settle-cancel-exit-ghost-immediately", func(t *testing.T) {
+		app := newMinesweeperApp(42)
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.Frame()
+
+		// Open settings, settle enter, press R -> zero exit ghost and zero pending frames.
+		if err := tt.Click("设置"); err != nil {
+			t.Fatalf("open settings: %v", err)
+		}
+		tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		tt.Key(0, ui.KeyR)
+		if app.hasOpenPopover() || app.popoverExiting(tt.Now()) || tt.FramePending() {
+			t.Fatalf("KeyR with open settings left ghost or pending frame: open=%v exiting=%v pending=%v",
+				app.hasOpenPopover(), app.popoverExiting(tt.Now()), tt.FramePending())
+		}
+
+		// Re-open settings and press Escape -> normal exit MUST still play (no stale suppression).
+		if err := tt.Click("设置"); err != nil {
+			t.Fatalf("reopen settings after KeyR: %v", err)
+		}
+		tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		tt.Key(0, ui.KeyEscape)
+		if !app.popoverExiting(tt.Now()) || !tt.FramePending() {
+			t.Fatalf("Escape after prior KeyR lost normal exit transition: exiting=%v pending=%v",
+				app.popoverExiting(tt.Now()), tt.FramePending())
+		}
+		tt.Advance(popoverExitDuration + 20*time.Millisecond)
+
+		// Setlist track switch closes popover immediately with no ghost and no pending frames on the new board.
+		tt.Move(10, 10)
+		if err := tt.Click("歌单"); err != nil {
+			t.Fatalf("open setlist: %v", err)
+		}
+		tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		setlistRect := app.popoverRects[popoverSetlist]
+		// Pick the second track via keyboard so pointer hover over the sidebar does not start a member hover tint.
+		tt.Key(0, ui.KeyDown)
+		tt.Key(0, ui.KeyEnter)
+		if app.diffIdx != 1 || app.hasOpenPopover() || app.popoverExiting(tt.Now()) || tt.FramePending() {
+			t.Fatalf("setlist track switch left ghost or pending frame: diffIdx=%d open=%v exiting=%v pending=%v",
+				app.diffIdx, app.hasOpenPopover(), app.popoverExiting(tt.Now()), tt.FramePending())
+		}
+		afterSwitch := image.NewRGBA(tt.Image().Bounds())
+		copy(afterSwitch.Pix, tt.Image().Pix)
+		tt.Advance(popoverExitDuration + 20*time.Millisecond)
+		if diff := diffPixelCountInRect(afterSwitch, tt.Image(), setlistRect, 2); diff != 0 {
+			t.Fatalf("setlist track switch left lingering exit ghost pixels: diff=%d", diff)
+		}
+
+		// Mode switch during an active Escape exit ghost cancels the ghost on the very same frame.
+		if err := tt.Click("设置"); err != nil {
+			t.Fatalf("open settings before mode switch: %v", err)
+		}
+		tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		settingsRect := app.popoverRects[popoverSettings]
+		tt.Key(0, ui.KeyEscape)
+		tt.Advance(45 * time.Millisecond)
+		if !app.popoverExiting(tt.Now()) {
+			t.Fatal("expected settings exit ghost active at 45ms before mode switch")
+		}
+		if err := tt.Click("纯正经典"); err != nil {
+			t.Fatalf("switch to 纯正经典 mid-exit: %v", err)
+		}
+		if app.modeIdx != 1 || app.hasOpenPopover() || app.popoverExiting(tt.Now()) || tt.FramePending() {
+			t.Fatalf("mode switch mid-exit left ghost or pending frame: modeIdx=%d open=%v exiting=%v pending=%v",
+				app.modeIdx, app.hasOpenPopover(), app.popoverExiting(tt.Now()), tt.FramePending())
+		}
+		afterMode := image.NewRGBA(tt.Image().Bounds())
+		copy(afterMode.Pix, tt.Image().Pix)
+		tt.Advance(popoverExitDuration + 20*time.Millisecond)
+		if diff := diffPixelCountInRect(afterMode, tt.Image(), settingsRect, 2); diff != 0 {
+			t.Fatalf("mode switch mid-exit painted lingering exit ghost on switch frame: diff=%d", diff)
+		}
+
+		// Duel settlement with open settings popover cancels exit ghost immediately.
+		duelIdx := -1
+		for i, d := range Difficulties {
+			if d.Gameplay == GameplayDuel {
+				duelIdx = i
+				break
+			}
+		}
+		duelApp := newMinesweeperApp(42)
+		duelApp.diffIdx = duelIdx
+		duelApp.resetGame(true)
+		dtt := ui.NewTester(duelApp.view, 1280, 900)
+		dtt.Frame()
+		if err := dtt.Click("设置"); err != nil {
+			t.Fatalf("open settings in duel: %v", err)
+		}
+		dtt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		duelApp.game.Status = StatusPlaying
+		duelApp.game.duel.Elapsed = duelApp.game.duel.Duration - 0.01
+		duelApp.lastTick = dtt.Now()
+		dtt.Frame()
+		dtt.Advance(60 * time.Millisecond)
+		if !duelApp.duelEnded || duelApp.hasOpenPopover() || duelApp.popoverExiting(dtt.Now()) {
+			t.Fatalf("duel settlement left popover open or exiting: ended=%v open=%v exiting=%v",
+				duelApp.duelEnded, duelApp.hasOpenPopover(), duelApp.popoverExiting(dtt.Now()))
+		}
+	})
+}
+
+func TestMemeDrawerSmoothOpenCloseAndConvergence(t *testing.T) {
+	app := newMinesweeperApp(42)
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.UseScreenReader()
+	tt.Frame()
+	if tt.FramePending() {
+		t.Fatal("idle view with closed drawer must not request animation frames")
+	}
+
+	boardTopClosed, ok := tt.Find("迷子出发 (R)")
+	if !ok {
+		t.Fatal("reset button missing")
+	}
+
+	// Open drawer: board smoothly shifts downward while unfolding.
+	if err := tt.Click("名场面图鉴"); err != nil {
+		t.Fatalf("open meme drawer: %v", err)
+	}
+	if !app.showMemes || !tt.FramePending() {
+		t.Fatalf("expected drawer animating open: showMemes=%v pending=%v", app.showMemes, tt.FramePending())
+	}
+	tt.Advance(60 * time.Millisecond)
+	boardMidOpen, _ := tt.Find("迷子出发 (R)")
+	tt.Advance(drawerOpenDuration)
+	boardFullOpen, _ := tt.Find("迷子出发 (R)")
+
+	if !(boardTopClosed.Y < boardMidOpen.Y && boardMidOpen.Y < boardFullOpen.Y) {
+		t.Fatalf("expected board to shift smoothly down as meme drawer unfolds: closed=%.2f mid=%.2f open=%.2f",
+			boardTopClosed.Y, boardMidOpen.Y, boardFullOpen.Y)
+	}
+	if tt.FramePending() {
+		t.Fatal("expected FramePending()==false once meme drawer finishes opening")
+	}
+
+	// Close drawer: smoothly collapses back up and stops requesting frames.
+	if err := tt.Click("名场面图鉴"); err != nil {
+		t.Fatalf("close meme drawer: %v", err)
+	}
+	if app.showMemes || !tt.FramePending() {
+		t.Fatalf("expected drawer animating closed: showMemes=%v pending=%v", app.showMemes, tt.FramePending())
+	}
+	tt.Advance(55 * time.Millisecond)
+	boardMidClose, _ := tt.Find("迷子出发 (R)")
+	if !(boardMidClose.Y < boardFullOpen.Y && boardMidClose.Y > boardTopClosed.Y) {
+		t.Fatalf("expected board to rise smoothly during drawer close: open=%.2f mid=%.2f closed=%.2f",
+			boardFullOpen.Y, boardMidClose.Y, boardTopClosed.Y)
+	}
+	// Mid-close drawer must be hidden from screen readers and ignore clicks.
+	for _, node := range tt.AccessAll() {
+		if strings.Contains(node.Name, "名场面图鉴（") || strings.Contains(node.Name, AllMemes[0].Title) {
+			t.Fatalf("closing meme drawer leaked into screen reader tree at 55ms: %+v", node)
+		}
+	}
+	tt.ClickAt(boardMidClose.X+boardMidClose.W/2, boardMidClose.Y-8)
+	if app.showMemes {
+		t.Fatal("clicking closing meme drawer area unexpectedly reopened or intercepted input")
+	}
+	tt.Advance(drawerCloseDuration)
+	boardAfterClose, _ := tt.Find("迷子出发 (R)")
+	if abs32(boardAfterClose.Y-boardTopClosed.Y) > 0.5 {
+		t.Fatalf("board did not return to closed Y: got %.2f want %.2f", boardAfterClose.Y, boardTopClosed.Y)
+	}
+	if tt.FramePending() {
+		t.Fatal("expected FramePending()==false once meme drawer finishes closing")
+	}
+}
+
+func TestMemberHighlightAndLampWarmthSmoothBlend(t *testing.T) {
+	// 1. Static pre-staged dark/light apps render exact target palette on frame 0 with zero pending frames.
+	for _, dark := range []bool{false, true} {
+		app := stageLiveScene(dark)
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.Frame()
+		wantDesk := paperFor(dark).Desk
+		gotDesk := tt.Image().At(1275, 895)
+		if !pixelNearColor(gotDesk, wantDesk, 2) {
+			r, g, b, _ := gotDesk.RGBA()
+			t.Fatalf("static dark=%v frame-0 desk = #%02X%02X%02X, want exact %s", dark, r>>8, g>>8, b>>8, hexOf(wantDesk))
+		}
+		if tt.FramePending() {
+			t.Fatalf("static dark=%v scene must not request extra frames on frame 0", dark)
+		}
+	}
+
+	// 2. Runtime member switch smoothly interpolates member highlighter background and settles.
+	app := newMinesweeperApp(42)
+	app.darkMode = false
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.SetScale(2)
+	tt.Frame()
+
+	anonRect, ok := tt.Find("千早爱音")
+	if !ok {
+		t.Fatal("千早爱音 row missing")
+	}
+	sampleX := anonRect.X + anonRect.W - 8
+	sampleY := anonRect.Y + anonRect.H/2
+	dayPal := paperFor(false)
+	wantIdle := dayPal.Sheet
+	wantAnon := memberImage(MemberAnon).Alpha(0.36).Over(dayPal.Sheet)
+
+	beforePx := sampleCanvasPixel(tt.Image(), sampleX, sampleY, 2)
+	assertColorNear(t, "anon idle before click", beforePx, wantIdle)
+
+	if err := tt.Click("千早爱音"); err != nil {
+		t.Fatalf("click 千早爱音: %v", err)
+	}
+	// Move pointer away so hover tint does not interfere with selection color sample.
+	tt.Move(640, 10)
+	tt.Advance(65 * time.Millisecond)
+	midPx := sampleCanvasPixel(tt.Image(), sampleX, sampleY, 2)
+	if uiColorNear(midPx, wantIdle, 4) || uiColorNear(midPx, wantAnon, 4) {
+		t.Fatalf("expected intermediate blended Anon highlighter at 65ms: got %s (idle=%s target=%s)",
+			hexOf(midPx), hexOf(wantIdle), hexOf(wantAnon))
+	}
+	tt.Advance(chatNoteEnterDuration + memberHighlightDuration)
+	settledPx := sampleCanvasPixel(tt.Image(), sampleX, sampleY, 2)
+	assertColorNear(t, "anon highlighter settled", settledPx, wantAnon)
+	if tt.FramePending() {
+		t.Fatal("expected FramePending()==false after member highlight settles")
+	}
+
+	// 3. Runtime night-lamp toggle smoothly blends Desk, Sheet, Board, and top-left Lamp glow.
+	if err := tt.Click("设置"); err != nil {
+		t.Fatalf("open settings: %v", err)
+	}
+	tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+	tt.UseScreenReader()
+	sw, ok := tt.AccessByRole(ui.RoleSwitch, "夜间台灯")
+	if !ok {
+		t.Fatal("missing 夜间台灯 switch")
+	}
+	tt.ClickAt(sw.Bounds.X+sw.Bounds.W/2, sw.Bounds.Y+sw.Bounds.H/2)
+	if !app.darkMode {
+		t.Fatal("clicking 夜间台灯 did not enable darkMode")
+	}
+	tt.Advance(80 * time.Millisecond)
+	if app.nightBlendValue <= 0.1 || app.nightBlendValue >= 0.9 {
+		t.Fatalf("expected intermediate nightBlendValue at 80ms, got %.3f", app.nightBlendValue)
+	}
+	midDesk := sampleCanvasPixel(tt.Image(), 1275, 895, 2)
+	if uiColorNear(midDesk, dayPaper.Desk, 10) || uiColorNear(midDesk, nightPaper.Desk, 10) {
+		t.Fatalf("expected blended desk pixel at 80ms: got %s (day=%s night=%s)",
+			hexOf(midDesk), hexOf(dayPaper.Desk), hexOf(nightPaper.Desk))
+	}
+	midLamp := sampleCanvasPixel(tt.Image(), 140, 12, 2)
+	if midLamp == midDesk {
+		t.Fatalf("expected warm lamp radial gradient to differentiate top-left %s from far desk %s at 80ms",
+			hexOf(midLamp), hexOf(midDesk))
+	}
+
+	tt.Advance(lampTransitionDuration + 30*time.Millisecond)
+	settledDesk := sampleCanvasPixel(tt.Image(), 1275, 895, 2)
+	assertColorNear(t, "settled night desk", settledDesk, nightPaper.Desk)
+	settledLamp := sampleCanvasPixel(tt.Image(), 140, 12, 2)
+	if settledLamp == settledDesk {
+		t.Fatalf("expected settled night top-left lamp glow %s brighter/warmer than desk %s",
+			hexOf(settledLamp), hexOf(settledDesk))
+	}
+	if app.nightBlendValue != 1 || tt.FramePending() {
+		t.Fatalf("expected lamp transition converged: blend=%.3f pending=%v", app.nightBlendValue, tt.FramePending())
+	}
+
+	// 4. Sweep blended palette across nightFrac in [0, 1]: neutral text & settings control inks
+	// keep >=4.5:1 WCAG AA contrast on every frame, chromatic decoration/meter inks preserve hue
+	// without flashing pure black/white, and classic minimap Bg & Viewport interpolate smoothly.
+	var prevBand, prevSoyo, prevTomori, prevMiniBg, prevMiniView ui.Color
+	pureBlack := ui.Color{A: 255}
+	pureWhite := ui.Color{R: 255, G: 255, B: 255, A: 255}
+	for step := 0; step <= 50; step++ {
+		f := float32(step) / 50
+		p := blendPaper(f)
+		sc := settingsColorsForPaper(p)
+		for _, chk := range []struct {
+			name   string
+			fg, bg ui.Color
+		}{
+			{"pal.Ink on Sheet", p.Ink, p.Sheet},
+			{"pal.Ink on Board", p.Ink, p.Board},
+			{"settings LabelInk", sc.LabelInk, p.Sheet},
+			{"settings GroupInk", sc.GroupInk, p.Sheet},
+			{"settings TriggerIdleInk", sc.TriggerIdleInk, sc.TriggerIdleBg},
+			{"settings TriggerHoverInk", sc.TriggerHoverInk, sc.TriggerHoverBg},
+			{"settings TriggerOpenInk", sc.TriggerOpenInk, sc.TriggerOpenBg},
+		} {
+			if c := contrast(chk.fg, chk.bg); c < minInkContrast {
+				t.Fatalf("nightFrac=%.2f %s (%s on %s) contrast=%.2f < %.1f",
+					f, chk.name, hexOf(chk.fg), hexOf(chk.bg), c, minInkContrast)
+			}
+		}
+		bandInk := p.blendInkOf(bandColor)
+		soyoInk := p.blendInkOf(memberImage(MemberSoyorin))
+		tomoriInk := p.blendInkOf(memberImage(MemberTomori))
+		mini := classicMinimapForPaper(p)
+		for _, ch := range []struct {
+			name string
+			col  ui.Color
+		}{
+			{"band progress ink", bandInk},
+			{"soyo gravity ink", soyoInk},
+			{"tomori member ink", tomoriInk},
+		} {
+			if ch.col == pureBlack || ch.col == pureWhite {
+				t.Fatalf("nightFrac=%.2f %s collapsed to black/white: %s", f, ch.name, hexOf(ch.col))
+			}
+		}
+		if step > 0 {
+			for _, pair := range []struct {
+				name string
+				a, b ui.Color
+				maxD int
+			}{
+				{"band progress ink", prevBand, bandInk, 12},
+				{"soyo gravity ink", prevSoyo, soyoInk, 12},
+				{"tomori member ink", prevTomori, tomoriInk, 12},
+				{"classic minimap Bg", prevMiniBg, mini.Bg, 12},
+				{"classic minimap Viewport", prevMiniView, mini.Viewport, 12},
+			} {
+				dr := absInt(int(pair.a.R) - int(pair.b.R))
+				dg := absInt(int(pair.a.G) - int(pair.b.G))
+				db := absInt(int(pair.a.B) - int(pair.b.B))
+				if dr > pair.maxD || dg > pair.maxD || db > pair.maxD {
+					t.Fatalf("nightFrac=%.2f %s jumped abruptly %s -> %s", f, pair.name, hexOf(pair.a), hexOf(pair.b))
+				}
+			}
+		}
+		prevBand, prevSoyo, prevTomori, prevMiniBg, prevMiniView = bandInk, soyoInk, tomoriInk, mini.Bg, mini.Viewport
+	}
+}
+
+func TestMetersSmoothHatchGlideAndFrame0A11y(t *testing.T) {
+	// 1. Pre-staged scene renders exact target hatch immediately on frame 0 without pending frames.
+	staged := stageLiveScene(false)
+	stt := ui.NewTester(staged.view, 1280, 900)
+	stt.Frame()
+	if staged.progressVisual.value != staged.game.Progress() || staged.gravityVisual.value != float64(staged.game.Gravity) {
+		t.Fatalf("pre-staged scene meters did not start at real values: prog=%.3f/%.3f grav=%.1f/%d",
+			staged.progressVisual.value, staged.game.Progress(), staged.gravityVisual.value, staged.game.Gravity)
+	}
+	if stt.FramePending() {
+		t.Fatal("pre-staged live scene must not request extra frames for meters on frame 0")
+	}
+
+	// 2. Runtime reveal, Soyorin shield gravity jump, and KeyR reset:
+	// frame-0 a11y exposes exact target with single node per meter while hatch glides visually.
+	app := newMinesweeperApp(7)
+	app.darkMode = false
+	app.memberID = MemberSoyorin
+	// Vertical mine barrier at col 4 keeps the right column unopened after flooding (2,1).
+	app.game = makeCorridorGame(6, 6, true, MemberSoyorin, [][2]int{{0, 0}, {0, 4}, {1, 4}, {2, 4}, {3, 4}, {4, 4}, {5, 4}})
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.SetScale(2)
+	tt.UseScreenReader()
+	tt.Frame()
+
+	pal := paperFor(false)
+	progInk := pal.InkOf(bandColor)
+	gravInk := pal.InkOf(memberImage(MemberSoyorin))
+
+	// Click (2,1) to flood-reveal the left side while staying StatusPlaying -> Progress jumps on frame 0.
+	if err := tt.Click("cell-2-1"); err != nil {
+		t.Fatalf("click cell-2-1: %v", err)
+	}
+	if app.game.Status != StatusPlaying {
+		t.Fatalf("expected StatusPlaying after partial flood, got %v", app.game.Status)
+	}
+	wantProg := app.game.Progress()
+	if wantProg < 0.4 {
+		t.Fatalf("expected significant flood progress >= 0.4, got %.3f", wantProg)
+	}
+	progNode, ok := tt.AccessByRole(ui.RoleProgress, "排练完成度")
+	if !ok || progNode.Min != 0 || progNode.Max != 1 || progNode.Now != wantProg {
+		t.Fatalf("frame-0 RoleProgress = %+v (ok=%v), want [0,1] Now=%.4f", progNode, ok, wantProg)
+	}
+	// Ensure no duplicate decorative RoleProgress or RoleMeter nodes exist.
+	var progCount, meterCount int
+	for _, n := range tt.AccessAll() {
+		if n.Role == ui.RoleProgress && n.Name == "排练完成度" {
+			progCount++
+		}
+		if n.Role == ui.RoleMeter && n.Name == "乐队重力值" {
+			meterCount++
+		}
+	}
+	if progCount != 1 || meterCount != 1 {
+		t.Fatalf("expected unique a11y nodes (1 progress, 1 meter), got progress=%d meter=%d", progCount, meterCount)
+	}
+
+	// Frame-0 hatch starts from 0, glides across 60ms, and reaches target width by 240ms.
+	ext0 := hatchBarFilledExtent(tt.Image(), progNode.Bounds, 2, progInk, 24)
+	tt.Advance(60 * time.Millisecond)
+	extMid := hatchBarFilledExtent(tt.Image(), progNode.Bounds, 2, progInk, 24)
+	tt.Advance(meterGlideDuration + 20*time.Millisecond)
+	extEnd := hatchBarFilledExtent(tt.Image(), progNode.Bounds, 2, progInk, 24)
+	if !(ext0 < extMid && extMid < extEnd) {
+		t.Fatalf("expected progress pencil hatch to glide smoothly: t0=%dpx mid=%dpx settled=%dpx", ext0, extMid, extEnd)
+	}
+
+	// Trigger Soyorin shield on (0,0) -> Gravity jumps on frame 0 while hatch glides smoothly.
+	gravBefore := app.game.Gravity
+	if err := tt.Click("cell-0-0"); err != nil {
+		t.Fatalf("click shielded mine (0,0): %v", err)
+	}
+	wantGrav := float64(app.game.Gravity)
+	if app.game.Gravity <= gravBefore {
+		t.Fatalf("expected shield to raise gravity from %d, got %d", gravBefore, app.game.Gravity)
+	}
+	meterNode, ok := tt.AccessByRole(ui.RoleMeter, "乐队重力值")
+	if !ok || meterNode.Min != 0 || meterNode.Max != 100 || meterNode.Now != wantGrav {
+		t.Fatalf("frame-0 RoleMeter = %+v (ok=%v), want [0,100] Now=%.0f", meterNode, ok, wantGrav)
+	}
+	gExt0 := hatchBarFilledExtent(tt.Image(), meterNode.Bounds, 2, gravInk, 24)
+	tt.Advance(60 * time.Millisecond)
+	gExtMid := hatchBarFilledExtent(tt.Image(), meterNode.Bounds, 2, gravInk, 24)
+	tt.Advance(meterGlideDuration + 20*time.Millisecond)
+	gExtEnd := hatchBarFilledExtent(tt.Image(), meterNode.Bounds, 2, gravInk, 24)
+	if !(gExt0 < gExtMid && gExtMid < gExtEnd) {
+		t.Fatalf("expected gravity pencil hatch to glide smoothly: t0=%dpx mid=%dpx settled=%dpx", gExt0, gExtMid, gExtEnd)
+	}
+
+	// Reset via KeyR -> frame-0 RoleProgress drops to 0 immediately while hatch glides down to 0.
+	tt.Key(0, ui.KeyR)
+	progReset, ok := tt.AccessByRole(ui.RoleProgress, "排练完成度")
+	if !ok || progReset.Now != 0 {
+		t.Fatalf("frame-0 RoleProgress after KeyR = %+v (ok=%v), want 0", progReset, ok)
+	}
+	rExt0 := hatchBarFilledExtent(tt.Image(), progReset.Bounds, 2, progInk, 24)
+	tt.Advance(60 * time.Millisecond)
+	rExtMid := hatchBarFilledExtent(tt.Image(), progReset.Bounds, 2, progInk, 24)
+	tt.Advance(meterGlideDuration + 40*time.Millisecond)
+	rExtEnd := hatchBarFilledExtent(tt.Image(), progReset.Bounds, 2, progInk, 24)
+	if !(rExt0 > rExtMid && rExtMid > rExtEnd && rExtEnd == 0) {
+		t.Fatalf("expected KeyR progress hatch to glide smoothly to 0: t0=%dpx mid=%dpx end=%dpx", rExt0, rExtMid, rExtEnd)
+	}
+	// Let any stage quote strip / chat note settle and verify zero lingering animation frames.
+	tt.Advance(quoteStripDuration)
+	if tt.FramePending() {
+		t.Fatal("expected FramePending()==false after meters and highlights settle")
+	}
+}
+
+func TestPeripheralThreeStateMotionBidirectionalAndMidFlightReduce(t *testing.T) {
+	// Case A: System ReduceMotion == true + user motionStandard MUST still play full smooth motion
+	// (chat slide, drawer collapse, meter hatch glide, popover enter shift, lamp color blend).
+	t.Run("standard-overrides-system-reduce", func(t *testing.T) {
+		p := defaultPrefs()
+		p.DarkMode = false
+		p.Motion = motionStandard
+		app := newMinesweeperAppWith(appOptions{Seed: 7, Prefs: &p})
+		app.game = makeCorridorGame(6, 6, true, MemberTomori, [][2]int{{0, 0}, {5, 5}})
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.SetPreferences(ui.Preferences{ReduceMotion: true})
+		tt.Frame()
+		if app.motionReducedActive {
+			t.Fatal("motionStandard must override system ReduceMotion=true")
+		}
+
+		// Chat note slides existing note downward.
+		olderText := app.chatLog[len(app.chatLog)-1].Text
+		older0, _ := tt.Find(olderText)
+		app.pushChat("要乐奈", FindMember(MemberRana).ColorHex, "标准模式覆盖系统减弱")
+		tt.Frame()
+		tt.Advance(65 * time.Millisecond)
+		olderMid, _ := tt.Find(olderText)
+		tt.Advance(chatNoteEnterDuration)
+		olderEnd, _ := tt.Find(olderText)
+		if !(older0.Y < olderMid.Y && olderMid.Y < olderEnd.Y) {
+			t.Fatalf("motionStandard under system ReduceMotion did not slide chat note: 0=%.2f mid=%.2f end=%.2f",
+				older0.Y, olderMid.Y, olderEnd.Y)
+		}
+
+		// Meme drawer smoothly unfolds board downward.
+		boardClosed, _ := tt.Find("演奏中 · 重开 (R)")
+		if err := tt.Click("名场面图鉴"); err != nil {
+			t.Fatalf("open drawer: %v", err)
+		}
+		tt.Advance(60 * time.Millisecond)
+		boardMid, _ := tt.Find("演奏中 · 重开 (R)")
+		tt.Advance(drawerOpenDuration)
+		boardOpen, _ := tt.Find("演奏中 · 重开 (R)")
+		if !(boardClosed.Y < boardMid.Y && boardMid.Y < boardOpen.Y) {
+			t.Fatalf("motionStandard under system ReduceMotion did not unfold drawer: closed=%.2f mid=%.2f open=%.2f",
+				boardClosed.Y, boardMid.Y, boardOpen.Y)
+		}
+
+		// Meter hatch glides smoothly (does not snap on frame 0).
+		if err := tt.Click("cell-3-3"); err != nil {
+			t.Fatalf("click cell-3-3: %v", err)
+		}
+		if app.progressVisual.value >= app.game.Progress()-0.05 {
+			t.Fatalf("motionStandard under system ReduceMotion snapped progress immediately: visual=%.3f real=%.3f",
+				app.progressVisual.value, app.game.Progress())
+		}
+		tt.Advance(meterGlideDuration + rippleMaxDelay + rippleDuration + 50*time.Millisecond)
+		if app.progressVisual.value != app.game.Progress() {
+			t.Fatalf("progress did not settle to real value: visual=%.3f real=%.3f", app.progressVisual.value, app.game.Progress())
+		}
+
+		// Popover exit MUST still play upward shift + scale under motionStandard even when system ReduceMotion=true.
+		tt.SetScale(2)
+		tt.Frame()
+		baseImg := image.NewRGBA(tt.Image().Bounds())
+		copy(baseImg.Pix, tt.Image().Pix)
+		if err := tt.Click("设置"); err != nil {
+			t.Fatalf("open settings under motionStandard: %v", err)
+		}
+		tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+		openImg := image.NewRGBA(tt.Image().Bounds())
+		copy(openImg.Pix, tt.Image().Pix)
+		popRect := app.popoverRects[popoverSettings]
+		scanRect := ui.Rect{X: popRect.X - 24, Y: popRect.Y - 24, W: popRect.W + 48, H: popRect.H + 48}
+		openMinX, _, openMaxX, openMaxY, openCnt := diffBoundsInRect(baseImg, openImg, scanRect, 12)
+		if openCnt == 0 {
+			t.Fatal("open settings popover produced no pixel diff")
+		}
+		tt.Key(0, ui.KeyEscape)
+		tt.Advance(75 * time.Millisecond)
+		midMinX, _, midMaxX, midMaxY, midCnt := diffBoundsInRect(baseImg, tt.Image(), scanRect, 12)
+		if midCnt == 0 {
+			t.Fatal("expected visible exiting settings popover at 75ms under motionStandard + system ReduceMotion=true")
+		}
+		if midMaxY >= openMaxY-2 || (midMaxX-midMinX) >= (openMaxX-openMinX)-2 {
+			t.Fatalf("motionStandard popover exit lost shift/scale under system ReduceMotion=true: open=(w=%d maxY=%d) mid=(w=%d maxY=%d)",
+				openMaxX-openMinX, openMaxY, midMaxX-midMinX, midMaxY)
+		}
+		tt.Advance(popoverExitDuration + 20*time.Millisecond)
+	})
+
+	// Case B: User motionReduced under system ReduceMotion == false skips all displacement/stretch delays
+	// while keeping gentle color/opacity transitions and converging cleanly to FramePending()==false.
+	t.Run("reduced-skips-displacement-keeps-color-and-fade", func(t *testing.T) {
+		p := defaultPrefs()
+		p.DarkMode = false
+		p.Motion = motionReduced
+		app := newMinesweeperAppWith(appOptions{Seed: 7, Prefs: &p})
+		app.game = makeCorridorGame(6, 6, true, MemberTomori, [][2]int{{0, 0}, {5, 5}})
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.SetPreferences(ui.Preferences{ReduceMotion: false})
+		tt.Frame()
+		if !app.motionReducedActive {
+			t.Fatal("motionReduced must activate reduced motion even when system ReduceMotion=false")
+		}
+
+		// Chat note skips height-collapse shift: existing note hits final Y immediately on frame 0!
+		olderText := app.chatLog[len(app.chatLog)-1].Text
+		app.pushChat("高松灯", FindMember(MemberTomori).ColorHex, "减弱动效下直接到位淡入")
+		tt.Frame()
+		olderFrame0, _ := tt.Find(olderText)
+		tt.Advance(chatNoteReducedFade + 30*time.Millisecond)
+		olderSettled, _ := tt.Find(olderText)
+		if abs32(olderFrame0.Y-olderSettled.Y) > 0.5 {
+			t.Fatalf("reduced motion should skip chat slide displacement: frame0=%.2f settled=%.2f", olderFrame0.Y, olderSettled.Y)
+		}
+
+		// Meme drawer opens at full height immediately on frame 0 (no layout slide) and closes immediately.
+		boardBefore, _ := tt.Find("演奏中 · 重开 (R)")
+		if err := tt.Click("名场面图鉴"); err != nil {
+			t.Fatalf("open drawer in reduced: %v", err)
+		}
+		boardOpen0, _ := tt.Find("演奏中 · 重开 (R)")
+		tt.Advance(drawerReducedFadeDuration + 30*time.Millisecond)
+		boardOpenEnd, _ := tt.Find("演奏中 · 重开 (R)")
+		if abs32(boardOpen0.Y-boardOpenEnd.Y) > 0.5 || boardOpen0.Y <= boardBefore.Y {
+			t.Fatalf("reduced drawer open should snap to full height on frame 0: before=%.2f f0=%.2f end=%.2f",
+				boardBefore.Y, boardOpen0.Y, boardOpenEnd.Y)
+		}
+		if err := tt.Click("名场面图鉴"); err != nil {
+			t.Fatalf("close drawer in reduced: %v", err)
+		}
+		boardClosed0, _ := tt.Find("演奏中 · 重开 (R)")
+		if abs32(boardClosed0.Y-boardBefore.Y) > 0.5 {
+			t.Fatalf("reduced drawer close should snap closed immediately: got %.2f want %.2f", boardClosed0.Y, boardBefore.Y)
+		}
+
+		// Meter hatch snaps straight to target on frame 0 (zero stretch delay).
+		if err := tt.Click("cell-3-3"); err != nil {
+			t.Fatalf("click cell-3-3 in reduced: %v", err)
+		}
+		if app.progressVisual.value != app.game.Progress() {
+			t.Fatalf("reduced motion must snap meter hatch on frame 0: visual=%.3f real=%.3f",
+				app.progressVisual.value, app.game.Progress())
+		}
+
+		// Lamp warmth & paper color blend STILL transitions smoothly in reduced motion, then settles.
+		app.updatePrefs(func(pr *prefs) { pr.DarkMode = true })
+		tt.Frame()
+		tt.Advance(80 * time.Millisecond)
+		if app.nightBlendValue <= 0.1 || app.nightBlendValue >= 0.9 {
+			t.Fatalf("reduced motion must keep gentle lamp color blend, got nightBlendValue=%.3f", app.nightBlendValue)
+		}
+		tt.Advance(lampTransitionDuration + 30*time.Millisecond)
+		if app.nightBlendValue != 1 || tt.FramePending() {
+			t.Fatalf("reduced lamp blend did not settle cleanly: blend=%.3f pending=%v", app.nightBlendValue, tt.FramePending())
+		}
+	})
+
+	// Case C: Switching to motionReduced MID-ANIMATION immediately snaps displacement/stretch
+	// on the same frame via syncMotionState(true) and converges with FramePending()==false.
+	t.Run("mid-flight-switch-to-reduced-snaps-same-frame", func(t *testing.T) {
+		app := newMinesweeperApp(7)
+		app.darkMode = false
+		app.game = makeCorridorGame(6, 6, true, MemberTomori, [][2]int{{0, 0}, {0, 4}, {1, 4}, {2, 4}, {3, 4}, {4, 4}, {5, 4}})
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.Frame()
+
+		// Kick off meter glide, chat note slide, and meme drawer open simultaneously.
+		if err := tt.Click("名场面图鉴"); err != nil {
+			t.Fatalf("open drawer: %v", err)
+		}
+		if err := tt.Click("cell-2-1"); err != nil {
+			t.Fatalf("click cell-2-1: %v", err)
+		}
+		app.pushChat("千早爱音", FindMember(MemberAnon).ColorHex, "动画途中切减弱")
+		tt.Advance(45 * time.Millisecond)
+		if app.progressVisual.value >= app.game.Progress()-0.01 {
+			t.Fatalf("expected meter mid-glide before switching to reduced: visual=%.3f real=%.3f",
+				app.progressVisual.value, app.game.Progress())
+		}
+		boardMidBeforeReduce, _ := tt.Find("演奏中 · 重开 (R)")
+
+		// Switch to motionReduced mid-flight: meter & drawer height snap immediately on the same frame!
+		app.updatePrefs(func(pr *prefs) { pr.Motion = motionReduced })
+		tt.Frame()
+		if app.progressVisual.value != app.game.Progress() {
+			t.Fatalf("mid-flight switch to reduced did not snap progress hatch on same frame: visual=%.3f real=%.3f",
+				app.progressVisual.value, app.game.Progress())
+		}
+		boardSnapped, _ := tt.Find("演奏中 · 重开 (R)")
+		if boardSnapped.Y <= boardMidBeforeReduce.Y {
+			t.Fatalf("mid-flight switch to reduced did not snap opening drawer to full height: before=%.2f snapped=%.2f",
+				boardMidBeforeReduce.Y, boardSnapped.Y)
+		}
+		tt.Advance(chatNoteEnterDuration + drawerOpenDuration + 40*time.Millisecond)
+		if tt.FramePending() {
+			t.Fatal("expected FramePending()==false after mid-flight reduced transition settles")
+		}
+
+		// Mid-exit system ReduceMotion toggle under motionSystem drops exit displacement/scale on the same frame.
+		renderExitAt55ms := func(startReduced bool) (*minesweeperApp, *ui.Tester, ui.Rect) {
+			a := newMinesweeperApp(7)
+			a.darkMode = false
+			pinStartQuote(a)
+			ttr := ui.NewTester(a.view, 1280, 900)
+			ttr.SetScale(2)
+			ttr.SetPreferences(ui.Preferences{ReduceMotion: startReduced})
+			ttr.Frame()
+			if err := ttr.Click("设置"); err != nil {
+				t.Fatalf("open settings: %v", err)
+			}
+			ttr.Advance(popoverEnterDuration + 20*time.Millisecond)
+			pr := a.popoverRects[popoverSettings]
+			ttr.Key(0, ui.KeyEscape)
+			ttr.Advance(55 * time.Millisecond)
+			ttr.Frame()
+			return a, ttr, pr
+		}
+		_, refTT, _ := renderExitAt55ms(true)
+		reducedRefImg := image.NewRGBA(refTT.Image().Bounds())
+		copy(reducedRefImg.Pix, refTT.Image().Pix)
+
+		sysApp, stt, popRect := renderExitAt55ms(false)
+		scanRect := ui.Rect{X: popRect.X - 24, Y: popRect.Y - 24, W: popRect.W + 48, H: popRect.H + 48}
+		if diff := diffPixelCountInRect(stt.Image(), reducedRefImg, scanRect, 2); diff < 500 {
+			t.Fatalf("expected standard exit ghost at 55ms to visibly differ (shift/scale) from reduced fade: diff=%d", diff)
+		}
+		stt.SetPreferences(ui.Preferences{ReduceMotion: true})
+		if diff := diffPixelCountInRect(stt.Image(), reducedRefImg, scanRect, 2); diff != 0 {
+			t.Fatalf("mid-exit ReduceMotion=true did not match fade-only reduced frame on same frame: diff=%d", diff)
+		}
+		stt.Advance(popoverExitDuration + 20*time.Millisecond)
+		if sysApp.popoverExiting(stt.Now()) || stt.FramePending() {
+			t.Fatalf("mid-exit reduced popover did not settle: exiting=%v pending=%v",
+				sysApp.popoverExiting(stt.Now()), stt.FramePending())
+		}
+	})
+}
+
+// TestPeripheralMotionKeyframeSnapshots exports 24 mid-transition keyframe PNGs
+// (4 peripheral transition scenes × small/default/large × day/night) when
+// MYGO_PERIPHERAL_SNAPSHOT_DIR is set.
+func TestPeripheralMotionKeyframeSnapshots(t *testing.T) {
+	dir := os.Getenv("MYGO_PERIPHERAL_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set MYGO_PERIPHERAL_SNAPSHOT_DIR to render peripheral motion keyframes")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	renderKeyframe := func(name string, width, height int, stage func(w, h int) *image.RGBA) {
+		img := stage(width, height)
+		saveTesterPNG(t, img, filepath.Join(dir, name))
+	}
+
+	for _, dark := range []bool{false, true} {
+		suffix := "day"
+		if dark {
+			suffix = "night"
+		}
+		for _, vp := range snapshotViewports {
+			// 1. Chat note pat-in & older notes shifting downward mid-frame.
+			renderKeyframe(fmt.Sprintf("chat-note-enter-mid-%s-%s.png", vp.name, suffix), vp.width, vp.height, func(w, h int) *image.RGBA {
+				app := stageLiveScene(dark)
+				app.classicHoverRow, app.classicHoverCol = -1, -1
+				tt := ui.NewTester(app.view, w, h)
+				tt.SetScale(2)
+				tt.Frame()
+				app.pushChat("千早爱音", FindMember(MemberAnon).ColorHex, "「新便签贴好啦！大家继续加油排练！」")
+				tt.Frame()
+				tt.Advance(65 * time.Millisecond)
+				return tt.Image()
+			})
+
+			// 2. Popover exit + single-click switch mid-frame (歌单 fading/lifting out while 设置 enters).
+			renderKeyframe(fmt.Sprintf("popover-exit-switch-mid-%s-%s.png", vp.name, suffix), vp.width, vp.height, func(w, h int) *image.RGBA {
+				app := stageLiveScene(dark)
+				app.classicHoverRow, app.classicHoverCol = -1, -1
+				tt := ui.NewTester(app.view, w, h)
+				tt.SetScale(2)
+				tt.Frame()
+				if err := tt.Click("歌单"); err != nil {
+					t.Fatalf("open setlist for keyframe: %v", err)
+				}
+				tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+				// Single-click 设置 directly while 歌单 is open -> 歌单 exits as ghost while 设置 enters!
+				if err := tt.Click("设置"); err != nil {
+					t.Fatalf("switch to settings for keyframe: %v", err)
+				}
+				tt.Advance(48 * time.Millisecond)
+				return tt.Image()
+			})
+
+			// 3. Night desk-lamp warmth & paper blend mid-frame (toggling into suffix's theme).
+			renderKeyframe(fmt.Sprintf("lamp-warmth-blend-mid-%s-%s.png", vp.name, suffix), vp.width, vp.height, func(w, h int) *image.RGBA {
+				// Start from opposite theme so toggling toward dark shows mid-blend warm lamp transition.
+				app := stageLiveScene(!dark)
+				app.classicHoverRow, app.classicHoverCol = -1, -1
+				tt := ui.NewTester(app.view, w, h)
+				tt.SetScale(2)
+				tt.UseScreenReader()
+				tt.Frame()
+				if err := tt.Click("设置"); err != nil {
+					t.Fatalf("open settings for lamp keyframe: %v", err)
+				}
+				tt.Advance(popoverEnterDuration + 20*time.Millisecond)
+				sw, ok := tt.AccessByRole(ui.RoleSwitch, "夜间台灯")
+				if !ok {
+					t.Fatal("missing 夜间台灯 switch")
+				}
+				tt.ClickAt(sw.Bounds.X+sw.Bounds.W/2, sw.Bounds.Y+sw.Bounds.H/2)
+				tt.Advance(85 * time.Millisecond)
+				return tt.Image()
+			})
+
+			// 4. Rehearsal progress & band gravity pencil hatch gliding mid-frame behind frame-0 percentage text.
+			renderKeyframe(fmt.Sprintf("meter-hatch-glide-mid-%s-%s.png", vp.name, suffix), vp.width, vp.height, func(w, h int) *image.RGBA {
+				app := newMinesweeperApp(7)
+				app.darkMode = dark
+				app.memberID = MemberSoyorin
+				app.game = makeCorridorGame(9, 9, true, MemberSoyorin, [][2]int{
+					{0, 0}, {0, 6}, {1, 6}, {2, 6}, {3, 6}, {4, 6}, {5, 6}, {6, 6}, {7, 6}, {8, 6},
+				})
+				pinStartQuote(app)
+				tt := ui.NewTester(app.view, w, h)
+				tt.SetScale(2)
+				tt.Frame()
+				// Flood open left half (keeps StatusPlaying) and trigger Soyorin shield so both meters jump sharply!
+				if err := tt.Click("cell-4-2"); err != nil {
+					t.Fatalf("flood click for meter keyframe: %v", err)
+				}
+				if err := tt.Click("cell-0-0"); err != nil {
+					t.Fatalf("shield click for meter keyframe: %v", err)
+				}
+				tt.Advance(55 * time.Millisecond)
+				return tt.Image()
+			})
+		}
+	}
+}

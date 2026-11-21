@@ -1596,6 +1596,7 @@ func TestProgressAndGravityMeterA11yAndHatching(t *testing.T) {
 			if !ok || prog.Now != wantProg {
 				t.Fatalf("mid-game progress access = %+v (ok=%v), want Now=%.4f", prog, ok, wantProg)
 			}
+			tt.Advance(meterGlideDuration + 20*time.Millisecond)
 			img := tt.Image()
 			filledSpan := ui.Rect{
 				X: prog.Bounds.X + 4,
@@ -1639,6 +1640,7 @@ func TestProgressAndGravityMeterA11yAndHatching(t *testing.T) {
 			if !ok || meter.Now != 0 {
 				t.Fatalf("won gravity access = %+v (ok=%v), want Now=0", meter, ok)
 			}
+			tt.Advance(meterGlideDuration + 20*time.Millisecond)
 			winImg := tt.Image()
 			winTail := ui.Rect{
 				X: prog.Bounds.X + prog.Bounds.W - 24,
@@ -1679,6 +1681,7 @@ func TestProgressAndGravityMeterA11yAndHatching(t *testing.T) {
 			if !ok || lostMeter.Min != 0 || lostMeter.Max != 100 || lostMeter.Now != 100 {
 				t.Fatalf("lost gravity access = %+v (ok=%v), want [0,100] Now=100", lostMeter, ok)
 			}
+			lostTT.Advance(meterGlideDuration + 20*time.Millisecond)
 			lostImg := lostTT.Image()
 			gravInterior := ui.Rect{
 				X: lostMeter.Bounds.X + 4,

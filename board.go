@@ -665,7 +665,8 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 
 		if a.game != nil && a.game.duel != nil && a.game.Status == StatusPlaying && a.game.duel.playerStunned() {
 			d := a.game.duel
-			pal, stun := paperFor(a.darkMode), duelHUDFor(a.darkMode).Banner
+			pal := a.renderedPaper()
+			stun := duelHUDFor(pal.Dark).Banner
 			hint := "暂无法操作棋盘 · 等待硬直结束"
 			if a.bandMode() && a.memberID == MemberTomori {
 				if a.game.SkillUsesLeft > 0 {
@@ -686,7 +687,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				})
 			})
 		}
-		a.stageHighlightsOverlay(c, paperFor(a.darkMode), c.Now())
+		a.stageHighlightsOverlay(c, a.renderedPaper(), c.Now())
 	})
 }
 
@@ -696,13 +697,14 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	now := p.Now()
 	hoverHint := g.InspectNumberHover(v.HoverRow, v.HoverCol, a.flagMode)
 	v.LastHoverHint = hoverHint
-	hintFill, hintStroke := hoverHintColors(hoverHint.Kind, a.memberID, a.darkMode)
+	pal := a.renderedPaper()
+	hintFill, hintStroke := hoverHintColors(hoverHint.Kind, a.memberID, pal.Dark)
 	shakeX, shakeY := a.currentShakeOffset(now)
 	if shakeX != 0 || shakeY != 0 {
 		p.AnimationFrame()
 	}
 
-	pal, art, inks, dp := paperFor(a.darkMode), artFor(a.darkMode), duelInksFor(a.darkMode), duelPromptsFor(a.darkMode)
+	art, inks, dp := artFor(pal.Dark), duelInksFor(pal.Dark), duelPromptsFor(pal.Dark)
 	classic := g.duel == nil
 	radius := min(4, v.Cell/7)
 	// Numbers, props and slip shadows only once a cell is big enough to
@@ -710,7 +712,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	detail := v.Cell >= 16
 	var shieldDot ui.Color
 	if !detail && classic {
-		shieldDot = pal.InkOf(memberImage(MemberSoyorin))
+		shieldDot = pal.blendInkOf(memberImage(MemberSoyorin))
 	}
 	numberSize := v.Cell * 0.55
 	var numberW, numberH [len(cellDigits)]float32
@@ -1029,7 +1031,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		}
 		if g.duel != nil && g.Status == StatusPlaying && g.duel.playerStunned() {
 			pulse := 0.45 + 0.55*float32(0.5+0.5*math.Sin(float64(now.UnixMilli())/120.0))
-			p.Stroke(ui.Rect{X: r.X + 2, Y: r.Y + 2, W: r.W - 4, H: r.H - 4}, duelHUDFor(a.darkMode).Banner.Pulse.Alpha(pulse), 8, 4)
+			p.Stroke(ui.Rect{X: r.X + 2, Y: r.Y + 2, W: r.W - 4, H: r.H - 4}, duelHUDFor(pal.Dark).Banner.Pulse.Alpha(pulse), 8, 4)
 			p.AnimationFrame()
 		}
 		mini := v.minimapBoundsFor(g)
@@ -1038,7 +1040,7 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		if classic {
 			plot := classicMinimapPlot(mini)
 			view := minimapViewportRect(plot, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
-			paintClassicMinimap(p, g, mini, plot, view, pal, classicMinimapFor(a.darkMode))
+			paintClassicMinimap(p, g, mini, plot, view, pal, classicMinimapForPaper(pal))
 		} else {
 			view := minimapViewportRect(mini, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
 			paintDuelMinimap(p, g, mini, view, t.Border)
@@ -1104,7 +1106,8 @@ func (a *minesweeperApp) pruneAndDrawPopups(p *ui.Painter, r ui.Rect, now time.T
 		return
 	}
 	v := a.board
-	pal, dp := paperFor(a.darkMode), duelPromptsFor(a.darkMode)
+	pal := a.renderedPaper()
+	dp := duelPromptsFor(pal.Dark)
 	kept := a.duelPopups[:0]
 	for _, pop := range a.duelPopups {
 		elapsed := now.Sub(pop.Start)
