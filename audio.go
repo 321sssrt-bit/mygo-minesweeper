@@ -333,11 +333,9 @@ func (a *minesweeperApp) closeFlood(now time.Time, wave []RevealWaveEntry, motif
 	a.flushCues(now)
 }
 
-// settleSound voices game settlement: a 《春日影》 loss cuts in with Soyo's
-// dissonant stop, a win plays the leader's motif plus the five-member chord,
-// and a classic non-《春日影》 loss stays silent here because the 雷 thud
-// already voiced the move. Duel draws and ordinary losses still settle via
-// settleDuel.
+// settleSound voices game settlement: a classic non-《春日影》 loss stays
+// silent here because the 雷 thud already voiced the move, while a duel draw
+// or ordinary loss closes gently without a member motif.
 func (a *minesweeperApp) settleSound(won, haruhikage bool) {
 	if haruhikage {
 		a.playSound(SoundHaruhikageStop, 1, 0)
@@ -349,7 +347,7 @@ func (a *minesweeperApp) settleSound(won, haruhikage bool) {
 		return
 	}
 	if a.isDuel() {
-		a.playSound(memberMotif(a.memberID), 1, 0)
+		a.playSound(SoundDuelClose, 1, 0)
 	}
 }
 

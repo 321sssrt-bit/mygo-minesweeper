@@ -1137,8 +1137,8 @@ func TestSoundDuelCountdownTicksWholeSeconds(t *testing.T) {
 	if app.game.Status != StatusWon {
 		t.Fatal("expected the duel to settle")
 	}
-	// A 0 : 0 draw settles on the leader's motif alone.
-	assertSoundIDs(t, "settlement", rec.take(), SoundMotifTomori)
+	// A 0 : 0 draw settles on the gentle closing cue without a member motif.
+	assertSoundIDs(t, "settlement", rec.take(), SoundDuelClose)
 }
 
 func TestSoundDuelCountdownSkipsStalledSeconds(t *testing.T) {
@@ -1362,27 +1362,74 @@ func TestSoundDuelPassiveCuesHushInBackground(t *testing.T) {
 }
 
 func TestSoundDuelSettlement(t *testing.T) {
+	for _, m := range Members {
+		motif := wantMotif[m.ID]
+		for _, tc := range []struct {
+			name       string
+			haruhikage bool
+			player, ai int
+			want       []SoundID
+		}{
+			{"win", false, 120, 80, []SoundID{motif, SoundWinChord}},
+			{"draw", false, 100, 100, []SoundID{SoundDuelClose}},
+			{"loss", false, 80, 120, []SoundID{SoundDuelClose}},
+			{"春日影 win", true, 120, 80, []SoundID{motif, SoundWinChord}},
+			{"春日影 draw", true, 100, 100, []SoundID{SoundDuelClose}},
+			{"春日影 loss", true, 80, 120, []SoundID{SoundHaruhikageStop}},
+		} {
+			t.Run(fmt.Sprintf("%s/%s", m.ID, tc.name), func(t *testing.T) {
+				app, rec, tt := newDuelSoundApp()
+				app.memberID = m.ID
+				app.game.MemberID = m.ID
+				app.game.Difficulty.Haruhikage = tc.haruhikage
+				d := app.game.duel
+				d.PlayerScore, d.AIScore = tc.player, tc.ai
+				d.Elapsed = d.Duration - 0.2
+				tt.Advance(time.Second)
+				if app.game.Status != StatusWon || !app.duelEnded {
+					t.Fatal("expected the duel to settle on its clock")
+				}
+				got := rec.take()
+				assertSoundIDs(t, tc.name, got, tc.want...)
+				for i, c := range got {
+					if !gainNear(c.Gain, 0.8) || c.Pan != 0 || c.Speed != 1 {
+						t.Fatalf("%s cue %d = %+v, want gain 0.8 pan 0 speed 1", tc.name, i, c)
+					}
+				}
+			})
+		}
+	}
+
+	// Master volume and mute govern duel settlement cues as well.
 	for _, tc := range []struct {
-		name       string
-		haruhikage bool
-		player, ai int
-		want       []SoundID
+		name    string
+		enabled bool
+		volume  int
+		want    []SoundID
+		gain    float64
 	}{
-		{"win", false, 120, 80, []SoundID{SoundMotifTomori, SoundWinChord}},
-		{"loss", false, 80, 120, []SoundID{SoundMotifTomori}},
-		{"春日影 loss", true, 80, 120, []SoundID{SoundHaruhikageStop}},
+		{"muted", false, 80, nil, 0},
+		{"volume 0", true, 0, nil, 0},
+		{"volume 40", true, 40, []SoundID{SoundDuelClose}, 0.4},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run("master/"+tc.name, func(t *testing.T) {
 			app, rec, tt := newDuelSoundApp()
-			app.game.Difficulty.Haruhikage = tc.haruhikage
+			app.soundEnabled = tc.enabled
+			app.volume = tc.volume
 			d := app.game.duel
-			d.PlayerScore, d.AIScore = tc.player, tc.ai
+			d.PlayerScore, d.AIScore = 80, 120
 			d.Elapsed = d.Duration - 0.2
 			tt.Advance(time.Second)
 			if app.game.Status != StatusWon || !app.duelEnded {
 				t.Fatal("expected the duel to settle on its clock")
 			}
-			assertSoundIDs(t, tc.name, rec.take(), tc.want...)
+			got := rec.take()
+			assertSoundIDs(t, tc.name, got, tc.want...)
+			for i, c := range got {
+				if !gainNear(c.Gain, tc.gain) || c.Pan != 0 || c.Speed != 1 {
+					t.Fatalf("%s cue %d = %+v, want gain %v pan 0 speed 1", tc.name, i, c, tc.gain)
+				}
+			}
 		})
 	}
 }
