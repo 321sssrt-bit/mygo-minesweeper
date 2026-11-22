@@ -578,7 +578,10 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 		if ev.Button < 0 || ev.Button > 2 {
 			return false
 		}
-		if ev.Button == 0 && v.minimapFor(a.game, ev.X, ev.Y) {
+		// Middle-button and Option/Alt+left-button start panning immediately
+		// without waiting for the drag threshold or triggering minimap jumps.
+		panDrag := ev.Button == 2 || (ev.Button == 0 && ev.Mods&ui.Alt != 0)
+		if ev.Button == 0 && !panDrag && v.minimapFor(a.game, ev.X, ev.Y) {
 			// End any in-flight glide first so minimap clicks take over
 			// from the exact coordinates and zoom painted on screen.
 			v.stopGlide()
@@ -593,7 +596,7 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 		v.PressButton = ev.Button
 		v.PressX, v.PressY = ev.X, ev.Y
 		v.DragX, v.DragY = ev.X, ev.Y
-		v.Dragging = ev.Button == 2
+		v.Dragging = panDrag
 		return true
 	case ui.InputPointerMove:
 		if !v.Pressed || ev.Button < 0 {
