@@ -135,8 +135,12 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 				t.Fatalf("quote strip must reuse exact chat quote: strip=%q chat=%q app=%q",
 					app.quoteStrip.Text, lastChat.Text, app.quote)
 			}
-			if len(app.skillPulses) != 2 {
-				t.Fatalf("expected 2 Anon skill target pulses, got %d (%+v)", len(app.skillPulses), app.skillPulses)
+			if backend == "grid" || !app.board.gliding() {
+				if len(app.skillPulses) != 2 {
+					t.Fatalf("expected 2 Anon skill target pulses, got %d (%+v)", len(app.skillPulses), app.skillPulses)
+				}
+			} else if len(app.skillPulses) != 0 {
+				t.Fatalf("canvas off-viewport skill must defer pulses while gliding, got %d", len(app.skillPulses))
 			}
 			firstStart := app.quoteStrip.Start
 			wantStripBg := quoteStripColorsFor(MemberAnon, app.darkMode).Bg
@@ -151,7 +155,19 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 				t.Errorf("quote strip enter frame did not render full opaque Bg %s", hexOf(wantStripBg))
 			}
 
-			// Advance into pulse peak & hold (t=+160ms total) and verify visible ring pixels.
+			glideWait := time.Duration(0)
+			if backend == "canvas" && app.board.gliding() {
+				glideWait = 240 * time.Millisecond
+				tt.Advance(glideWait)
+				if app.board.gliding() {
+					t.Fatal("canvas skill glide did not settle within 280ms")
+				}
+				if len(app.skillPulses) != 2 {
+					t.Fatalf("expected 2 Anon skill target pulses after glide arrival, got %d (%+v)", len(app.skillPulses), app.skillPulses)
+				}
+			}
+
+			// Advance into pulse peak & hold and verify visible ring pixels.
 			tt.Advance(120 * time.Millisecond)
 			targetIdx := app.skillPulses[0].Index
 			tRow, tCol := targetIdx/app.game.Cols, targetIdx%app.game.Cols
@@ -163,8 +179,9 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 				}
 				haloRect = ui.Rect{X: tr.X - tr.W*0.5, Y: tr.Y - tr.H*0.5, W: tr.W * 2, H: tr.H * 2}
 			} else {
-				app.board.center(app.game, tRow, tCol)
-				tt.Frame()
+				if !app.board.shows(app.game, tRow, tCol) {
+					t.Fatalf("expected skill target (%d,%d) inside viewport after glide", tRow, tCol)
+				}
 				br, _ := tt.Find("经典棋盘")
 				tr := classicCanvasCellRect(br, app.board, tRow, tCol)
 				haloRect = ui.Rect{X: tr.X - tr.W*0.5, Y: tr.Y - tr.H*0.5, W: tr.W * 2, H: tr.H * 2}
@@ -244,7 +261,7 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 			}
 
 			// Advance to 600ms and fire a second skill: must replace old strip and reset timer.
-			tt.Advance(440 * time.Millisecond)
+			tt.Advance(440*time.Millisecond - glideWait)
 			if !app.quoteStrip.Active {
 				t.Fatal("expected first quote strip still active at 600ms")
 			}
