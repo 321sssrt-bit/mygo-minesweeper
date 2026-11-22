@@ -118,7 +118,7 @@ var soundRecipes = [soundCount]soundRecipe{
 	SoundMotifSoyo:      {render: motifSoyo, peak: 0.84, fadeOut: 0.15},
 	SoundMotifTaki:      {render: motifTaki, peak: 0.77, drive: 0.75, fadeOut: 0.03},
 	SoundHaruhikageStop: {render: haruhikageStop, peak: 0.45, drive: 1.2, fadeOut: 0.004},
-	SoundWinChord:       {render: winChord, peak: 0.70, fadeOut: 0.35},
+	SoundWinChord:       {render: winChord, peak: 0.49, fadeOut: 0.35},
 	SoundDuelPen:        {render: duelPen, peak: 0.4, fadeOut: 0.01},
 	SoundDuelMineCue:    {render: duelMineCue, peak: 0.5, fadeOut: 0.06},
 	SoundDuelTick:       {render: duelTick, peak: 0.45, fadeOut: 0.01},

@@ -83,6 +83,20 @@ func TestSynthMotifLoudness(t *testing.T) {
 			t.Errorf("%v is %.2f dB louder than the quietest motif", id, db-quietest)
 		}
 	}
+
+	// A win starts the closing chord and the leader's motif together.
+	chord := bank.Samples(SoundWinChord)
+	for id := SoundMotifTomori; id <= SoundMotifTaki; id++ {
+		motif := bank.Samples(id)
+		var peak float64
+		for i := range min(len(chord), len(motif)) {
+			peak = max(peak, math.Abs(float64(chord[i])+float64(motif[i])))
+		}
+		t.Logf("%v + %v peak %.3f", id, SoundWinChord, peak)
+		if peak >= 1 {
+			t.Errorf("%v + %v clips at %.3f", id, SoundWinChord, peak)
+		}
+	}
 }
 
 // Use the loudest 50 ms window so silence and reverb tails do not dilute
