@@ -104,8 +104,8 @@ func (a *minesweeperApp) playCue(cue soundCue) {
 }
 
 const (
-	// paperGrainGap is the least time between two paper grains, within a
-	// flood and across quick moves alike, so stacked slips never clip.
+	// paperGrainGap is the least time between a move's hit and its follow-up
+	// flood grains, or between queued flood grains, so stacked slips never clip.
 	paperGrainGap = 38 * time.Millisecond
 	// paperGrainsPerWave caps the grains a single flood lifts.
 	paperGrainsPerWave = 6
@@ -224,20 +224,21 @@ func waveSpan(wave []RevealWaveEntry) time.Duration {
 	return time.Duration(step) * rippleStepDelay
 }
 
-// playFlood lifts a move's paper slips along its reveal wave: a grain at
-// each wave step that keeps paperGrainGap from every other grain, at most
-// paperGrainsPerWave, rising in pitch with depth. The move's own cell,
-// step 0, sounds at once unless a grain just played.
+// playFlood sounds the move's primary paper lift immediately, then queues
+// follow-up grains along its reveal wave: each wave step that keeps
+// paperGrainGap from other grains, up to paperGrainsPerWave total
+// (including the primary hit), rising in pitch with depth.
 func (a *minesweeperApp) playFlood(now time.Time, pan float64, wave []RevealWaveEntry) {
+	a.playSound(SoundPaperLift, 1, pan)
+	a.cues.lastGrain = now
 	var steps [waveSteps + 1]bool
-	steps[0] = true
 	for _, e := range wave {
 		steps[waveStep(e.Depth)] = true
 	}
-	lifted := 0
-	for step, reached := range steps {
+	lifted := 1
+	for step := 1; step <= waveSteps; step++ {
 		at := now.Add(time.Duration(step) * rippleStepDelay)
-		if !reached || lifted == paperGrainsPerWave || !a.cues.grainFits(at) {
+		if !steps[step] || lifted == paperGrainsPerWave || !a.cues.grainFits(at) {
 			continue
 		}
 		a.cues.add(queuedCue{At: at, Grain: true, Cue: soundCue{
@@ -248,7 +249,6 @@ func (a *minesweeperApp) playFlood(now time.Time, pan float64, wave []RevealWave
 		}})
 		lifted++
 	}
-	a.flushCues(now)
 }
 
 // memberMotif is the short instrumental phrase of a band member.
