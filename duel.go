@@ -345,9 +345,6 @@ func (g *Game) ClaimDuelMines(row, col int) ActionResult {
 
 func (g *Game) useDuelSkill() ActionResult {
 	d := g.duel
-	if !g.BandMode || g.Status != StatusPlaying || g.SkillUsesLeft <= 0 || (d.playerStunned() && g.MemberID != MemberTomori) {
-		return ActionResult{Kind: ActionNoop}
-	}
 	beforeScore := d.PlayerScore
 	g.SkillUsesLeft--
 	g.UsedSkill = true

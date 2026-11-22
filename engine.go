@@ -637,30 +637,70 @@ func (g *Game) ToggleFlag(row, col int, allowQuestion bool) ActionResult {
 	}
 }
 
+// SkillReadiness describes whether the active skill can be used right now.
+type SkillReadiness uint8
+
+const (
+	SkillReady SkillReadiness = iota
+	SkillNotStarted
+	SkillDisabled
+	SkillExhausted
+	SkillPassive
+	SkillStunned
+	SkillNoTargets
+	SkillGameOver
+)
+
+// SkillReadiness reports the current result without consuming charges or choosing a target.
+// Disabled and passive skills keep their reason throughout the game.
+func (g *Game) SkillReadiness() SkillReadiness {
+	if reason := g.skillBlockReason(); reason != SkillReady || g.duel != nil {
+		return reason
+	}
+	for i := range g.Cells {
+		if g.isClassicSkillTarget(&g.Cells[i]) {
+			return SkillReady
+		}
+	}
+	return SkillNoTargets
+}
+
+func (g *Game) skillBlockReason() SkillReadiness {
+	switch {
+	case !g.BandMode:
+		return SkillDisabled
+	case g.duel == nil && FindMember(g.MemberID).Passive:
+		return SkillPassive
+	case g.Status == StatusWon || g.Status == StatusLost:
+		return SkillGameOver
+	case g.Status != StatusPlaying:
+		return SkillNotStarted
+	case g.SkillUsesLeft <= 0:
+		return SkillExhausted
+	case g.duel != nil && g.duel.playerStunned() && g.MemberID != MemberTomori:
+		return SkillStunned
+	default:
+		return SkillReady
+	}
+}
+
 func (g *Game) UseSkill() ActionResult {
+	if g.skillBlockReason() != SkillReady {
+		return ActionResult{Kind: ActionNoop}
+	}
 	if g.duel != nil {
 		return g.useDuelSkill()
 	}
-	if !g.BandMode || g.Status != StatusPlaying || g.SkillUsesLeft <= 0 {
+	pool := g.classicSkillPool()
+	if len(pool) == 0 {
 		return ActionResult{Kind: ActionNoop}
 	}
-	member := FindMember(g.MemberID)
-	if member.Passive {
-		return ActionResult{Kind: ActionNoop}
-	}
+	g.SkillUsesLeft--
+	g.UsedSkill = true
 
 	switch g.MemberID {
 	case MemberTomori:
-		pool := g.safeUnrevealedCells(true)
-		if len(pool) == 0 {
-			pool = g.safeUnrevealedCells(false)
-		}
-		if len(pool) == 0 {
-			return ActionResult{Kind: ActionNoop}
-		}
 		pick := pool[g.rng.IntN(len(pool))]
-		g.SkillUsesLeft--
-		g.UsedSkill = true
 		g.adjustGravity(-10)
 		res := g.Reveal(pick.Row, pick.Col)
 		res.SkillTargets = []int{pick.Row*g.Cols + pick.Col}
@@ -671,21 +711,17 @@ func (g *Game) UseSkill() ActionResult {
 		return res
 
 	case MemberAnon:
-		pool := g.safeUnrevealedCells(false)
-		if len(pool) == 0 {
-			return ActionResult{Kind: ActionNoop}
-		}
-		g.SkillUsesLeft--
-		g.UsedSkill = true
 		total := 0
 		var wave []RevealWaveEntry
 		var targets []int
-		for range 2 {
-			rem := g.safeUnrevealedCells(false)
-			if len(rem) == 0 {
-				break
+		for attempt := range 2 {
+			if attempt > 0 {
+				pool = g.classicSkillPool()
+				if len(pool) == 0 {
+					break
+				}
 			}
-			pick := rem[g.rng.IntN(len(rem))]
+			pick := pool[g.rng.IntN(len(pool))]
 			res := g.Reveal(pick.Row, pick.Col)
 			targets = append(targets, pick.Row*g.Cols+pick.Col)
 			total += res.RevealedCount
@@ -697,16 +733,7 @@ func (g *Game) UseSkill() ActionResult {
 		return ActionResult{Kind: ActionSkill, RevealedCount: total, QuoteEvent: "skill", RevealWave: wave, SkillTargets: targets}
 
 	case MemberTaki:
-		pool := g.hiddenUnflaggedMines(true)
-		if len(pool) == 0 {
-			pool = g.hiddenUnflaggedMines(false)
-		}
-		if len(pool) == 0 {
-			return ActionResult{Kind: ActionNoop}
-		}
 		pick := pool[g.rng.IntN(len(pool))]
-		g.SkillUsesLeft--
-		g.UsedSkill = true
 		pick.Flagged = true
 		pick.Questioned = false
 		g.FlagsPlaced++
@@ -714,23 +741,7 @@ func (g *Game) UseSkill() ActionResult {
 		return ActionResult{Kind: ActionSkill, QuoteEvent: "skill", SkillTargets: []int{pick.Row*g.Cols + pick.Col}}
 
 	case MemberRana:
-		var zeros []*Cell
-		for i := range g.Cells {
-			c := &g.Cells[i]
-			if !c.IsMine && c.Adjacent == 0 && !c.Revealed && !c.Flagged {
-				zeros = append(zeros, c)
-			}
-		}
-		pool := zeros
-		if len(pool) == 0 {
-			pool = g.safeUnrevealedCells(false)
-		}
-		if len(pool) == 0 {
-			return ActionResult{Kind: ActionNoop}
-		}
 		pick := pool[g.rng.IntN(len(pool))]
-		g.SkillUsesLeft--
-		g.UsedSkill = true
 		g.adjustGravity(-12)
 		res := g.Reveal(pick.Row, pick.Col)
 		res.SkillTargets = []int{pick.Row*g.Cols + pick.Col}
@@ -758,52 +769,43 @@ func (g *Game) winMemes() []string {
 	return memes
 }
 
-func (g *Game) safeUnrevealedCells(frontierOnly bool) []*Cell {
-	var out []*Cell
-	for i := range g.Cells {
-		c := &g.Cells[i]
-		if c.IsMine || c.Revealed || c.Flagged {
-			continue
-		}
-		if frontierOnly {
-			hasRevealedNeighbor := false
-			for _, n := range g.Neighbors(c.Row, c.Col) {
-				if n.Revealed {
-					hasRevealedNeighbor = true
-					break
-				}
-			}
-			if !hasRevealedNeighbor {
-				continue
-			}
-		}
-		out = append(out, c)
+func (g *Game) isClassicSkillTarget(c *Cell) bool {
+	switch g.MemberID {
+	case MemberTomori, MemberAnon, MemberRana:
+		return !c.IsMine && !c.Revealed && !c.Flagged
+	case MemberTaki:
+		return c.IsMine && !c.Flagged
+	default:
+		return false
 	}
-	return out
 }
 
-func (g *Game) hiddenUnflaggedMines(frontierOnly bool) []*Cell {
-	var out []*Cell
+func (g *Game) classicSkillPool() []*Cell {
+	var preferred, fallback []*Cell
 	for i := range g.Cells {
 		c := &g.Cells[i]
-		if !c.IsMine || c.Flagged {
+		if !g.isClassicSkillTarget(c) {
 			continue
 		}
-		if frontierOnly {
-			hasRevealedNeighbor := false
+		prefer := g.MemberID == MemberRana && c.Adjacent == 0
+		if g.MemberID == MemberTomori || g.MemberID == MemberTaki {
 			for _, n := range g.Neighbors(c.Row, c.Col) {
 				if n.Revealed {
-					hasRevealedNeighbor = true
+					prefer = true
 					break
 				}
 			}
-			if !hasRevealedNeighbor {
-				continue
-			}
 		}
-		out = append(out, c)
+		if prefer {
+			preferred = append(preferred, c)
+		} else if len(preferred) == 0 {
+			fallback = append(fallback, c)
+		}
 	}
-	return out
+	if len(preferred) > 0 {
+		return preferred
+	}
+	return fallback
 }
 
 func (g *Game) finalizeLoss(exploded *Cell) {
