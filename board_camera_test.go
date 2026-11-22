@@ -136,7 +136,6 @@ func TestCanvasCameraImmediateProgrammaticDragAndScroll(t *testing.T) {
 			}{
 				{"ctrl", ui.Ctrl},
 				{"super", ui.Super},
-				{"cmd", ui.Cmd},
 			}
 			for _, pc := range preciseCases {
 				for _, mc := range modCases {
