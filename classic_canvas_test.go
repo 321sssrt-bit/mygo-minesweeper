@@ -657,11 +657,17 @@ func TestClassicCanvasPanZoomMinimapAndBoundsSafety(t *testing.T) {
 		t.Fatal("drag pan triggered unintended cell action")
 	}
 
-	// Zoom via scroll, then click center of viewport -> opens exact cell under pointer.
-	beforeCell := app.board.Cell
-	tt.Scroll(boardRect.X+boardRect.W/2, boardRect.Y+boardRect.H/2, 0, -240)
+	// Unmodified scroll pans without changing cell size, then pinch zooms,
+	// and clicking the center opens the exact cell under the pointer.
+	scrollBeforeX, scrollBeforeY, beforeCell := app.board.X, app.board.Y, app.board.Cell
+	tt.Scroll(boardRect.X+boardRect.W/2, boardRect.Y+boardRect.H/2, 40, 30)
+	if app.board.Cell != beforeCell || app.board.X != scrollBeforeX+40 || app.board.Y != scrollBeforeY+30 {
+		t.Fatalf("scroll pan mismatch: got (%v,%v,%.2f), want (%v,%v,%.2f)",
+			app.board.X, app.board.Y, app.board.Cell, scrollBeforeX+40, scrollBeforeY+30, beforeCell)
+	}
+	tt.Pinch(boardRect.X+boardRect.W/2, boardRect.Y+boardRect.H/2, 1.25)
 	if app.board.Cell == beforeCell {
-		t.Fatal("scroll did not zoom classic canvas")
+		t.Fatal("pinch did not zoom classic canvas")
 	}
 	targetRow, targetCol, ok := app.board.cellAt(app.game, boardRect.W/2, boardRect.H/2)
 	if !ok {

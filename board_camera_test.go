@@ -95,24 +95,106 @@ func TestCanvasCameraImmediateProgrammaticDragAndScroll(t *testing.T) {
 				t.Fatal("drag pan leaked cell action")
 			}
 
-			// Scroll wheel zoom updates immediately on frame 0 and preserves anchor.
+			// Unmodified Scroll (touchpad) and Wheel (mouse) both pan immediately on frame 0 without changing Cell.
 			anchorX, anchorY := boardRect.W*0.45, boardRect.H*0.45
-			wx := (v.X + anchorX) / v.Cell
-			wy := (v.Y + anchorY) / v.Cell
-			beforeCell := v.Cell
-			tt.Scroll(boardRect.X+anchorX, boardRect.Y+anchorY, 0, -240)
-			if v.gliding() || v.Cell <= beforeCell {
-				t.Fatalf("scroll zoom = %.2f gliding=%v, want immediate > %.2f", v.Cell, v.gliding(), beforeCell)
+			scrollCases := []struct {
+				name string
+				send func(x, y, dx, dy float32)
+			}{
+				{"scroll", tt.Scroll},
+				{"wheel", tt.Wheel},
 			}
-			if math.Abs(float64((v.X+anchorX)/v.Cell-wx)) > 0.02 || math.Abs(float64((v.Y+anchorY)/v.Cell-wy)) > 0.02 {
-				t.Fatal("scroll zoom drifted world anchor")
+			for _, sc := range scrollCases {
+				panBeforeX, panBeforeY, panBeforeCell := v.X, v.Y, v.Cell
+				sc.send(boardRect.X+anchorX, boardRect.Y+anchorY, 64, 48)
+				if v.gliding() || v.Cell != panBeforeCell {
+					t.Fatalf("unmodified %s changed cell or started glide: cell=%.2f (was %.2f) gliding=%v",
+						sc.name, v.Cell, panBeforeCell, v.gliding())
+				}
+				if v.X != panBeforeX+64 || v.Y != panBeforeY+48 {
+					t.Fatalf("unmodified %s pan = (%v,%v), want (%v,%v)",
+						sc.name, v.X, v.Y, panBeforeX+64, panBeforeY+48)
+				}
+				if g.FirstClick || g.Moves != 0 || g.FlagsPlaced != 0 {
+					t.Fatalf("unmodified %s pan leaked cell action", sc.name)
+				}
 			}
 
-			// Trackpad pinch zoom also updates immediately on frame 0.
-			beforeCell = v.Cell
+			// Ctrl or Cmd (Super) + Scroll/Wheel zooms immediately on frame 0 and preserves anchor without panning.
+			// mygo@v0.9.2 ui.Tester.Scroll/Wheel hardcode Mods=0, so feed modified InputScroll
+			// events directly into handleCanvasInput on the Tester-laid-out viewport.
+			preciseCases := []struct {
+				name    string
+				precise bool
+			}{
+				{"scroll", true},
+				{"wheel", false},
+			}
+			modCases := []struct {
+				name string
+				mod  ui.Modifiers
+			}{
+				{"ctrl", ui.Ctrl},
+				{"super", ui.Super},
+			}
+			for _, pc := range preciseCases {
+				for _, mc := range modCases {
+					wx := (v.X + anchorX) / v.Cell
+					wy := (v.Y + anchorY) / v.Cell
+					beforeCell := v.Cell
+					if !app.handleCanvasInput(ui.InputEvent{
+						Kind:    ui.InputScroll,
+						X:       anchorX,
+						Y:       anchorY,
+						DX:      40,
+						DY:      -240,
+						Mods:    mc.mod,
+						Precise: pc.precise,
+					}, tt.Now()) {
+						t.Fatalf("%s+%s zoom-in not handled", mc.name, pc.name)
+					}
+					if v.gliding() || v.Cell <= beforeCell {
+						t.Fatalf("%s+%s zoom-in = %.2f gliding=%v, want immediate > %.2f",
+							mc.name, pc.name, v.Cell, v.gliding(), beforeCell)
+					}
+					if math.Abs(float64((v.X+anchorX)/v.Cell-wx)) > 0.02 || math.Abs(float64((v.Y+anchorY)/v.Cell-wy)) > 0.02 {
+						t.Fatalf("%s+%s zoom-in drifted world anchor", mc.name, pc.name)
+					}
+
+					wx = (v.X + anchorX) / v.Cell
+					wy = (v.Y + anchorY) / v.Cell
+					beforeCell = v.Cell
+					if !app.handleCanvasInput(ui.InputEvent{
+						Kind:    ui.InputScroll,
+						X:       anchorX,
+						Y:       anchorY,
+						DX:      -40,
+						DY:      240,
+						Mods:    mc.mod,
+						Precise: pc.precise,
+					}, tt.Now()) {
+						t.Fatalf("%s+%s zoom-out not handled", mc.name, pc.name)
+					}
+					if v.gliding() || v.Cell >= beforeCell {
+						t.Fatalf("%s+%s zoom-out = %.2f gliding=%v, want immediate < %.2f",
+							mc.name, pc.name, v.Cell, v.gliding(), beforeCell)
+					}
+					if math.Abs(float64((v.X+anchorX)/v.Cell-wx)) > 0.02 || math.Abs(float64((v.Y+anchorY)/v.Cell-wy)) > 0.02 {
+						t.Fatalf("%s+%s zoom-out drifted world anchor", mc.name, pc.name)
+					}
+				}
+			}
+
+			// Trackpad pinch zoom also updates immediately on frame 0 and preserves anchor.
+			pwx := (v.X + anchorX) / v.Cell
+			pwy := (v.Y + anchorY) / v.Cell
+			beforeCell := v.Cell
 			tt.Pinch(boardRect.X+anchorX, boardRect.Y+anchorY, 0.85)
 			if v.gliding() || v.Cell >= beforeCell {
 				t.Fatalf("pinch zoom = %.2f gliding=%v, want immediate < %.2f", v.Cell, v.gliding(), beforeCell)
+			}
+			if math.Abs(float64((v.X+anchorX)/v.Cell-pwx)) > 0.02 || math.Abs(float64((v.Y+anchorY)/v.Cell-pwy)) > 0.02 {
+				t.Fatal("pinch zoom drifted world anchor")
 			}
 		})
 	}
@@ -165,6 +247,26 @@ func TestCanvasCameraSpringGlideAllInteractiveTriggers(t *testing.T) {
 	tt.Advance(180 * time.Millisecond)
 	if v.gliding() || abs32(v.Cell-wantOut) > 0.05 {
 		t.Fatalf("缩小 settled: cell=%.2f gliding=%v, want %.2f gliding=false", v.Cell, v.gliding(), wantOut)
+	}
+
+	// Ctrl+= and Ctrl+- keyboard zoom shortcuts keep gliding zoom behavior intact.
+	keyCell0 := v.Cell
+	tt.Key(ui.Ctrl, ui.KeyEqual)
+	if !v.gliding() {
+		t.Fatal("Ctrl+= did not start zoom-in glide")
+	}
+	tt.Advance(240 * time.Millisecond)
+	if v.gliding() || v.Cell <= keyCell0 {
+		t.Fatalf("Ctrl+= settled: cell=%.2f gliding=%v, want > %.2f gliding=false", v.Cell, v.gliding(), keyCell0)
+	}
+	keyCellIn := v.Cell
+	tt.Key(ui.Ctrl, ui.KeyMinus)
+	if !v.gliding() {
+		t.Fatal("Ctrl+- did not start zoom-out glide")
+	}
+	tt.Advance(240 * time.Millisecond)
+	if v.gliding() || v.Cell >= keyCellIn || abs32(v.Cell-keyCell0) > 0.05 {
+		t.Fatalf("Ctrl+- settled: cell=%.2f gliding=%v, want ~%.2f (< %.2f) gliding=false", v.Cell, v.gliding(), keyCell0, keyCellIn)
 	}
 
 	// 2. "回到中心" button from a mid-range offset (~0.9 viewport spans).
@@ -463,21 +565,74 @@ func TestCanvasCameraMidGlideManualInputTakeover(t *testing.T) {
 		t.Fatalf("camera drifted after drag takeover: pos=(%v,%v) want=(%v,%v)", cv.X, cv.Y, wantDragX, wantDragY)
 	}
 
-	// 4. Mid-glide scroll and pinch cancel spring and zoom around the displayed coordinates.
-	cv.center(cg, 10, 10)
-	cTT.Frame()
-	cTT.Key(ui.Ctrl, ui.Key0)
-	cTT.Advance(60 * time.Millisecond)
-	scrollX, scrollY, scrollCell := cv.X, cv.Y, cv.Cell
+	// 4. Mid-glide unmodified scroll/wheel pans immediately from displayed coordinates,
+	// while Ctrl/Cmd+scroll and pinch cancel spring and zoom around displayed coordinates.
 	ax, ay := cBoard.W*0.4, cBoard.H*0.4
-	wx := (scrollX + ax) / scrollCell
-	wy := (scrollY + ay) / scrollCell
-	cTT.Scroll(cBoard.X+ax, cBoard.Y+ay, 0, -240)
-	if cv.gliding() || cv.Cell <= scrollCell {
-		t.Fatalf("mid-glide scroll failed takeover: cell=%.2f (was %.2f) gliding=%v", cv.Cell, scrollCell, cv.gliding())
+	for _, sc := range []struct {
+		name string
+		send func(x, y, dx, dy float32)
+	}{
+		{"scroll", cTT.Scroll},
+		{"wheel", cTT.Wheel},
+	} {
+		cv.center(cg, 10, 10)
+		cTT.Frame()
+		cTT.Key(ui.Ctrl, ui.Key0)
+		cTT.Advance(60 * time.Millisecond)
+		if !cv.gliding() {
+			t.Fatalf("expected classic glide active before mid-glide %s pan", sc.name)
+		}
+		panX, panY, panCell := cv.X, cv.Y, cv.Cell
+		sc.send(cBoard.X+ax, cBoard.Y+ay, 36, 24)
+		wantPanX, wantPanY := panX+36, panY+24
+		if cv.gliding() || cv.Cell != panCell || abs32(cv.X-wantPanX) > 0.5 || abs32(cv.Y-wantPanY) > 0.5 {
+			t.Fatalf("mid-glide %s pan failed takeover: pos=(%v,%v,%.2f) gliding=%v, want (%v,%v,%.2f)",
+				sc.name, cv.X, cv.Y, cv.Cell, cv.gliding(), wantPanX, wantPanY, panCell)
+		}
+		cTT.Advance(300 * time.Millisecond)
+		if cv.gliding() || cv.Cell != panCell || abs32(cv.X-wantPanX) > 0.5 || abs32(cv.Y-wantPanY) > 0.5 {
+			t.Fatalf("camera drifted after mid-glide %s pan takeover: pos=(%v,%v,%.2f) want (%v,%v,%.2f)",
+				sc.name, cv.X, cv.Y, cv.Cell, wantPanX, wantPanY, panCell)
+		}
 	}
-	if math.Abs(float64((cv.X+ax)/cv.Cell-wx)) > 0.02 || math.Abs(float64((cv.Y+ay)/cv.Cell-wy)) > 0.02 {
-		t.Fatal("mid-glide scroll did not anchor on displayed coordinates")
+
+	for _, zc := range []struct {
+		name    string
+		mod     ui.Modifiers
+		precise bool
+	}{
+		{"ctrl+scroll", ui.Ctrl, true},
+		{"ctrl+wheel", ui.Ctrl, false},
+		{"super+scroll", ui.Super, true},
+		{"super+wheel", ui.Super, false},
+	} {
+		cv.Cell = 26
+		cv.center(cg, 10, 10)
+		cTT.Frame()
+		cTT.Key(ui.Ctrl, ui.Key0)
+		cTT.Advance(60 * time.Millisecond)
+		if !cv.gliding() {
+			t.Fatalf("expected classic glide active before mid-glide %s zoom", zc.name)
+		}
+		scrollX, scrollY, scrollCell := cv.X, cv.Y, cv.Cell
+		wx := (scrollX + ax) / scrollCell
+		wy := (scrollY + ay) / scrollCell
+		if !cApp.handleCanvasInput(ui.InputEvent{
+			Kind:    ui.InputScroll,
+			X:       ax,
+			Y:       ay,
+			DY:      -240,
+			Mods:    zc.mod,
+			Precise: zc.precise,
+		}, cTT.Now()) {
+			t.Fatalf("mid-glide %s not handled", zc.name)
+		}
+		if cv.gliding() || cv.Cell <= scrollCell {
+			t.Fatalf("mid-glide %s failed takeover: cell=%.2f (was %.2f) gliding=%v", zc.name, cv.Cell, scrollCell, cv.gliding())
+		}
+		if math.Abs(float64((cv.X+ax)/cv.Cell-wx)) > 0.02 || math.Abs(float64((cv.Y+ay)/cv.Cell-wy)) > 0.02 {
+			t.Fatalf("mid-glide %s did not anchor on displayed coordinates", zc.name)
+		}
 	}
 
 	cv.center(cg, 10, 10)

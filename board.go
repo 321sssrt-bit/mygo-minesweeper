@@ -345,6 +345,17 @@ func (v *boardView) centerBoard(g *Game) {
 	v.center(g, g.Rows/2, g.Cols/2)
 }
 
+func (v *boardView) pan(g *Game, dx, dy float32) {
+	if !isFinite32(dx) || !isFinite32(dy) {
+		return
+	}
+	v.stopGlide()
+	v.needsCenter = false
+	v.X += dx
+	v.Y += dy
+	v.clamp(g)
+}
+
 func (v *boardView) zoom(g *Game, atX, atY, factor float32) {
 	if g == nil || factor <= 0 || !isFinite32(factor) || !isFinite32(atX) || !isFinite32(atY) {
 		return
@@ -542,6 +553,94 @@ func (a *minesweeperApp) duelBoard(c *ui.Context) {
 	a.canvasBoard(c, "duel-stage", "duel-board", "决斗棋盘")
 }
 
+func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool {
+	v := a.board
+	if ev.Kind == ui.InputPointerMove || ev.Kind == ui.InputScroll || ev.Kind == ui.InputZoom {
+		v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
+		v.updateHover(a.game)
+	}
+	switch ev.Kind {
+	case ui.InputScroll:
+		// Treat touchpad and mouse-wheel scroll identically (ignore ev.Precise);
+		// Ctrl or Super (Command on macOS) switches scroll to cursor-anchored zoom.
+		if ev.Mods&(ui.Ctrl|ui.Super) != 0 {
+			v.zoom(a.game, ev.X, ev.Y, 1+max(-0.35, min(0.35, -ev.DY/400)))
+			return true
+		}
+		v.pan(a.game, ev.DX, ev.DY)
+		return true
+	case ui.InputZoom:
+		v.stopGlide()
+		v.zoom(a.game, ev.X, ev.Y, ev.Scale)
+		return true
+	case ui.InputPointerDown:
+		v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
+		if ev.Button < 0 || ev.Button > 2 {
+			return false
+		}
+		if ev.Button == 0 && v.minimapFor(a.game, ev.X, ev.Y) {
+			// End any in-flight glide first so minimap clicks take over
+			// from the exact coordinates and zoom painted on screen.
+			v.stopGlide()
+			row, col := v.minimapCellAt(a.game, ev.X, ev.Y)
+			v.glideCenter(a.game, row, col, ev.Time, a.motionReducedActive)
+			return true
+		}
+		// Stop any active glide without stepping forward so clicks and
+		// drags act on the exact viewport coordinates painted on screen.
+		v.stopGlide()
+		v.Pressed = true
+		v.PressButton = ev.Button
+		v.PressX, v.PressY = ev.X, ev.Y
+		v.DragX, v.DragY = ev.X, ev.Y
+		v.Dragging = ev.Button == 2
+		return true
+	case ui.InputPointerMove:
+		if !v.Pressed || ev.Button < 0 {
+			return false
+		}
+		if abs32(ev.X-v.PressX)+abs32(ev.Y-v.PressY) > 5 {
+			v.Dragging = true
+		}
+		if v.Dragging {
+			v.pan(a.game, v.DragX-ev.X, v.DragY-ev.Y)
+			v.DragX, v.DragY = ev.X, ev.Y
+		}
+		return true
+	case ui.InputPointerUp:
+		if !v.Pressed {
+			return false
+		}
+		v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
+		button, dragged := v.PressButton, v.Dragging
+		v.Pressed, v.Dragging = false, false
+		v.updateHover(a.game)
+		if ev.Canceled || dragged || v.minimapFor(a.game, ev.X, ev.Y) || v.minimapFor(a.game, v.PressX, v.PressY) {
+			return true
+		}
+		row, col, ok := v.cellAt(a.game, ev.X, ev.Y)
+		if !ok {
+			return true
+		}
+		actionNow := ev.Time
+		if actionNow.IsZero() {
+			actionNow = now
+		}
+		result := a.applyCellAction(row, col, button, actionNow)
+		if result.Kind != ActionNoop {
+			a.pendingResult = result
+			a.pendingRow = row
+			a.pendingCol = col
+			if a.game.duel != nil {
+				v.LastEffect = now
+				v.EffectCell = row*a.game.Cols + col
+			}
+		}
+		return true
+	}
+	return false
+}
+
 func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label string) {
 	v := a.board
 	a.syncMotionState(a.reducedMotion(c))
@@ -563,88 +662,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 		}
 		v.WasHovered = hovered
 		boardBox.HandleInput(func(ev ui.InputEvent) bool {
-			if ev.Kind == ui.InputPointerMove || ev.Kind == ui.InputScroll || ev.Kind == ui.InputZoom {
-				v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
-				v.updateHover(a.game)
-			}
-			switch ev.Kind {
-			case ui.InputScroll:
-				v.zoom(a.game, ev.X, ev.Y, 1+max(-0.35, min(0.35, -ev.DY/400)))
-				return true
-			case ui.InputZoom:
-				v.stopGlide()
-				v.zoom(a.game, ev.X, ev.Y, ev.Scale)
-				return true
-			case ui.InputPointerDown:
-				v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
-				if ev.Button < 0 || ev.Button > 2 {
-					return false
-				}
-				if ev.Button == 0 && v.minimapFor(a.game, ev.X, ev.Y) {
-					// End any in-flight glide first so minimap clicks take over
-					// from the exact coordinates and zoom painted on screen.
-					v.stopGlide()
-					row, col := v.minimapCellAt(a.game, ev.X, ev.Y)
-					v.glideCenter(a.game, row, col, ev.Time, a.motionReducedActive)
-					return true
-				}
-				// Stop any active glide without stepping forward so clicks and
-				// drags act on the exact viewport coordinates painted on screen.
-				v.stopGlide()
-				v.Pressed = true
-				v.PressButton = ev.Button
-				v.PressX, v.PressY = ev.X, ev.Y
-				v.DragX, v.DragY = ev.X, ev.Y
-				v.Dragging = ev.Button == 2
-				return true
-			case ui.InputPointerMove:
-				if !v.Pressed || ev.Button < 0 {
-					return false
-				}
-				if abs32(ev.X-v.PressX)+abs32(ev.Y-v.PressY) > 5 {
-					v.Dragging = true
-				}
-				if v.Dragging {
-					v.stopGlide()
-					v.needsCenter = false
-					v.X -= ev.X - v.DragX
-					v.Y -= ev.Y - v.DragY
-					v.DragX, v.DragY = ev.X, ev.Y
-					v.clamp(a.game)
-				}
-				return true
-			case ui.InputPointerUp:
-				if !v.Pressed {
-					return false
-				}
-				v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
-				button, dragged := v.PressButton, v.Dragging
-				v.Pressed, v.Dragging = false, false
-				v.updateHover(a.game)
-				if ev.Canceled || dragged || v.minimapFor(a.game, ev.X, ev.Y) || v.minimapFor(a.game, v.PressX, v.PressY) {
-					return true
-				}
-				row, col, ok := v.cellAt(a.game, ev.X, ev.Y)
-				if !ok {
-					return true
-				}
-				actionNow := ev.Time
-				if actionNow.IsZero() {
-					actionNow = c.Now()
-				}
-				result := a.applyCellAction(row, col, button, actionNow)
-				if result.Kind != ActionNoop {
-					a.pendingResult = result
-					a.pendingRow = row
-					a.pendingCol = col
-					if a.game.duel != nil {
-						v.LastEffect = c.Now()
-						v.EffectCell = row*a.game.Cols + col
-					}
-				}
-				return true
-			}
-			return false
+			return a.handleCanvasInput(ev, c.Now())
 		}).Draw(func(p *ui.Painter, r ui.Rect) {
 			v.Width, v.Height = r.W, r.H
 			a.syncMotionState(a.reducedMotionPainter(p))

@@ -212,11 +212,20 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 				}
 			} else {
 				br, _ := tt.Find("经典棋盘")
-				// Scroll directly over the avatar glyph center: canvas zoom must change!
+				// Scroll and pinch directly over the avatar glyph center: both must pass through!
+				beforeY := app.board.Y
+				scrollDY := float32(120)
+				if _, maxY := app.board.panLimit(app.game); beforeY > maxY/2 {
+					scrollDY = -120
+				}
+				tt.Scroll(avatarX, avatarY, 0, scrollDY)
+				if app.board.Y == beforeY {
+					t.Fatalf("quote strip avatar glyph blocked scroll pan at (%.1f,%.1f) (Y stayed %.2f)", avatarX, avatarY, beforeY)
+				}
 				beforeCell := app.board.Cell
-				tt.Scroll(avatarX, avatarY, 0, -120)
+				tt.Pinch(avatarX, avatarY, 1.2)
 				if app.board.Cell == beforeCell {
-					t.Fatalf("quote strip avatar glyph blocked wheel zoom at (%.1f,%.1f) (cell stayed %.2f)", avatarX, avatarY, beforeCell)
+					t.Fatalf("quote strip avatar glyph blocked pinch zoom at (%.1f,%.1f) (cell stayed %.2f)", avatarX, avatarY, beforeCell)
 				}
 				// Right-click directly over the avatar glyph center: must flag the cell beneath!
 				row, col, ok := app.board.cellAt(app.game, avatarX-br.X, avatarY-br.Y)
@@ -574,12 +583,12 @@ func TestVictoryConfettiClassicAndDuelTruthTable(t *testing.T) {
 				t.Fatalf("%s (%d vs %d): confetti=%v (count=%d), want %v", tc.name, tc.player, tc.ai, got, len(app.confetti), tc.want)
 			}
 			if tc.want {
-				// Canvas wheel zoom still passes through while confetti falls.
+				// Canvas pinch zoom still passes through while confetti falls.
 				br, _ := tt.Find("决斗棋盘")
 				beforeCell := app.board.Cell
-				tt.Scroll(br.X+br.W/2, br.Y+br.H/2, 0, -120)
+				tt.Pinch(br.X+br.W/2, br.Y+br.H/2, 1.25)
 				if app.board.Cell == beforeCell {
-					t.Fatal("confetti blocked wheel zoom pass-through on duel canvas")
+					t.Fatal("confetti blocked pinch zoom pass-through on duel canvas")
 				}
 				tt.Advance(confettiDuration + 50*time.Millisecond)
 				if len(app.confetti) != 0 {
@@ -624,12 +633,12 @@ func TestMemeUnlockGoldenStripFirstOnlyAndTimedDuel(t *testing.T) {
 		t.Fatal("expected golden meme strip copy visible on timed duel win")
 	}
 
-	// Pass-through scroll over the golden meme strip on duel canvas.
+	// Pass-through pinch zoom over the golden meme strip on duel canvas.
 	br, _ := tt.Find("决斗棋盘")
 	beforeCell := app.board.Cell
-	tt.Scroll(br.X+br.W/2, br.Y+28, 0, -120)
+	tt.Pinch(br.X+br.W/2, br.Y+28, 1.25)
 	if app.board.Cell == beforeCell {
-		t.Fatal("golden meme strip blocked wheel zoom pass-through")
+		t.Fatal("golden meme strip blocked pinch zoom pass-through")
 	}
 
 	// Advance into the final 200ms exit slide (duel settled ~100ms before tt.Advance(1100ms) ended).
