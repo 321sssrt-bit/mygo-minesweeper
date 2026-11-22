@@ -230,6 +230,12 @@ type confettiPiece struct {
 	Delay    time.Duration
 }
 
+type pendingCellAction struct {
+	result ActionResult
+	row    int
+	col    int
+}
+
 type minesweeperApp struct {
 	diffIdx             int
 	modeIdx             int // 0 = Band Live Mode, 1 = Classic Mode
@@ -275,6 +281,7 @@ type minesweeperApp struct {
 	pendingResult        ActionResult
 	pendingRow           int
 	pendingCol           int
+	pendingActions       []pendingCellAction
 	duelNoticeAt         time.Time
 	duelEnded            bool
 	classicSize          float32
@@ -974,6 +981,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.pendingResult = ActionResult{}
 	a.pendingRow = -1
 	a.pendingCol = -1
+	a.pendingActions = nil
 	a.duelEnded = false
 	a.duelNoticeAt = time.Time{}
 	a.classicSize = 0
@@ -2861,6 +2869,41 @@ func canArmGridCell(g *Game, row, col int) bool {
 	return g.InspectNumberHover(row, col, false).Kind == HintChordable
 }
 
+func (a *minesweeperApp) enqueuePendingAction(res ActionResult, row, col int) {
+	if res.Kind == "" || res.Kind == ActionNoop {
+		return
+	}
+	a.pendingActions = append(a.pendingActions, pendingCellAction{
+		result: res,
+		row:    row,
+		col:    col,
+	})
+}
+
+func (a *minesweeperApp) flushPendingActions(c *ui.Context, now time.Time) {
+	if a.pendingResult.Kind != "" && a.pendingResult.Kind != ActionNoop {
+		res, row, col := a.pendingResult, a.pendingRow, a.pendingCol
+		a.pendingResult = ActionResult{}
+		a.pendingRow, a.pendingCol = -1, -1
+		a.pendingActions = append([]pendingCellAction{{result: res, row: row, col: col}}, a.pendingActions...)
+	}
+	if len(a.pendingActions) == 0 {
+		return
+	}
+	actions := a.pendingActions
+	a.pendingActions = nil
+	for _, act := range actions {
+		a.pendingRow = act.row
+		a.pendingCol = act.col
+		// Pointer-handled cell moves queue a result; their foley already played.
+		posted := a.chatPosted
+		a.handleAction(c, act.result, now)
+		if _, voiced := cellActionSound(act.result.Kind); voiced {
+			a.chatVoicedSince(posted)
+		}
+	}
+}
+
 func (p *gridPointerPress) handleEvent(g *Game, flagMode bool, idx, row, col int, bounds ui.Rect, ev ui.InputEvent) (handled bool, commitRow, commitCol, commitButton int, commit bool) {
 	switch ev.Kind {
 	case ui.InputPointerDown:
@@ -2869,6 +2912,7 @@ func (p *gridPointerPress) handleEvent(g *Game, flagMode bool, idx, row, col int
 			return true, row, col, 1, true
 		}
 		if ev.Button != 0 {
+			p.cancel()
 			return false, -1, -1, 0, false
 		}
 		p.downActive = true
@@ -2928,11 +2972,7 @@ func (a *minesweeperApp) handleGridTileInput(idx, row, col int, size float32, ev
 	)
 	if commit {
 		res := a.applyCellAction(commitRow, commitCol, commitButton, ev.Time)
-		if res.Kind != ActionNoop {
-			a.pendingResult = res
-			a.pendingRow = commitRow
-			a.pendingCol = commitCol
-		}
+		a.enqueuePendingAction(res, commitRow, commitCol)
 	}
 	return handled
 }
@@ -2947,16 +2987,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	a.flushCues(now)
 	a.systemReduceMotion = c.Preferences().ReduceMotion
 	a.syncMotionState(a.reducedMotion(c))
-	if a.pendingResult.Kind != ActionNoop {
-		res := a.pendingResult
-		a.pendingResult = ActionResult{}
-		// Pointer-handled cell moves queue a result; their foley already played.
-		posted := a.chatPosted
-		a.handleAction(c, res, now)
-		if _, voiced := cellActionSound(res.Kind); voiced {
-			a.chatVoicedSince(posted)
-		}
-	}
+	a.flushPendingActions(c, now)
 	if a.isDuel() {
 		a.tickDuel(c, now)
 	} else if a.game.Status == StatusPlaying {

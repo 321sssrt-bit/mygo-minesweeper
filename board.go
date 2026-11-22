@@ -609,9 +609,7 @@ func (a *minesweeperApp) commitCanvasCellAction(row, col, button int, evTime, no
 	}
 	result := a.applyCellAction(row, col, button, actionNow)
 	if result.Kind != ActionNoop {
-		a.pendingResult = result
-		a.pendingRow = row
-		a.pendingCol = col
+		a.enqueuePendingAction(result, row, col)
 		if a.game.duel != nil {
 			a.board.LastEffect = now
 			a.board.EffectCell = row*a.game.Cols + col

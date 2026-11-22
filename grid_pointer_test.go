@@ -464,4 +464,87 @@ func TestGridPointerFlagOnPressNoDoubleToggle(t *testing.T) {
 				app.game.Cell(1, 2).Flagged, app.game.Cell(1, 1).Revealed, app.game.Moves)
 		}
 	})
+
+	t.Run("middle press cancels armed left press without leaking reveal or blocking keyboard", func(t *testing.T) {
+		app, tt := setupDeterministicGridBoard(t)
+		r11 := mustFindCell(t, tt, "cell-1-1")
+		r12 := mustFindCell(t, tt, "cell-1-2")
+
+		// Middle press on the same cell cancels the held left press.
+		tt.Press(r11.X+r11.W/2, r11.Y+r11.H/2)
+		tt.PressButton(2, r11.X+r11.W/2, r11.Y+r11.H/2)
+		tt.Release(r11.X+r11.W/2, r11.Y+r11.H/2)
+		tt.ReleaseButton(2, r11.X+r11.W/2, r11.Y+r11.H/2)
+		tt.Frame()
+		if app.game.Cell(1, 1).Revealed || app.game.Moves != 0 {
+			t.Fatalf("left release after same-cell middle press revealed cell: revealed=%v moves=%d",
+				app.game.Cell(1, 1).Revealed, app.game.Moves)
+		}
+
+		// Middle press on a neighbor cell also cancels the held left press.
+		tt.Press(r11.X+r11.W/2, r11.Y+r11.H/2)
+		tt.PressButton(2, r12.X+r12.W/2, r12.Y+r12.H/2)
+		tt.Release(r11.X+r11.W/2, r11.Y+r11.H/2)
+		tt.ReleaseButton(2, r12.X+r12.W/2, r12.Y+r12.H/2)
+		tt.Frame()
+		if app.game.Cell(1, 1).Revealed || app.game.Moves != 0 {
+			t.Fatalf("left release after neighbor middle press revealed cell: revealed=%v moves=%d",
+				app.game.Cell(1, 1).Revealed, app.game.Moves)
+		}
+
+		// Focused cell still activates via keyboard Enter afterward.
+		tt.Key(0, ui.KeyEnter)
+		if !app.game.Cell(1, 1).Revealed || app.game.Moves != 1 {
+			t.Fatalf("Enter after middle-canceled press did not activate cell: revealed=%v moves=%d",
+				app.game.Cell(1, 1).Revealed, app.game.Moves)
+		}
+	})
+
+	t.Run("same-frame left shield and right press flag preserve both feedbacks in order", func(t *testing.T) {
+		app := newMinesweeperApp(42)
+		app.memberID = MemberSoyorin
+		app.game = NewGame(Difficulty{
+			ID:           "grid-ptr-shield",
+			Song:         "迷星叫",
+			Gameplay:     GameplayClassic,
+			Rows:         5,
+			Cols:         5,
+			Mines:        2,
+			SkillCharges: 1,
+		}, true, MemberSoyorin, 42)
+		app.game.FirstClick = true
+		app.game.Status = StatusPlaying
+		app.game.Cell(0, 0).IsMine = true
+		app.game.Cell(4, 4).IsMine = true
+		app.game.RecomputeAdjacency()
+
+		tt := ui.NewTester(app.view, 1280, 900)
+		r00 := mustFindCell(t, tt, "cell-0-0")
+		r11 := mustFindCell(t, tt, "cell-1-1")
+		now := tt.Now()
+
+		// Left press+release on mine (0,0) triggers Soyorin shield; right press on (1,1) arrives before the next frame.
+		app.handleGridTileInput(0, 0, 0, r00.W, ui.InputEvent{
+			Kind: ui.InputPointerDown, Button: 0, X: r00.W / 2, Y: r00.H / 2, Time: now,
+		})
+		app.handleGridTileInput(0, 0, 0, r00.W, ui.InputEvent{
+			Kind: ui.InputPointerUp, Button: 0, X: r00.W / 2, Y: r00.H / 2, Time: now,
+		})
+		app.handleGridTileInput(1*app.game.Cols+1, 1, 1, r11.W, ui.InputEvent{
+			Kind: ui.InputPointerDown, Button: 1, X: r11.W / 2, Y: r11.H / 2, Time: now,
+		})
+		tt.Frame()
+
+		if !app.game.Cell(0, 0).ShieldSaved || !app.game.Cell(1, 1).Flagged {
+			t.Fatalf("expected both shield and flag applied: shield=%v flag=%v",
+				app.game.Cell(0, 0).ShieldSaved, app.game.Cell(1, 1).Flagged)
+		}
+		if app.shakeAmplitude != 4.5 || !app.quoteStrip.Active || app.quoteStrip.MemberID != MemberSoyorin {
+			t.Fatalf("shield feedback was overwritten by same-frame right press: shake=%v stripActive=%v member=%v",
+				app.shakeAmplitude, app.quoteStrip.Active, app.quoteStrip.MemberID)
+		}
+		if !tt.HasText("长崎爽世发动了「温柔的微笑」：这次就当没点过吧！") {
+			t.Fatal("shield toast was lost when same-frame right press followed left release")
+		}
+	})
 }

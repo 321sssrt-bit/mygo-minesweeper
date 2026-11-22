@@ -772,6 +772,39 @@ func TestCanvasPointerFlagOnPressAndMinimapRightClick(t *testing.T) {
 						g.Cell(underRow, underCol).Flagged, g.FlagsPlaced)
 				}
 			})
+
+			if !isDuel {
+				t.Run("same-frame left shield and right press flag preserve both feedbacks in order", func(t *testing.T) {
+					app, tt, board := setupDeterministicCanvasBoard(t, false)
+					app.memberID = MemberSoyorin
+					app.game.MemberID = MemberSoyorin
+					app.game.SkillUsesLeft = 1
+					tt.Frame()
+
+					mineR := canvasCellRect(board, app.board, 18, 18)
+					safeR := canvasCellRect(board, app.board, 19, 19)
+					mlx, mly := mineR.X-board.X+mineR.W/2, mineR.Y-board.Y+mineR.H/2
+					slx, sly := safeR.X-board.X+safeR.W/2, safeR.Y-board.Y+safeR.H/2
+					now := tt.Now()
+
+					app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerDown, Button: 0, X: mlx, Y: mly, Time: now}, now)
+					app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerUp, Button: 0, X: mlx, Y: mly, Time: now}, now)
+					app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerDown, Button: 1, X: slx, Y: sly, Time: now}, now)
+					tt.Frame()
+
+					if !app.game.Cell(18, 18).ShieldSaved || !app.game.Cell(19, 19).Flagged {
+						t.Fatalf("expected both shield and flag applied: shield=%v flag=%v",
+							app.game.Cell(18, 18).ShieldSaved, app.game.Cell(19, 19).Flagged)
+					}
+					if app.shakeAmplitude != 4.5 || !app.quoteStrip.Active || app.quoteStrip.MemberID != MemberSoyorin {
+						t.Fatalf("shield feedback was overwritten on canvas: shake=%v stripActive=%v member=%v",
+							app.shakeAmplitude, app.quoteStrip.Active, app.quoteStrip.MemberID)
+					}
+					if !tt.HasText("长崎爽世发动了「温柔的微笑」：这次就当没点过吧！") {
+						t.Fatal("shield toast was lost on canvas when same-frame right press followed left release")
+					}
+				})
+			}
 		})
 	}
 }
