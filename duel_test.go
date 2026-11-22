@@ -638,7 +638,7 @@ func TestDuelHoverSyncsAfterZoomAndDrag(t *testing.T) {
 		t.Fatalf("hover hint stale after zoom: got=%+v want=%+v", app.board.LastHoverHint, wantZoomHint)
 	}
 
-	// Drag viewport so pointer ends up over (31,31) upon release without an extra Move.
+	// Middle-drag viewport so pointer ends up over (31,31) upon release without an extra Move.
 	app.board.center(app.game, 25, 25)
 	tt.Frame()
 	x21 := r.X + (21.5)*app.board.Cell - app.board.X
@@ -648,9 +648,9 @@ func TestDuelHoverSyncsAfterZoomAndDrag(t *testing.T) {
 	// Panning maps canvas(31,31) -> (x21,y21) when dragging from x31->x21... wait:
 	// Dragging right/down moves v.X/v.Y opposite to delta: to bring (31,31) under release point (x21,y21),
 	// start at (x31, y31) and drag to (x21, y21) so delta = (x21-x31, y21-y31), v.X += x31-x21 -> (31,31) lands at (x21,y21)!
-	tt.Press(x31, y31)
+	tt.PressButton(2, x31, y31)
 	tt.Move(x21, y21)
-	tt.Release(x21, y21)
+	tt.ReleaseButton(2, x21, y21)
 	dragRow, dragCol, ok := app.board.cellAt(app.game, x21-r.X, y21-r.Y)
 	if !ok || dragRow != 31 || dragCol != 31 {
 		t.Fatalf("expected (31,31) under drag release point, got (%d,%d) ok=%v", dragRow, dragCol, ok)

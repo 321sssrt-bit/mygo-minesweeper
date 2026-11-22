@@ -20,6 +20,15 @@ type cameraGlide struct {
 	last               time.Time
 }
 
+type canvasPressKind uint8
+
+const (
+	canvasPressNone canvasPressKind = iota
+	canvasPressPan
+	canvasPressReveal
+	canvasPressFlag
+)
+
 type boardView struct {
 	X, Y           float32
 	Cell           float32
@@ -31,11 +40,15 @@ type boardView struct {
 	HoverX, HoverY float32
 	HasHover       bool
 	WasHovered     bool
-	PressX, PressY float32
 	DragX, DragY   float32
 	Dragging       bool
 	Pressed        bool
 	PressButton    int
+	pressKind      canvasPressKind
+	pressArmed     bool
+	pressRow       int
+	pressCol       int
+	pressRevealed  bool
 	LastEffect     time.Time
 	EffectCell     int
 	LastHoverHint  HoverHint
@@ -69,7 +82,44 @@ func classicMinimapPlot(mini ui.Rect) ui.Rect {
 }
 
 func newBoardView() *boardView {
-	return &boardView{Cell: 26, X: 487 * 26, Y: 487 * 26, needsCenter: true, HoverRow: -1, HoverCol: -1, EffectCell: -1}
+	return &boardView{
+		Cell:        26,
+		X:           487 * 26,
+		Y:           487 * 26,
+		needsCenter: true,
+		HoverRow:    -1,
+		HoverCol:    -1,
+		pressRow:    -1,
+		pressCol:    -1,
+		EffectCell:  -1,
+	}
+}
+
+func (v *boardView) cancelPress() {
+	v.pressArmed = false
+	v.pressRow = -1
+	v.pressCol = -1
+	v.pressRevealed = false
+	if v.pressKind != canvasPressPan {
+		v.pressKind = canvasPressNone
+	}
+}
+
+func canArmCanvasCell(g *Game, row, col int) bool {
+	if g.Status == StatusWon || g.Status == StatusLost {
+		return false
+	}
+	if g.duel != nil && g.duel.playerStunned() {
+		return false
+	}
+	cell := g.Cell(row, col)
+	if cell == nil {
+		return false
+	}
+	if !cell.Revealed {
+		return !cell.Flagged
+	}
+	return g.InspectNumberHover(row, col, false).Kind != HintNone
 }
 
 func isFinite32(v float32) bool {
@@ -79,14 +129,14 @@ func isFinite32(v float32) bool {
 func (v *boardView) updateHover(g *Game) {
 	if !v.HasHover || v.minimapFor(g, v.HoverX, v.HoverY) || v.HoverX < 0 || v.HoverY < 0 || v.HoverX >= v.Width || v.HoverY >= v.Height {
 		v.HoverRow, v.HoverCol = -1, -1
-		return
-	}
-	row, col, ok := v.cellAt(g, v.HoverX, v.HoverY)
-	if !ok {
+	} else if row, col, ok := v.cellAt(g, v.HoverX, v.HoverY); !ok {
 		v.HoverRow, v.HoverCol = -1, -1
-		return
+	} else {
+		v.HoverRow, v.HoverCol = row, col
 	}
-	v.HoverRow, v.HoverCol = row, col
+	if v.pressArmed && (v.HoverRow != v.pressRow || v.HoverCol != v.pressCol) {
+		v.cancelPress()
+	}
 }
 
 func (v *boardView) panLimit(g *Game) (float32, float32) {
@@ -579,12 +629,15 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 			return false
 		}
 		// Middle-button and Option/Alt+left-button start panning immediately
-		// without waiting for the drag threshold or triggering minimap jumps.
+		// without triggering minimap jumps or cell presses.
 		panDrag := ev.Button == 2 || (ev.Button == 0 && ev.Mods&ui.Alt != 0)
 		if ev.Button == 0 && !panDrag && v.minimapFor(a.game, ev.X, ev.Y) {
 			// End any in-flight glide first so minimap clicks take over
 			// from the exact coordinates and zoom painted on screen.
 			v.stopGlide()
+			v.Pressed = false
+			v.Dragging = false
+			v.cancelPress()
 			row, col := v.minimapCellAt(a.game, ev.X, ev.Y)
 			v.glideCenter(a.game, row, col, ev.Time, a.motionReducedActive)
 			return true
@@ -592,37 +645,76 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 		// Stop any active glide without stepping forward so clicks and
 		// drags act on the exact viewport coordinates painted on screen.
 		v.stopGlide()
+		v.updateHover(a.game)
 		v.Pressed = true
 		v.PressButton = ev.Button
-		v.PressX, v.PressY = ev.X, ev.Y
 		v.DragX, v.DragY = ev.X, ev.Y
 		v.Dragging = panDrag
+		v.cancelPress()
+		switch {
+		case panDrag:
+			v.pressKind = canvasPressPan
+		case ev.Button == 1 || (ev.Button == 0 && a.flagMode):
+			v.pressKind = canvasPressFlag
+			if !v.minimapFor(a.game, ev.X, ev.Y) {
+				if row, col, ok := v.cellAt(a.game, ev.X, ev.Y); ok {
+					v.pressArmed = true
+					v.pressRow = row
+					v.pressCol = col
+				}
+			}
+		case ev.Button == 0:
+			v.pressKind = canvasPressReveal
+			if row, col, ok := v.cellAt(a.game, ev.X, ev.Y); ok && canArmCanvasCell(a.game, row, col) {
+				v.pressArmed = true
+				v.pressRow = row
+				v.pressCol = col
+				v.pressRevealed = a.game.Cell(row, col).Revealed
+			}
+		}
 		return true
 	case ui.InputPointerMove:
-		if !v.Pressed || ev.Button < 0 {
+		if !v.Pressed {
 			return false
 		}
-		if abs32(ev.X-v.PressX)+abs32(ev.Y-v.PressY) > 5 {
-			v.Dragging = true
-		}
 		if v.Dragging {
+			if ev.Button < 0 {
+				return false
+			}
 			v.pan(a.game, v.DragX-ev.X, v.DragY-ev.Y)
 			v.DragX, v.DragY = ev.X, ev.Y
+			return true
 		}
-		return true
+		return ev.Button >= 0
 	case ui.InputPointerUp:
 		if !v.Pressed {
 			return false
 		}
+		if !ev.Canceled && ev.Button >= 0 && ev.Button != v.PressButton {
+			return false
+		}
+		button := v.PressButton
+		kind := v.pressKind
+		armed := v.pressArmed
+		pressRow, pressCol := v.pressRow, v.pressCol
+		pressRevealed := v.pressRevealed
+		v.Pressed = false
+		v.Dragging = false
+		v.cancelPress()
 		v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
-		button, dragged := v.PressButton, v.Dragging
-		v.Pressed, v.Dragging = false, false
 		v.updateHover(a.game)
-		if ev.Canceled || dragged || v.minimapFor(a.game, ev.X, ev.Y) || v.minimapFor(a.game, v.PressX, v.PressY) {
+		if ev.Canceled || !armed || kind == canvasPressPan || kind == canvasPressNone || v.minimapFor(a.game, ev.X, ev.Y) {
 			return true
 		}
 		row, col, ok := v.cellAt(a.game, ev.X, ev.Y)
-		if !ok {
+		if !ok || row != pressRow || col != pressCol {
+			return true
+		}
+		if kind == canvasPressReveal {
+			if a.flagMode || a.game.Cell(row, col).Revealed != pressRevealed {
+				return true
+			}
+		} else if kind == canvasPressFlag && button == 0 && !a.flagMode {
 			return true
 		}
 		actionNow := ev.Time
@@ -648,6 +740,18 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 	v := a.board
 	a.syncMotionState(a.reducedMotion(c))
 	v.clamp(a.game)
+	if v.Pressed {
+		switch v.pressKind {
+		case canvasPressReveal:
+			if a.flagMode || a.hasOpenPopover() {
+				v.cancelPress()
+			}
+		case canvasPressFlag:
+			if (v.PressButton == 0 && !a.flagMode) || a.hasOpenPopover() {
+				v.cancelPress()
+			}
+		}
+	}
 	ui.Column(c.Key(stageKey)).Grow(1).FillWidth().Clip().Children(func() {
 		boardBox := ui.Box(c.Key(boardKey)).Grow(1).FillWidth().Label(label).
 			Cursor(ui.CursorPointer).Focusable()

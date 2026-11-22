@@ -737,9 +737,9 @@ func TestSetlistLargeTracksPlayOnCanvas(t *testing.T) {
 					break
 				}
 				sx, sy := boardRect.X+mini.X-20, boardRect.Y+mini.Y-20
-				tt.Press(sx, sy)
+				tt.PressButton(2, sx, sy)
 				tt.Move(boardRect.X+20, boardRect.Y+20)
-				tt.Release(boardRect.X+20, boardRect.Y+20)
+				tt.ReleaseButton(2, boardRect.X+20, boardRect.Y+20)
 			}
 			cornerRow, cornerCol := want.Rows-1, want.Cols-1
 			fx, fy := cellPoint(cornerRow, cornerCol)
