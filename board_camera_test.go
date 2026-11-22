@@ -1257,6 +1257,33 @@ func TestCanvasCameraSkillTargetGlide(t *testing.T) {
 		if tr != 98 || tc != 99 || !mv.shows(mg, tr, tc) {
 			t.Fatalf("minimap-occluded target = (%d,%d) shows=%v, want (98,99) visible", tr, tc, mv.shows(mg, tr, tc))
 		}
+
+		// Narrow viewport (640x600) where the canvas centre itself falls inside the minimap:
+		// landing must still clear the minimap so shows(row, col) holds on arrival.
+		nApp := newMinesweeperApp(42)
+		nApp.diffIdx = findDifficultyIdx(TrackMayoiuta.ID)
+		nApp.resetGame(true)
+		nTT := ui.NewTester(nApp.view, 640, 600)
+		nTT.Frame()
+		nv, ng := nApp.board, nApp.game
+		if !nv.minimapFor(ng, nv.Width/2, nv.Height/2) {
+			t.Fatalf("precondition failed: expected narrow canvas centre (%.1f,%.1f) inside minimap", nv.Width/2, nv.Height/2)
+		}
+		ng.Reveal(50, 50)
+		nv.center(ng, 90, 90)
+		nTT.Frame()
+		nTT.Key(0, ui.KeyE)
+		if !nv.gliding() || len(nApp.skillPulses) != 0 {
+			t.Fatalf("narrow viewport skill did not glide with deferred pulse: gliding=%v pulses=%d", nv.gliding(), len(nApp.skillPulses))
+		}
+		nTT.Advance(260 * time.Millisecond)
+		if nv.gliding() || len(nApp.skillPulses) != 1 {
+			t.Fatalf("narrow viewport skill glide did not settle with pulse: gliding=%v pulses=%d", nv.gliding(), len(nApp.skillPulses))
+		}
+		nr, nc := nApp.skillPulses[0].Index/ng.Cols, nApp.skillPulses[0].Index%ng.Cols
+		if !nv.shows(ng, nr, nc) {
+			t.Fatalf("narrow viewport skill target (%d,%d) landed behind minimap (X=%v Y=%v W=%v H=%v)", nr, nc, nv.X, nv.Y, nv.Width, nv.Height)
+		}
 	})
 
 	t.Run("in_viewport_keeps_camera_still_and_starts_pulses_immediately", func(t *testing.T) {

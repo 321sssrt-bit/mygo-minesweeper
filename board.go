@@ -353,7 +353,36 @@ func (v *boardView) stepGlide(g *Game, now time.Time) bool {
 	return true
 }
 
-func (v *boardView) glideCenter(g *Game, row, col int, now time.Time, reduced bool) {
+func (v *boardView) visibleTarget(g *Game, row, col int, cell float32) (float32, float32) {
+	tx, ty := v.centerTarget(g, row, col, cell)
+	if v.showsAt(g, row, col, tx, ty, cell) {
+		return tx, ty
+	}
+	mini := v.minimapBoundsFor(g)
+	maxX, maxY := v.panLimitFor(g, cell)
+	cx := (float32(col) + 0.5) * cell
+	cy := (float32(row) + 0.5) * cell
+	leftX := max(0, min(maxX, cx-mini.X/2))
+	aboveY := max(0, min(maxY, cy-mini.Y/2))
+	if mini.X >= mini.Y {
+		if v.showsAt(g, row, col, leftX, ty, cell) {
+			return leftX, ty
+		}
+		if v.showsAt(g, row, col, tx, aboveY, cell) {
+			return tx, aboveY
+		}
+	} else {
+		if v.showsAt(g, row, col, tx, aboveY, cell) {
+			return tx, aboveY
+		}
+		if v.showsAt(g, row, col, leftX, ty, cell) {
+			return leftX, ty
+		}
+	}
+	return tx, ty
+}
+
+func (v *boardView) targetCellForGlide(g *Game, now time.Time) float32 {
 	v.clamp(g)
 	tgtCell := v.Cell
 	if v.glide.active {
@@ -364,6 +393,11 @@ func (v *boardView) glideCenter(g *Game, row, col int, now time.Time, reduced bo
 			tgtCell = float32(v.glide.targetCell)
 		}
 	}
+	return tgtCell
+}
+
+func (v *boardView) glideCenter(g *Game, row, col int, now time.Time, reduced bool) {
+	tgtCell := v.targetCellForGlide(g, now)
 	tgtX, tgtY := v.centerTarget(g, row, col, tgtCell)
 	v.startGlide(g, tgtX, tgtY, tgtCell, now, reduced)
 }
@@ -373,7 +407,9 @@ func (v *boardView) ensureVisible(g *Game, row, col int, now time.Time, reduced 
 		onReady(now)
 		return
 	}
-	v.glideCenter(g, row, col, now, reduced)
+	tgtCell := v.targetCellForGlide(g, now)
+	tgtX, tgtY := v.visibleTarget(g, row, col, tgtCell)
+	v.startGlide(g, tgtX, tgtY, tgtCell, now, reduced)
 	if !v.glide.active {
 		onReady(now)
 		return
@@ -494,12 +530,16 @@ func (v *boardView) minimapFor(g *Game, x, y float32) bool {
 	return x >= mini.X && y >= mini.Y && x <= mini.X+mini.W && y <= mini.Y+mini.H
 }
 
+func (v *boardView) showsAt(g *Game, row, col int, xOff, yOff, cell float32) bool {
+	x := (float32(col)+0.5)*cell - xOff
+	y := (float32(row)+0.5)*cell - yOff
+	return x >= 0 && y >= 0 && x < v.Width && y < v.Height && !v.minimapFor(g, x, y)
+}
+
 // shows reports whether a cell's centre is on screen in the last drawn view
 // and not under the minimap.
 func (v *boardView) shows(g *Game, row, col int) bool {
-	x := (float32(col)+0.5)*v.Cell - v.X
-	y := (float32(row)+0.5)*v.Cell - v.Y
-	return x >= 0 && y >= 0 && x < v.Width && y < v.Height && !v.minimapFor(g, x, y)
+	return v.showsAt(g, row, col, v.X, v.Y, v.Cell)
 }
 
 func (v *boardView) minimapCellAt(g *Game, x, y float32) (int, int) {
