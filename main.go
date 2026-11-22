@@ -2904,47 +2904,56 @@ func (a *minesweeperApp) flushPendingActions(c *ui.Context, now time.Time) {
 	}
 }
 
-func (p *gridPointerPress) handleEvent(g *Game, flagMode bool, idx, row, col int, bounds ui.Rect, ev ui.InputEvent) (handled bool, commitRow, commitCol, commitButton int, commit bool) {
+type gridPressResult struct {
+	handled      bool
+	armed        bool
+	commit       bool
+	commitRow    int
+	commitCol    int
+	commitButton int
+}
+
+func (p *gridPointerPress) handleEvent(g *Game, flagMode bool, idx, row, col int, bounds ui.Rect, ev ui.InputEvent) gridPressResult {
 	switch ev.Kind {
 	case ui.InputPointerDown:
 		if ev.Button == 1 {
 			p.cancel()
-			return true, row, col, 1, true
+			return gridPressResult{handled: true, commit: true, commitRow: row, commitCol: col, commitButton: 1}
 		}
 		if ev.Button != 0 {
 			p.cancel()
-			return false, -1, -1, 0, false
+			return gridPressResult{}
 		}
 		p.downActive = true
 		p.downIdx = idx
 		if flagMode {
 			p.cancel()
-			return true, row, col, 0, true
+			return gridPressResult{handled: true, commit: true, commitRow: row, commitCol: col, commitButton: 0}
 		}
 		if canArmGridCell(g, row, col) {
 			p.armed = true
 			p.row = row
 			p.col = col
-		} else {
-			p.cancel()
+			return gridPressResult{handled: true, armed: true}
 		}
-		return true, -1, -1, 0, false
+		p.cancel()
+		return gridPressResult{handled: true}
 
 	case ui.InputPointerMove:
 		if !p.downActive || p.downIdx != idx {
-			return false, -1, -1, 0, false
+			return gridPressResult{}
 		}
 		if p.armed && !bounds.Contains(ev.X, ev.Y) {
 			p.cancel()
 		}
-		return true, -1, -1, 0, false
+		return gridPressResult{handled: true}
 
 	case ui.InputPointerUp:
 		if ev.Button == 1 {
-			return true, -1, -1, 0, false
+			return gridPressResult{handled: true}
 		}
 		if !p.downActive || p.downIdx != idx || ev.Button != 0 {
-			return false, -1, -1, 0, false
+			return gridPressResult{}
 		}
 		p.downActive = false
 		inBounds := bounds.Contains(ev.X, ev.Y)
@@ -2954,27 +2963,30 @@ func (p *gridPointerPress) handleEvent(g *Game, flagMode bool, idx, row, col int
 		if p.armed && !ev.Canceled && inBounds {
 			r, c := p.row, p.col
 			p.cancel()
-			return true, r, c, 0, true
+			return gridPressResult{handled: true, commit: true, commitRow: r, commitCol: c, commitButton: 0}
 		}
 		p.cancel()
-		return true, -1, -1, 0, false
+		return gridPressResult{handled: true}
 	}
-	return false, -1, -1, 0, false
+	return gridPressResult{}
 }
 
 func (a *minesweeperApp) handleGridTileInput(idx, row, col int, size float32, ev ui.InputEvent) bool {
-	handled, commitRow, commitCol, commitButton, commit := a.gridPress.handleEvent(
+	res := a.gridPress.handleEvent(
 		a.game,
 		a.flagMode,
 		idx, row, col,
 		ui.Rect{W: size, H: size},
 		ev,
 	)
-	if commit {
-		res := a.applyCellAction(commitRow, commitCol, commitButton, ev.Time)
-		a.enqueuePendingAction(res, commitRow, commitCol)
+	if res.armed {
+		a.playPaperTouch(col)
 	}
-	return handled
+	if res.commit {
+		act := a.applyCellAction(res.commitRow, res.commitCol, res.commitButton, ev.Time)
+		a.enqueuePendingAction(act, res.commitRow, res.commitCol)
+	}
+	return res.handled
 }
 
 func (a *minesweeperApp) view(c *ui.Context) {

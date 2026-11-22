@@ -512,13 +512,18 @@ type cellFlagSnapshot struct {
 
 // applyCellAction applies a player's click on a cell, button 0 left and 1
 // right, on either board surface, and plays its stationery foley: a 旗's
-// bandage at once, a reveal's slips along its wave.
+// bandage at once, a reveal's slips along its wave (with a heavy primary lift
+// for an effective chord).
 func (a *minesweeperApp) applyCellAction(row, col, button int, now time.Time) ActionResult {
 	var before [9]cellFlagSnapshot
 	beforeCount := 0
+	wasRevealed := false
 	for dr := -1; dr <= 1; dr++ {
 		for dc := -1; dc <= 1; dc++ {
 			if c := a.game.Cell(row+dr, col+dc); c != nil {
+				if dr == 0 && dc == 0 {
+					wasRevealed = c.Revealed
+				}
 				before[beforeCount] = cellFlagSnapshot{
 					idx:     c.Row*a.game.Cols + c.Col,
 					flagged: c.Flagged,
@@ -544,7 +549,10 @@ func (a *minesweeperApp) applyCellAction(row, col, button int, now time.Time) Ac
 	if id, ok := cellActionSound(res.Kind); ok {
 		pan := columnPan(col, a.game.Cols)
 		if id == SoundPaperLift {
-			a.playFlood(now, pan, res.RevealWave)
+			if wasRevealed {
+				id = SoundPaperLiftHeavy
+			}
+			a.playFlood(now, pan, id, res.RevealWave)
 		} else {
 			a.playSound(id, 1, pan)
 		}
@@ -682,6 +690,7 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 				v.pressRow = row
 				v.pressCol = col
 				v.pressRevealed = a.game.Cell(row, col).Revealed
+				a.playPaperTouch(col)
 			}
 		}
 		return true

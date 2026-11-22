@@ -99,6 +99,11 @@ func (a *minesweeperApp) playSound(id SoundID, gain, pan float64) {
 	a.playCue(soundCue{ID: id, Gain: gain, Pan: pan, Speed: 1})
 }
 
+// playPaperTouch voices a cell entering the armed press state, panned by column.
+func (a *minesweeperApp) playPaperTouch(col int) {
+	a.playSound(SoundPaperTouch, 1, columnPan(col, a.game.Cols))
+}
+
 // playCue plays cue with its Gain still relative to the player's volume.
 func (a *minesweeperApp) playCue(cue soundCue) {
 	if !a.soundEnabled || a.volume == 0 {
@@ -258,14 +263,15 @@ func waveSpan(wave []RevealWaveEntry) time.Duration {
 	return time.Duration(step) * rippleStepDelay
 }
 
-// playFlood sounds the move's primary paper lift immediately, rising in pitch
+// playFlood sounds the move's primary lift immediately (SoundPaperLift for a
+// cell reveal, SoundPaperLiftHeavy for an effective chord), rising in pitch
 // across rapid reveals within revealStreakWindow, then queues follow-up grains
 // along its reveal wave: each wave step that keeps paperGrainGap from other
 // grains, up to paperGrainsPerWave total (including the primary hit), rising
 // in pitch with depth.
-func (a *minesweeperApp) playFlood(now time.Time, pan float64, wave []RevealWaveEntry) {
+func (a *minesweeperApp) playFlood(now time.Time, pan float64, primary SoundID, wave []RevealWaveEntry) {
 	baseSpeed := a.cues.revealSpeed(now)
-	a.playCue(soundCue{ID: SoundPaperLift, Gain: 1, Pan: pan, Speed: baseSpeed})
+	a.playCue(soundCue{ID: primary, Gain: 1, Pan: pan, Speed: baseSpeed})
 	a.cues.lastGrain = now
 	var steps [waveSteps + 1]bool
 	for _, e := range wave {
