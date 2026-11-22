@@ -89,6 +89,45 @@ func TestGridPointerPressReleaseAndCancel(t *testing.T) {
 			t.Fatalf("returning after leave unexpectedly revealed cell: revealed=%v moves=%d safe=%d",
 				app.game.Cell(1, 1).Revealed, app.game.Moves, app.game.RevealedSafe)
 		}
+
+		// Releasing directly back on the origin cell without an intermediate Move
+		// causes mygo/ui to defer the synthetic click via releaseLater; it must
+		// still stay canceled across subsequent passes.
+		tt.Press(r.X+r.W/2, r.Y+r.H/2)
+		tt.Move(neighbor.X+neighbor.W/2, neighbor.Y+neighbor.H/2)
+		tt.Release(r.X+r.W/2, r.Y+r.H/2)
+		tt.Frame()
+
+		if app.game.Cell(1, 1).Revealed || app.game.Moves != 0 || app.game.RevealedSafe != 0 {
+			t.Fatalf("direct release back on origin after leave bypassed cancel: revealed=%v moves=%d safe=%d",
+				app.game.Cell(1, 1).Revealed, app.game.Moves, app.game.RevealedSafe)
+		}
+
+		// Subsequent keyboard activation on the still-focused cell must not be
+		// swallowed by a leftover suppression entry.
+		tt.Key(0, ui.KeyEnter)
+		if !app.game.Cell(1, 1).Revealed || app.game.Moves != 1 {
+			t.Fatalf("Enter after suppressed deferred click did not activate cell: revealed=%v moves=%d",
+				app.game.Cell(1, 1).Revealed, app.game.Moves)
+		}
+	})
+
+	t.Run("in-cell press-to-release displacement does not double-trigger chord", func(t *testing.T) {
+		app, tt := setupDeterministicGridBoard(t)
+		// Flag the only mine adjacent to (1,1) before revealing (1,1), so a
+		// stray deferred click on the newly revealed number would chord the board.
+		app.game.ToggleFlag(0, 0, false)
+		tt.Frame()
+
+		r := mustFindCell(t, tt, "cell-1-1")
+		tt.Press(r.X+4, r.Y+4)
+		tt.Release(r.X+r.W-4, r.Y+r.H-4)
+		tt.Frame()
+
+		if !app.game.Cell(1, 1).Revealed || app.game.RevealedSafe != 1 || app.game.Moves != 1 || app.game.Status != StatusPlaying {
+			t.Fatalf("displaced same-cell release double-acted: revealed=%v safe=%d moves=%d status=%v",
+				app.game.Cell(1, 1).Revealed, app.game.RevealedSafe, app.game.Moves, app.game.Status)
+		}
 	})
 
 	t.Run("system press cancel and mid-press reset or flag toggle do not commit", func(t *testing.T) {

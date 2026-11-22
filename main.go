@@ -2824,18 +2824,26 @@ func (p *gridPointerPress) clearSuppressed() {
 	p.suppressed = p.suppressed[:0]
 }
 
-func (p *gridPointerPress) takeSuppressed(idx int) int {
-	count := 0
+func (p *gridPointerPress) consumeClicks(idx, clicks int, pressed bool) int {
+	matched := 0
 	kept := p.suppressed[:0]
 	for _, s := range p.suppressed {
-		if s == idx {
-			count++
-		} else {
+		if s != idx {
+			kept = append(kept, s)
+			continue
+		}
+		if matched < clicks {
+			matched++
+			continue
+		}
+		if pressed {
+			// Retain unmatched pointer-up suppressions while mygo/ui holds a
+			// deferred releaseLater click for this tile until endPass.
 			kept = append(kept, s)
 		}
 	}
 	p.suppressed = kept
-	return count
+	return clicks - matched
 }
 
 func canArmGridCell(g *Game, row, col int) bool {
@@ -3709,14 +3717,13 @@ func (a *minesweeperApp) view(c *ui.Context) {
 
 										rightClicked := tile.RightClicked()
 										clicks := tile.Clicks()
-										suppressed := a.gridPress.takeSuppressed(i)
+										effectiveClicks := a.gridPress.consumeClicks(i, clicks, tile.Pressed())
 										if rightClicked {
 											a.cellMove(c, row, col, 1, now)
-										} else if clicks > suppressed {
+										} else if effectiveClicks > 0 {
 											a.cellMove(c, row, col, 0, now)
 										}
 									}
-									a.gridPress.clearSuppressed()
 								})
 								hasGridPulses := !a.motionReducedActive && len(a.skillPulses) > 0
 								hasGridBursts := !a.motionReducedActive && len(a.knotBursts) > 0
