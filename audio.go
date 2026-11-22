@@ -90,6 +90,12 @@ func clampPan(pan float64) float64 {
 // playSound plays id at gain (1 = the player's volume) and pan, obeying the
 // mute switch and the master volume.
 func (a *minesweeperApp) playSound(id SoundID, gain, pan float64) {
+	// A classic 雷 hit cuts off any queued grains or skill motif right away;
+	// waiting for settleSound would let view's flushCues fire a cue due on the
+	// same frame before pendingResult reaches handleAction.
+	if id == SoundMineThud && !a.isDuel() {
+		a.clearCues()
+	}
 	a.playCue(soundCue{ID: id, Gain: gain, Pan: pan, Speed: 1})
 }
 
@@ -123,7 +129,8 @@ const (
 	// cueLateness is how late a queued cue may still sound. Past it, as after
 	// a stalled frame or a window coming back, the cue is dropped.
 	cueLateness = 30 * time.Millisecond
-	// bigFloodCells is the reveal size that closes on the leader's motif.
+	// bigFloodCells is the reveal size that tints a flood with the leader's
+	// 代表色 wash and delays a flooding skill's motif to its wave close.
 	bigFloodCells = 10
 
 	// duelPenGain voices 高松灯's pen at a quarter of the player's volume.
@@ -146,7 +153,7 @@ type queuedCue struct {
 }
 
 // cueQueue holds the sounds a move schedules ahead: the paper grains along a
-// flood and the motif that closes it, plus the rapid-reveal pitch streak.
+// flood and a flooding skill's closing motif, plus the rapid-reveal pitch streak.
 type cueQueue struct {
 	pending      []queuedCue
 	lastGrain    time.Time
@@ -295,26 +302,21 @@ func memberMotif(id MemberID) SoundID {
 	return SoundMotifTomori
 }
 
-// highlightSound voices the moments a motif marks: a skill that took
-// effect, Soyo's 护盾, the close of a big flood and a classic game's end.
-// A skill that floods a big area plays its one motif as the flood closes.
-// A duel ends in settleDuel instead, and a 雷 there only costs points.
+// highlightSound voices a skill that took effect, Soyo's 护盾 and a classic
+// game's settlement. A skill that floods at least bigFloodCells delays its
+// motif until the wave closes; ordinary floods only lift paper. A duel ends
+// in settleDuel instead, and a 雷 there only costs points.
 func (a *minesweeperApp) highlightSound(res ActionResult, now time.Time) {
-	motif := memberMotif(a.memberID)
-	bigFlood := res.RevealedCount >= bigFloodCells
 	switch res.Kind {
 	case ActionSkill:
-		if bigFlood {
+		motif := memberMotif(a.memberID)
+		if res.RevealedCount >= bigFloodCells {
 			a.closeFlood(now, res.RevealWave, motif)
 		} else {
 			a.playSound(motif, 1, 0)
 		}
 	case ActionShielded:
 		a.playSound(SoundMotifSoyo, 1, 0)
-	case ActionRevealed:
-		if bigFlood {
-			a.closeFlood(now, res.RevealWave, motif)
-		}
 	case ActionWon, ActionLost:
 		if !a.isDuel() {
 			a.settleSound(res.Kind == ActionWon, res.Kind == ActionLost && a.game.Difficulty.Haruhikage)
@@ -331,17 +333,23 @@ func (a *minesweeperApp) closeFlood(now time.Time, wave []RevealWaveEntry, motif
 	a.flushCues(now)
 }
 
-// settleSound marks the end of a game with the leader's motif, joined by the
-// five-member chord on a win. A 《春日影》 loss cuts in with Soyo's dissonant
-// stop instead.
+// settleSound voices game settlement: a 《春日影》 loss cuts in with Soyo's
+// dissonant stop, a win plays the leader's motif plus the five-member chord,
+// and a classic non-《春日影》 loss stays silent here because the 雷 thud
+// already voiced the move. Duel draws and ordinary losses still settle via
+// settleDuel.
 func (a *minesweeperApp) settleSound(won, haruhikage bool) {
 	if haruhikage {
 		a.playSound(SoundHaruhikageStop, 1, 0)
 		return
 	}
-	a.playSound(memberMotif(a.memberID), 1, 0)
 	if won {
+		a.playSound(memberMotif(a.memberID), 1, 0)
 		a.playSound(SoundWinChord, 1, 0)
+		return
+	}
+	if a.isDuel() {
+		a.playSound(memberMotif(a.memberID), 1, 0)
 	}
 }
 
@@ -381,13 +389,15 @@ func (a *minesweeperApp) voiceCountdown(before, after float64) {
 	}
 }
 
-// cellActionSound is the stationery foley of a player's move on a cell:
-// lifting its slip, or sticking on or peeling off a 旗's bandage. Clearing a
-// ? mark touches no bandage and stays silent.
+// cellActionSound is the immediate foley of a player's move on a cell:
+// lifting its slip, a dull thud on a 雷, or sticking on or peeling off a 旗's
+// bandage. Clearing a ? mark touches no bandage and stays silent.
 func cellActionSound(kind ActionKind) (SoundID, bool) {
 	switch kind {
-	case ActionRevealed, ActionWon, ActionLost:
+	case ActionRevealed, ActionWon:
 		return SoundPaperLift, true
+	case ActionLost:
+		return SoundMineThud, true
 	case ActionFlagged, ActionShielded:
 		return SoundBandageOn, true
 	case ActionUnflag, ActionQuestion:
