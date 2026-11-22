@@ -277,17 +277,17 @@ func TestSoundClassicGridFoley(t *testing.T) {
 	}
 	assertSoundIDs(t, "left-click on a flag", rec.take())
 
-	// One reveal lifts one slip, however far it floods.
+	// One reveal touches on press and lifts one slip on release, however far it floods.
 	if err := tt.Click("cell-4-4"); err != nil {
 		t.Fatal(err)
 	}
 	got := rec.take()
-	assertSoundIDs(t, "reveal", got, SoundPaperLift)
+	assertSoundIDs(t, "reveal", got, SoundPaperTouch, SoundPaperLift)
 	if !g.Cell(4, 4).Revealed {
 		t.Fatal("cell-4-4 should be revealed")
 	}
-	if got[0].Pan != 0 {
-		t.Fatalf("center column pan = %v", got[0].Pan)
+	if got[0].Pan != 0 || got[1].Pan != 0 {
+		t.Fatalf("center column pans = (%v, %v)", got[0].Pan, got[1].Pan)
 	}
 
 	// Right-clicking a revealed cell changes nothing.
@@ -366,7 +366,7 @@ func TestSoundClassicCanvasFoley(t *testing.T) {
 
 	x, y := canvasCellAt(t, tt, app, "经典棋盘", g.Rows/2, g.Cols/2)
 	tt.ClickAt(x, y)
-	assertSoundIDs(t, "canvas reveal", rec.take(), SoundPaperLift)
+	assertSoundIDs(t, "canvas reveal", rec.take(), SoundPaperTouch, SoundPaperLift)
 	if !g.Cell(g.Rows/2, g.Cols/2).Revealed {
 		t.Fatal("canvas reveal did not open the cell")
 	}
@@ -409,7 +409,7 @@ func TestSoundDuelCanvasFoley(t *testing.T) {
 	app.duelNoticeAt = tt.Now()
 	x, y = canvasCellAt(t, tt, app, "决斗棋盘", 20, 20)
 	tt.ClickAt(x, y)
-	assertSoundIDs(t, "duel reveal", rec.take(), SoundPaperLift)
+	assertSoundIDs(t, "duel reveal", rec.take(), SoundPaperTouch, SoundPaperLift)
 	if !g.Cell(20, 20).Revealed {
 		t.Fatal("duel reveal did not open the cell")
 	}
@@ -431,7 +431,7 @@ func TestSoundShieldSticksBandage(t *testing.T) {
 	if !g.Cell(2, 2).ShieldSaved || app.chatPosted == posted {
 		t.Fatal("expected the shield to save the cell and post Soyo's line")
 	}
-	assertSoundIDs(t, "shield", rec.take(), SoundBandageOn, SoundMotifSoyo)
+	assertSoundIDs(t, "shield", rec.take(), SoundPaperTouch, SoundBandageOn, SoundMotifSoyo)
 }
 
 func TestSoundSwitchesToggleOnce(t *testing.T) {
@@ -721,9 +721,9 @@ func TestSoundFloodGrainsThrottled(t *testing.T) {
 	if grains[0].Speed != 1 || grains[len(grains)-1].Speed > 1.2 {
 		t.Fatalf("pitch should rise gently from 1, got %v..%v", grains[0].Speed, grains[len(grains)-1].Speed)
 	}
-	// Ordinary big floods lift paper grains only; no member motif closes them.
-	if len(rec.cues) != len(grains) {
-		t.Fatalf("flood sounds = %v, want only paper-lift grains", soundIDs(rec.cues))
+	// Ordinary big floods play touch plus paper-lift grains only; no member motif closes them.
+	if len(rec.cues) != len(grains)+1 || rec.cues[0].ID != SoundPaperTouch {
+		t.Fatalf("flood sounds = %v, want paper-touch plus paper-lift grains", soundIDs(rec.cues))
 	}
 	rec.take()
 
@@ -788,8 +788,21 @@ func TestSoundFloodGrainsThrottled(t *testing.T) {
 			t.Fatalf("follow-up grain %d speed %v not above %v", i, grains[i].Speed, grains[i-1].Speed)
 		}
 	}
-	if len(rec.cues) != len(grains) {
-		t.Fatalf("mid-flood sounds = %v, want only paper-lift grains", soundIDs(rec.cues))
+	if len(rec.cues) != len(grains)+2 {
+		t.Fatalf("mid-flood sounds = %v, want two paper-touch cues plus paper-lift grains", soundIDs(rec.cues))
+	}
+	touches := 0
+	for _, c := range rec.cues {
+		switch c.ID {
+		case SoundPaperTouch:
+			touches++
+		case SoundPaperLift:
+		default:
+			t.Fatalf("mid-flood sounds = %v, want only paper-touch and paper-lift cues", soundIDs(rec.cues))
+		}
+	}
+	if touches != 2 {
+		t.Fatalf("mid-flood touches = %d, want 2", touches)
 	}
 	rec.take()
 
@@ -837,7 +850,7 @@ func TestSoundFloodDropsStaleGrains(t *testing.T) {
 	rec.take()
 
 	must(t, tt.Click("cell-9-0"))
-	assertSoundIDs(t, "flood starts", rec.take(), SoundPaperLift)
+	assertSoundIDs(t, "flood starts", rec.take(), SoundPaperTouch, SoundPaperLift)
 	// A stall swallows the frames the rest of the wave was due in: those
 	// grains are dropped, never played late.
 	stalled = true
@@ -851,7 +864,7 @@ func TestSoundFloodDropsStaleGrains(t *testing.T) {
 	tt.Advance(time.Second)
 	rec.take()
 	must(t, tt.Click("cell-9-0"))
-	assertSoundIDs(t, "second flood starts", rec.take(), SoundPaperLift)
+	assertSoundIDs(t, "second flood starts", rec.take(), SoundPaperTouch, SoundPaperLift)
 	tt.SetWindowHidden(true)
 	tt.Advance(400 * time.Millisecond)
 	tt.SetWindowHidden(false)
@@ -877,7 +890,7 @@ func TestSoundNewGameClearsQueuedGrains(t *testing.T) {
 			tt.Frame()
 			rec.take()
 			must(t, tt.Click("cell-9-0"))
-			assertSoundIDs(t, "flood starts", rec.take(), SoundPaperLift)
+			assertSoundIDs(t, "flood starts", rec.take(), SoundPaperTouch, SoundPaperLift)
 			tc.do(t, tt)
 			tt.Advance(time.Second)
 			for _, c := range rec.take() {
@@ -927,12 +940,12 @@ func TestSoundMotifsFollowLeaderInBothModes(t *testing.T) {
 				}
 				tt.Advance(time.Second)
 				got := rec.take()
-				if len(got) == 0 {
-					t.Fatal("big flood must still play paper-lift grains")
+				if len(got) < 2 || got[0].ID != SoundPaperTouch {
+					t.Fatalf("big flood sounds = %v, want paper-touch followed by paper-lift grains", soundIDs(got))
 				}
-				for _, c := range got {
+				for _, c := range got[1:] {
 					if c.ID != SoundPaperLift {
-						t.Fatalf("big flood sounds = %v, want only paper-lift grains with no closing motif", soundIDs(got))
+						t.Fatalf("big flood sounds = %v, want only paper-lift grains after touch with no closing motif", soundIDs(got))
 					}
 				}
 
@@ -942,7 +955,7 @@ func TestSoundMotifsFollowLeaderInBothModes(t *testing.T) {
 				if app.game.Status != StatusWon {
 					t.Fatal("expected a win")
 				}
-				assertSoundIDs(t, "win", rec.take(), SoundPaperLift, motif, SoundWinChord)
+				assertSoundIDs(t, "win", rec.take(), SoundPaperTouch, SoundPaperLift, motif, SoundWinChord)
 
 				app, rec, tt = stage()
 				g = cornerBoard(tt, app, false)
@@ -951,9 +964,9 @@ func TestSoundMotifsFollowLeaderInBothModes(t *testing.T) {
 					t.Fatal("expected a loss")
 				}
 				lossGot := rec.take()
-				assertSoundIDs(t, "loss", lossGot, SoundMineThud)
-				if lossGot[0].Pan != columnPan(0, g.Cols) {
-					t.Fatalf("loss pan = %v, want %v", lossGot[0].Pan, columnPan(0, g.Cols))
+				assertSoundIDs(t, "loss", lossGot, SoundPaperTouch, SoundMineThud)
+				if lossGot[0].Pan != columnPan(0, g.Cols) || lossGot[1].Pan != columnPan(0, g.Cols) {
+					t.Fatalf("loss pans = (%v, %v), want %v", lossGot[0].Pan, lossGot[1].Pan, columnPan(0, g.Cols))
 				}
 				tt.Advance(time.Second)
 				assertSoundIDs(t, "loss follow-up", rec.take())
@@ -961,7 +974,7 @@ func TestSoundMotifsFollowLeaderInBothModes(t *testing.T) {
 				app, rec, tt = stage()
 				cornerBoard(tt, app, true)
 				must(t, tt.Click("cell-0-0"))
-				assertSoundIDs(t, "春日影 loss", rec.take(), SoundMineThud, SoundHaruhikageStop)
+				assertSoundIDs(t, "春日影 loss", rec.take(), SoundPaperTouch, SoundMineThud, SoundHaruhikageStop)
 				tt.Advance(time.Second)
 				assertSoundIDs(t, "春日影 loss follow-up", rec.take())
 			})
@@ -1232,8 +1245,8 @@ func TestSoundCanvasFloodGrains(t *testing.T) {
 		t.Fatalf("canvas flood grains at %v from %v, want 2 to 6 starting at the click", at, start)
 	}
 	assertGrainGaps(t, at)
-	if len(rec.cues) != len(grains) {
-		t.Fatalf("canvas flood sounds = %v, want only paper-lift grains with no closing motif", soundIDs(rec.cues))
+	if len(rec.cues) != len(grains)+1 || rec.cues[0].ID != SoundPaperTouch {
+		t.Fatalf("canvas flood sounds = %v, want paper-touch plus paper-lift grains with no closing motif", soundIDs(rec.cues))
 	}
 }
 
@@ -1255,9 +1268,9 @@ func TestSoundClassicCanvasMineThudOnly(t *testing.T) {
 		t.Fatal("expected classic canvas mine click to lose")
 	}
 	got := rec.take()
-	assertSoundIDs(t, "canvas mine hit", got, SoundMineThud)
-	if got[0].Pan != columnPan(20, g.Cols) {
-		t.Fatalf("canvas mine hit pan = %v, want %v", got[0].Pan, columnPan(20, g.Cols))
+	assertSoundIDs(t, "canvas mine hit", got, SoundPaperTouch, SoundMineThud)
+	if got[0].Pan != columnPan(20, g.Cols) || got[1].Pan != columnPan(20, g.Cols) {
+		t.Fatalf("canvas mine hit pans = (%v, %v), want %v", got[0].Pan, got[1].Pan, columnPan(20, g.Cols))
 	}
 	tt.Advance(time.Second)
 	assertSoundIDs(t, "canvas mine hit follow-up", rec.take())
@@ -1265,10 +1278,10 @@ func TestSoundClassicCanvasMineThudOnly(t *testing.T) {
 
 func TestSoundClassicMineHitClearsQueuedCues(t *testing.T) {
 	for _, haruhikage := range []bool{false, true} {
-		want := []SoundID{SoundMineThud}
+		want := []SoundID{SoundPaperTouch, SoundMineThud}
 		label := "classic"
 		if haruhikage {
-			want = []SoundID{SoundMineThud, SoundHaruhikageStop}
+			want = []SoundID{SoundPaperTouch, SoundMineThud, SoundHaruhikageStop}
 			label = "haruhikage"
 		}
 
@@ -1280,7 +1293,7 @@ func TestSoundClassicMineHitClearsQueuedCues(t *testing.T) {
 			rec.take()
 
 			must(t, tt.Click("cell-9-0"))
-			assertSoundIDs(t, "flood starts", rec.take(), SoundPaperLift)
+			assertSoundIDs(t, "flood starts", rec.take(), SoundPaperTouch, SoundPaperLift)
 			if len(app.cues.pending) == 0 {
 				t.Fatal("expected follow-up flood grains queued")
 			}
@@ -1841,5 +1854,453 @@ func TestSoundInvalidClicksStaySilent(t *testing.T) {
 		tt.ClickAt(sx, sy)
 		tt.RightClickAt(sx, sy)
 		assertSoundIDs(t, "duel clicks after settlement", rec.take())
+	})
+}
+
+func TestSoundPressTouchReleaseLiftAndCancel(t *testing.T) {
+	p := defaultPrefs()
+	p.Volume = 80
+
+	t.Run("classic grid", func(t *testing.T) {
+		app, rec, tt := newClockedApp(p)
+		g := wallBoard(tt, app, 0)
+		tt.Frame()
+		rec.take()
+
+		r := mustFindCell(t, tt, "cell-2-13")
+		other := mustFindCell(t, tt, "cell-2-14")
+		wantPan := columnPan(13, g.Cols)
+
+		// Press arms and plays paper-touch immediately at the press timestamp;
+		// moving inside the same cell stays quiet; releasing plays paper-lift at
+		// the release timestamp.
+		pressAt := tt.Now()
+		tt.Press(r.X+4, r.Y+4)
+		if g.Cell(2, 13).Revealed {
+			t.Fatal("press must not reveal cell before release")
+		}
+		if len(rec.cues) != 1 || rec.cues[0].ID != SoundPaperTouch || !rec.at[0].Equal(pressAt) ||
+			!gainNear(rec.cues[0].Gain, 0.8) || rec.cues[0].Pan != wantPan || rec.cues[0].Speed != 1 {
+			t.Fatalf("grid press cue = %+v at %v (want paper-touch at %v, gain 0.8, pan %v, speed 1)",
+				rec.cues, rec.at, pressAt, wantPan)
+		}
+		rec.take()
+
+		tt.Advance(40 * time.Millisecond)
+		tt.Move(r.X+r.W-4, r.Y+r.H-4)
+		assertSoundIDs(t, "grid in-cell move", rec.take())
+
+		tt.Advance(40 * time.Millisecond)
+		releaseAt := tt.Now()
+		tt.Release(r.X+r.W-4, r.Y+r.H-4)
+		if !g.Cell(2, 13).Revealed {
+			t.Fatal("same-cell release must reveal cell")
+		}
+		if len(rec.cues) != 1 || rec.cues[0].ID != SoundPaperLift || !rec.at[0].Equal(releaseAt) ||
+			!gainNear(rec.cues[0].Gain, 0.8) || rec.cues[0].Pan != wantPan {
+			t.Fatalf("grid release cue = %+v at %v (want paper-lift at %v, gain 0.8, pan %v)",
+				rec.cues, rec.at, releaseAt, wantPan)
+		}
+		rec.take()
+
+		// Leaving the cell (and even returning before release) cancels silently.
+		rCancel := mustFindCell(t, tt, "cell-4-13")
+		tt.Press(rCancel.X+rCancel.W/2, rCancel.Y+rCancel.H/2)
+		assertSoundIDs(t, "grid cancel press", rec.take(), SoundPaperTouch)
+		tt.Advance(30 * time.Millisecond)
+		tt.Move(other.X+other.W/2, other.Y+other.H/2)
+		tt.Move(rCancel.X+rCancel.W/2, rCancel.Y+rCancel.H/2)
+		tt.Release(rCancel.X+rCancel.W/2, rCancel.Y+rCancel.H/2)
+		if g.Cell(4, 13).Revealed {
+			t.Fatal("canceled grid press must not reveal")
+		}
+		assertSoundIDs(t, "grid leave-and-return cancel", rec.take())
+
+		// System cancel stays silent.
+		tt.Press(rCancel.X+rCancel.W/2, rCancel.Y+rCancel.H/2)
+		assertSoundIDs(t, "grid system cancel press", rec.take(), SoundPaperTouch)
+		tt.CancelPress()
+		if g.Cell(4, 13).Revealed {
+			t.Fatal("CancelPress must not reveal")
+		}
+		assertSoundIDs(t, "grid system cancel", rec.take())
+
+		// Edge column pan mapping on press and release.
+		rEdge := mustFindCell(t, tt, "cell-0-19")
+		tt.Press(rEdge.X+rEdge.W/2, rEdge.Y+rEdge.H/2)
+		edgeTouch := rec.take()
+		assertSoundIDs(t, "grid edge press", edgeTouch, SoundPaperTouch)
+		if edgeTouch[0].Pan != maxSoundPan {
+			t.Fatalf("right edge press pan = %v, want %v", edgeTouch[0].Pan, maxSoundPan)
+		}
+		tt.Release(rEdge.X+rEdge.W/2, rEdge.Y+rEdge.H/2)
+		edgeLift := rec.take()
+		if len(edgeLift) == 0 || edgeLift[0].ID != SoundPaperLift || edgeLift[0].Pan != maxSoundPan {
+			t.Fatalf("right edge release = %+v, want paper-lift at pan %v", edgeLift, maxSoundPan)
+		}
+	})
+
+	for _, isDuel := range []bool{false, true} {
+		name := "classic canvas"
+		label := "经典棋盘"
+		if isDuel {
+			name = "duel canvas"
+			label = "决斗棋盘"
+		}
+		t.Run(name, func(t *testing.T) {
+			app, rec, tt := newClockedApp(p)
+			if isDuel {
+				app.game = NewGame(Difficulty{
+					ID:           "duel-press-sound",
+					Song:         "春日影",
+					Gameplay:     GameplayDuel,
+					Rows:         40,
+					Cols:         40,
+					Mines:        2,
+					DuelDuration: 300,
+					AIInterval:   1e9,
+				}, true, MemberTomori, 7)
+				app.game.duel.NextAI = 1e9
+				app.duelNoticeAt = tt.Now().Add(time.Hour)
+			} else {
+				app.game = NewGame(Difficulty{
+					ID:       "classic-press-sound",
+					Song:     "诗超绊",
+					Gameplay: GameplayClassic,
+					Rows:     40,
+					Cols:     40,
+					Mines:    2,
+				}, true, MemberTomori, 7)
+			}
+			g := app.game
+			g.FirstClick = true
+			g.Status = StatusPlaying
+			g.Cell(18, 18).IsMine = true
+			g.Cell(39, 39).IsMine = true
+			g.RecomputeAdjacency()
+			tt.Frame()
+			board, ok := tt.Find(label)
+			if !ok {
+				t.Fatalf("%s not found", label)
+			}
+			app.board.center(g, 20, 20)
+			tt.Frame()
+			rec.take()
+
+			r := canvasCellRect(board, app.board, 19, 19)
+			other := canvasCellRect(board, app.board, 19, 20)
+			wantPan := columnPan(19, g.Cols)
+
+			pressAt := tt.Now()
+			tt.Press(r.X+2, r.Y+2)
+			if g.Cell(19, 19).Revealed {
+				t.Fatal("canvas press must not reveal before release")
+			}
+			if len(rec.cues) != 1 || rec.cues[0].ID != SoundPaperTouch || !rec.at[0].Equal(pressAt) ||
+				!gainNear(rec.cues[0].Gain, 0.8) || rec.cues[0].Pan != wantPan || rec.cues[0].Speed != 1 {
+				t.Fatalf("canvas press cue = %+v at %v (want paper-touch at %v, gain 0.8, pan %v, speed 1)",
+					rec.cues, rec.at, pressAt, wantPan)
+			}
+			rec.take()
+
+			tt.Advance(35 * time.Millisecond)
+			tt.Move(r.X+r.W-2, r.Y+r.H-2)
+			assertSoundIDs(t, "canvas in-cell move", rec.take())
+
+			tt.Advance(45 * time.Millisecond)
+			releaseAt := tt.Now()
+			tt.Release(r.X+r.W-2, r.Y+r.H-2)
+			if !g.Cell(19, 19).Revealed {
+				t.Fatal("canvas same-cell release must reveal")
+			}
+			if len(rec.cues) != 1 || rec.cues[0].ID != SoundPaperLift || !rec.at[0].Equal(releaseAt) ||
+				!gainNear(rec.cues[0].Gain, 0.8) || rec.cues[0].Pan != wantPan {
+				t.Fatalf("canvas release cue = %+v at %v (want paper-lift at %v, gain 0.8, pan %v)",
+					rec.cues, rec.at, releaseAt, wantPan)
+			}
+			rec.take()
+
+			// Leave cell and return cancels silently.
+			rCancel := canvasCellRect(board, app.board, 18, 19)
+			tt.Press(rCancel.X+rCancel.W/2, rCancel.Y+rCancel.H/2)
+			assertSoundIDs(t, "canvas cancel press", rec.take(), SoundPaperTouch)
+			tt.Move(other.X+other.W/2, other.Y+other.H/2)
+			tt.Move(rCancel.X+rCancel.W/2, rCancel.Y+rCancel.H/2)
+			tt.Release(rCancel.X+rCancel.W/2, rCancel.Y+rCancel.H/2)
+			if g.Cell(18, 19).Revealed {
+				t.Fatal("canceled canvas press must not reveal")
+			}
+			assertSoundIDs(t, "canvas leave-and-return cancel", rec.take())
+
+			// System cancel stays silent.
+			tt.Press(rCancel.X+rCancel.W/2, rCancel.Y+rCancel.H/2)
+			assertSoundIDs(t, "canvas system cancel press", rec.take(), SoundPaperTouch)
+			tt.CancelPress()
+			if g.Cell(18, 19).Revealed {
+				t.Fatal("canvas CancelPress must not reveal")
+			}
+			assertSoundIDs(t, "canvas system cancel", rec.take())
+
+			// Middle-button and Alt+left pan drags do not arm or play paper-touch.
+			tt.PressButton(2, rCancel.X+rCancel.W/2, rCancel.Y+rCancel.H/2)
+			tt.ReleaseButton(2, rCancel.X+rCancel.W/2, rCancel.Y+rCancel.H/2)
+			lx, ly := rCancel.X-board.X+rCancel.W/2, rCancel.Y-board.Y+rCancel.H/2
+			panNow := tt.Now()
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerDown, Button: 0, Mods: ui.Alt, X: lx, Y: ly, Time: panNow}, panNow)
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerUp, Button: 0, Mods: ui.Alt, X: lx, Y: ly, Time: panNow}, panNow)
+			assertSoundIDs(t, "canvas pan drags", rec.take())
+		})
+	}
+}
+
+func TestSoundChordHeavyLiftAndInvalidNumberSilence(t *testing.T) {
+	t.Run("classic grid single-step chord, flooding chord, win chord, keyboard chord, and invalid clicks", func(t *testing.T) {
+		app, rec, tt := newClockedApp(defaultPrefs())
+		g := wallBoard(tt, app, 0)
+		// Reveal number (1,11) (Adjacent=3: mines at (0,12),(1,12),(2,12)).
+		// Flag only two mines first -> unchordable number must stay silent on press and release.
+		g.Cell(1, 11).Revealed = true
+		g.RevealedSafe = 1
+		g.ToggleFlag(0, 12, false)
+		g.ToggleFlag(1, 12, false)
+		tt.Frame()
+		rec.take()
+
+		rNum := mustFindCell(t, tt, "cell-1-11")
+		tt.Press(rNum.X+rNum.W/2, rNum.Y+rNum.H/2)
+		assertSoundIDs(t, "unchordable number press", rec.take())
+		tt.Release(rNum.X+rNum.W/2, rNum.Y+rNum.H/2)
+		assertSoundIDs(t, "unchordable number release", rec.take())
+
+		// Flag the third mine so (1,11) becomes chordable and floods the left side.
+		g.ToggleFlag(2, 12, false)
+		tt.Frame()
+		rec.take()
+
+		wantPan := columnPan(11, g.Cols)
+		pressAt := tt.Now()
+		tt.Press(rNum.X+rNum.W/2, rNum.Y+rNum.H/2)
+		if len(rec.cues) != 1 || rec.cues[0].ID != SoundPaperTouch || !rec.at[0].Equal(pressAt) || rec.cues[0].Pan != wantPan {
+			t.Fatalf("chordable number press = %+v at %v, want paper-touch at pan %v", rec.cues, rec.at, wantPan)
+		}
+		rec.take()
+
+		tt.Advance(60 * time.Millisecond)
+		releaseAt := tt.Now()
+		tt.Release(rNum.X+rNum.W/2, rNum.Y+rNum.H/2)
+		if !g.Cell(0, 11).Revealed || !g.Cell(0, 0).Revealed {
+			t.Fatal("chording cell-1-11 should flood the left side")
+		}
+		if len(rec.cues) != 1 || rec.cues[0].ID != SoundPaperLiftHeavy || !rec.at[0].Equal(releaseAt) || rec.cues[0].Pan != wantPan {
+			t.Fatalf("chord primary hit = %+v at %v, want paper-lift-heavy at %v pan %v", rec.cues, rec.at, releaseAt, wantPan)
+		}
+		tt.Advance(time.Second)
+		if len(rec.cues) < 2 {
+			t.Fatalf("flooding chord played %v, want heavy primary hit plus follow-up paper-lift grains", soundIDs(rec.cues))
+		}
+		for i := 1; i < len(rec.cues); i++ {
+			if rec.cues[i].ID != SoundPaperLift || rec.cues[i].Pan != wantPan || rec.cues[i].Speed <= rec.cues[i-1].Speed {
+				t.Fatalf("chord follow-up grain %d = %+v after %+v, want rising paper-lift at pan %v",
+					i, rec.cues[i], rec.cues[i-1], wantPan)
+			}
+		}
+		assertGrainGaps(t, rec.at)
+		rec.take()
+
+		// Clicking the now-satisfied number with zero hidden neighbors stays silent on press and release.
+		tt.Press(rNum.X+rNum.W/2, rNum.Y+rNum.H/2)
+		tt.Release(rNum.X+rNum.W/2, rNum.Y+rNum.H/2)
+		assertSoundIDs(t, "satisfied number with no hidden neighbors", rec.take())
+
+		// Non-flooding chord (reveals numbered cells only) + keyboard Enter chord + win chord.
+		g = cornerBoard(tt, app, false)
+		// Only mine is (0,0). With (0,2) and (1,2) already open and (0,0) flagged,
+		// chording (0,1) opens just (1,0) and (1,1): no flood and no win yet.
+		g.Cell(0, 1).Revealed = true
+		g.Cell(1, 2).Revealed = true
+		g.Cell(0, 2).Revealed = true
+		g.RevealedSafe = 3
+		g.ToggleFlag(0, 0, false)
+		tt.Frame()
+		rec.take()
+
+		r01 := mustFindCell(t, tt, "cell-0-1")
+		r02 := mustFindCell(t, tt, "cell-0-2")
+		// Focus cell-0-1 via canceled drag, then activate via keyboard Enter.
+		tt.Press(r01.X+r01.W/2, r01.Y+r01.H/2)
+		assertSoundIDs(t, "focus drag press", rec.take(), SoundPaperTouch)
+		tt.Move(r02.X+r02.W/2, r02.Y+r02.H/2)
+		tt.Release(r02.X+r02.W/2, r02.Y+r02.H/2)
+		assertSoundIDs(t, "focus drag cancel", rec.take())
+		tt.Key(0, ui.KeyEnter)
+		got := rec.take()
+		assertSoundIDs(t, "keyboard chord", got, SoundPaperLiftHeavy)
+		if got[0].Pan != columnPan(1, g.Cols) {
+			t.Fatalf("keyboard chord pan = %v, want %v", got[0].Pan, columnPan(1, g.Cols))
+		}
+		if !g.Cell(1, 0).Revealed || !g.Cell(1, 1).Revealed || g.Status != StatusPlaying {
+			t.Fatalf("expected non-winning chord to open (1,0) and (1,1): status=%v", g.Status)
+		}
+
+		// Chord that wins the game uses paper-lift-heavy as primary hit, followed by win motif & chord.
+		for i := range g.Cells {
+			c := &g.Cells[i]
+			if !c.IsMine && !(c.Row == 2 && c.Col == 2) && !c.Revealed {
+				c.Revealed = true
+				g.RevealedSafe++
+			}
+		}
+		tt.Frame()
+		rec.take()
+		r11 := mustFindCell(t, tt, "cell-1-1")
+		tt.ClickAt(r11.X+r11.W/2, r11.Y+r11.H/2)
+		if g.Status != StatusWon {
+			t.Fatalf("expected chord on (1,1) to win, status=%v", g.Status)
+		}
+		assertSoundIDs(t, "winning chord", rec.take(), SoundPaperTouch, SoundPaperLiftHeavy, wantMotif[app.memberID], SoundWinChord)
+	})
+
+	t.Run("classic canvas chord and invalid number click", func(t *testing.T) {
+		app, rec, tt := newClockedApp(defaultPrefs())
+		g := NewGame(Difficulty{
+			ID:       "canvas-chord-sound",
+			Song:     "诗超绊",
+			Gameplay: GameplayClassic,
+			Rows:     40,
+			Cols:     40,
+			Mines:    41,
+		}, true, MemberTomori, 7)
+		g.FirstClick = true
+		g.Status = StatusPlaying
+		g.Cell(18, 18).IsMine = true
+		for row := range g.Rows {
+			g.Cell(row, 25).IsMine = true
+		}
+		g.RecomputeAdjacency()
+		g.Cell(19, 19).Revealed = true
+		g.RevealedSafe = 1
+		app.game = g
+		tt.Frame()
+		board, ok := tt.Find("经典棋盘")
+		if !ok {
+			t.Fatal("经典棋盘 not found")
+		}
+		app.board.center(g, 19, 19)
+		tt.Frame()
+		rec.take()
+
+		numR := canvasCellRect(board, app.board, 19, 19)
+		// Unchordable number (mine not flagged yet) stays silent on press and release.
+		tt.Press(numR.X+numR.W/2, numR.Y+numR.H/2)
+		tt.Release(numR.X+numR.W/2, numR.Y+numR.H/2)
+		assertSoundIDs(t, "canvas unchordable number", rec.take())
+
+		// Flag the mine and chord: press -> paper-touch, release -> paper-lift-heavy (+ flood grains).
+		g.ToggleFlag(18, 18, false)
+		tt.Frame()
+		rec.take()
+		wantPan := columnPan(19, g.Cols)
+		tt.Press(numR.X+numR.W/2, numR.Y+numR.H/2)
+		touchGot := rec.take()
+		assertSoundIDs(t, "canvas chord press", touchGot, SoundPaperTouch)
+		if touchGot[0].Pan != wantPan {
+			t.Fatalf("canvas chord press pan = %v, want %v", touchGot[0].Pan, wantPan)
+		}
+		tt.Advance(50 * time.Millisecond)
+		tt.Release(numR.X+numR.W/2, numR.Y+numR.H/2)
+		primaryGot := rec.take()
+		assertSoundIDs(t, "canvas chord release primary", primaryGot, SoundPaperLiftHeavy)
+		if primaryGot[0].Pan != wantPan {
+			t.Fatalf("canvas chord release pan = %v, want %v", primaryGot[0].Pan, wantPan)
+		}
+		tt.Advance(time.Second)
+		for _, c := range rec.take() {
+			if c.ID != SoundPaperLift || c.Pan != wantPan {
+				t.Fatalf("canvas chord follow-up = %+v, want paper-lift at pan %v", c, wantPan)
+			}
+		}
+
+		// Now all neighbors of (19,19) are revealed/flagged: clicking again stays silent.
+		tt.Press(numR.X+numR.W/2, numR.Y+numR.H/2)
+		tt.Release(numR.X+numR.W/2, numR.Y+numR.H/2)
+		assertSoundIDs(t, "canvas satisfied number", rec.take())
+	})
+
+	t.Run("duel canvas claimable mine vs chordable number and invalid number click", func(t *testing.T) {
+		app, rec, tt := newClockedApp(defaultPrefs())
+		g := NewGame(Difficulty{
+			ID:           "duel-chord-sound",
+			Song:         "春日影",
+			Gameplay:     GameplayDuel,
+			Rows:         40,
+			Cols:         40,
+			Mines:        41,
+			DuelDuration: 300,
+			AIInterval:   1e9,
+		}, true, MemberTomori, 7)
+		g.duel.NextAI = 1e9
+		g.FirstClick = true
+		g.Status = StatusPlaying
+		g.Cell(18, 18).IsMine = true
+		for row := range g.Rows {
+			g.Cell(row, 25).IsMine = true
+		}
+		g.RecomputeAdjacency()
+		for dr := -1; dr <= 1; dr++ {
+			for dc := -1; dc <= 1; dc++ {
+				r, c := 19+dr, 19+dc
+				if r == 18 && c == 18 {
+					continue
+				}
+				g.Cell(r, c).Revealed = true
+				g.Cell(r, c).Owner = DuelPlayer
+				g.RevealedSafe++
+			}
+		}
+		app.game = g
+		app.duelNoticeAt = tt.Now().Add(time.Hour)
+		tt.Frame()
+		board, ok := tt.Find("决斗棋盘")
+		if !ok {
+			t.Fatal("决斗棋盘 not found")
+		}
+		app.board.center(g, 19, 19)
+		tt.Frame()
+		rec.take()
+
+		// (18,19) is unchordable before mine (18,18) is flagged -> silent.
+		chordR := canvasCellRect(board, app.board, 18, 19)
+		tt.Press(chordR.X+chordR.W/2, chordR.Y+chordR.H/2)
+		tt.Release(chordR.X+chordR.W/2, chordR.Y+chordR.H/2)
+		assertSoundIDs(t, "duel unchordable number", rec.take())
+
+		// (19,19) is HintClaimable: press plays paper-touch, release flags mine with bandage-on (not heavy lift).
+		claimR := canvasCellRect(board, app.board, 19, 19)
+		tt.Press(claimR.X+claimR.W/2, claimR.Y+claimR.H/2)
+		assertSoundIDs(t, "duel claim press", rec.take(), SoundPaperTouch)
+		tt.Release(claimR.X+claimR.W/2, claimR.Y+claimR.H/2)
+		assertSoundIDs(t, "duel claim release", rec.take(), SoundBandageOn)
+		if !g.Cell(18, 18).Flagged {
+			t.Fatal("expected duel claim to flag (18,18)")
+		}
+
+		// Now (18,19) is HintChordable: press plays paper-touch, release plays paper-lift-heavy.
+		wantPan := columnPan(19, g.Cols)
+		tt.Press(chordR.X+chordR.W/2, chordR.Y+chordR.H/2)
+		touchGot := rec.take()
+		assertSoundIDs(t, "duel chord press", touchGot, SoundPaperTouch)
+		if touchGot[0].Pan != wantPan {
+			t.Fatalf("duel chord press pan = %v, want %v", touchGot[0].Pan, wantPan)
+		}
+		tt.Advance(50 * time.Millisecond)
+		tt.Release(chordR.X+chordR.W/2, chordR.Y+chordR.H/2)
+		primaryGot := rec.take()
+		assertSoundIDs(t, "duel chord release primary", primaryGot, SoundPaperLiftHeavy)
+		if primaryGot[0].Pan != wantPan {
+			t.Fatalf("duel chord release pan = %v, want %v", primaryGot[0].Pan, wantPan)
+		}
+		if !g.Cell(17, 19).Revealed {
+			t.Fatal("expected duel chord on (18,19) to reveal (17,19)")
+		}
 	})
 }
