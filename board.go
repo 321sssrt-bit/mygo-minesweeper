@@ -637,7 +637,6 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 			v.stopGlide()
 			v.Pressed = false
 			v.Dragging = false
-			v.pressKind = canvasPressNone
 			v.cancelPress()
 			row, col := v.minimapCellAt(a.game, ev.X, ev.Y)
 			v.glideCenter(a.game, row, col, ev.Time, a.motionReducedActive)
@@ -651,7 +650,6 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 		v.PressButton = ev.Button
 		v.DragX, v.DragY = ev.X, ev.Y
 		v.Dragging = panDrag
-		v.pressKind = canvasPressNone
 		v.cancelPress()
 		switch {
 		case panDrag:
@@ -702,7 +700,6 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 		pressRevealed := v.pressRevealed
 		v.Pressed = false
 		v.Dragging = false
-		v.pressKind = canvasPressNone
 		v.cancelPress()
 		v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
 		v.updateHover(a.game)
