@@ -1284,6 +1284,27 @@ func TestCanvasCameraSkillTargetGlide(t *testing.T) {
 		if !nv.shows(ng, nr, nc) {
 			t.Fatalf("narrow viewport skill target (%d,%d) landed behind minimap (X=%v Y=%v W=%v H=%v)", nr, nc, nv.X, nv.Y, nv.Width, nv.Height)
 		}
+
+		// Resizing mid-glide from 1280x900 down to 640x600 must still land clear of the minimap.
+		rApp, rTT, _ := setupSkillCameraClassicApp(t, 42, TrackMayoiuta, MemberTomori, nil)
+		rv, rg := rApp.board, rApp.game
+		rg.Reveal(50, 50)
+		rv.center(rg, 90, 90)
+		rTT.Frame()
+		rTT.Key(0, ui.KeyE)
+		rTT.Advance(48 * time.Millisecond)
+		if !rv.gliding() || len(rApp.skillPulses) != 0 {
+			t.Fatalf("mid-glide resize precondition failed: gliding=%v pulses=%d", rv.gliding(), len(rApp.skillPulses))
+		}
+		rTT.SetSize(640, 600)
+		rTT.Advance(260 * time.Millisecond)
+		if rv.gliding() || len(rApp.skillPulses) != 1 {
+			t.Fatalf("mid-glide resize glide did not settle with pulse: gliding=%v pulses=%d", rv.gliding(), len(rApp.skillPulses))
+		}
+		rr, rc := rApp.skillPulses[0].Index/rg.Cols, rApp.skillPulses[0].Index%rg.Cols
+		if !rv.shows(rg, rr, rc) {
+			t.Fatalf("mid-glide resize target (%d,%d) landed behind minimap (X=%v Y=%v W=%v H=%v)", rr, rc, rv.X, rv.Y, rv.Width, rv.Height)
+		}
 	})
 
 	t.Run("in_viewport_keeps_camera_still_and_starts_pulses_immediately", func(t *testing.T) {

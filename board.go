@@ -17,6 +17,9 @@ type cameraGlide struct {
 	targetCell         float64
 	targetX, targetY   float32
 	originW, originH   float32
+	hasTargetCell      bool
+	targetRow          int
+	targetCol          int
 	last               time.Time
 	onArrive           func(time.Time)
 }
@@ -202,10 +205,13 @@ func (v *boardView) finishGlide(g *Game) {
 	glide := v.glide
 	v.glide = cameraGlide{}
 	v.Cell = float32(glide.targetCell)
-	if v.Width == glide.originW && v.Height == glide.originH {
+	switch {
+	case v.Width == glide.originW && v.Height == glide.originH:
 		v.X = glide.targetX
 		v.Y = glide.targetY
-	} else {
+	case glide.hasTargetCell:
+		v.X, v.Y = v.visibleTarget(g, glide.targetRow, glide.targetCol, v.Cell)
+	default:
 		v.X = float32(glide.targetWX*glide.targetCell - float64(v.Width)/2)
 		v.Y = float32(glide.targetWY*glide.targetCell - float64(v.Height)/2)
 	}
@@ -414,6 +420,9 @@ func (v *boardView) ensureVisible(g *Game, row, col int, now time.Time, reduced 
 		onReady(now)
 		return
 	}
+	v.glide.hasTargetCell = true
+	v.glide.targetRow = row
+	v.glide.targetCol = col
 	v.glide.onArrive = onReady
 }
 
