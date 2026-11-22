@@ -693,22 +693,18 @@ func TestSoundFloodGrainsThrottled(t *testing.T) {
 	tt.Frame()
 	rec.take()
 
+	// One flood lifts a primary hit plus follow-up grains throttled by
+	// paperGrainGap and capped at paperGrainsPerWave.
 	start := tt.Now()
 	must(t, tt.Click("cell-9-0"))
 	if !g.Cell(0, 0).Revealed || g.Cell(0, 13).Revealed {
 		t.Fatal("expected the click to flood the left side at once")
 	}
-	// Mid-flood, a quick reveal elsewhere keeps clear of the grains in flight.
-	tt.Advance(10 * time.Millisecond)
-	must(t, tt.Click("cell-0-13"))
-	if !g.Cell(0, 13).Revealed {
-		t.Fatal("a reveal must take effect even when its grain is held back")
-	}
 	tt.Advance(time.Second)
 
 	grains, at := grainsOf(rec)
-	if len(grains) < 2 || len(grains) > 6 {
-		t.Fatalf("one flood lifted %d grains, want 2 to 6", len(grains))
+	if len(grains) < 2 || len(grains) > paperGrainsPerWave {
+		t.Fatalf("one flood lifted %d grains, want 2 to %d", len(grains), paperGrainsPerWave)
 	}
 	if !at[0].Equal(start) {
 		t.Fatalf("first grain at +%v, want at the click", at[0].Sub(start))
@@ -735,7 +731,8 @@ func TestSoundFloodGrainsThrottled(t *testing.T) {
 	}
 	rec.take()
 
-	// Quick single reveals share the gap; the next one past it sounds again.
+	// Quick single reveals spaced under paperGrainGap still sound every primary hit.
+	firstAt := tt.Now()
 	must(t, tt.Click("cell-2-13"))
 	tt.Advance(10 * time.Millisecond)
 	must(t, tt.Click("cell-4-13"))
@@ -743,16 +740,84 @@ func TestSoundFloodGrainsThrottled(t *testing.T) {
 	must(t, tt.Click("cell-6-13"))
 	tt.Advance(time.Second)
 	grains, at = grainsOf(rec)
-	if len(grains) != 2 || at[1].Sub(at[0]) != 40*time.Millisecond {
-		t.Fatalf("quick reveals played %d grains at %v, want the first and the third", len(grains), at)
+	if len(grains) != 3 {
+		t.Fatalf("quick reveals played %d grains (%v), want 3 primary hits", len(grains), at)
+	}
+	if at[0] != firstAt || at[1].Sub(at[0]) != 10*time.Millisecond || at[2].Sub(at[1]) != 30*time.Millisecond {
+		t.Fatalf("quick reveal timestamps = %v from %v, want +0ms, +10ms, +40ms", at, firstAt)
+	}
+	for i, c := range grains {
+		if c.Pan != columnPan(13, g.Cols) || c.Speed != 1 {
+			t.Fatalf("quick reveal %d = %+v, want col 13 pan at speed 1", i, c)
+		}
 	}
 	for _, row := range []int{2, 4, 6} {
 		if !g.Cell(row, 13).Revealed {
 			t.Fatalf("cell-%d-13 should be revealed", row)
 		}
 	}
-	if grains[0].Pan != columnPan(13, g.Cols) {
-		t.Fatalf("single reveal pan %v", grains[0].Pan)
+	rec.take()
+
+	// Mid-flood, a quick reveal elsewhere sounds its primary hit immediately
+	// while the flood's follow-up grains stay throttled by paperGrainGap.
+	g = wallBoard(tt, app, 0)
+	tt.Frame()
+	rec.take()
+	start = tt.Now()
+	must(t, tt.Click("cell-9-0"))
+	tt.Advance(20 * time.Millisecond)
+	must(t, tt.Click("cell-0-13"))
+	if !g.Cell(0, 13).Revealed {
+		t.Fatal("quick reveal mid-flood must open the cell")
+	}
+	tt.Advance(time.Second)
+	grains, at = grainsOf(rec)
+	if len(grains) < 3 || len(grains) > paperGrainsPerWave+1 {
+		t.Fatalf("mid-flood reveal played %d grains, want 3 to %d", len(grains), paperGrainsPerWave+1)
+	}
+	if !at[0].Equal(start) || grains[0].Pan != columnPan(0, g.Cols) || grains[0].Speed != 1 {
+		t.Fatalf("flood primary hit = %+v at +%v, want col 0 at +0ms speed 1", grains[0], at[0].Sub(start))
+	}
+	if at[1].Sub(start) != 20*time.Millisecond || grains[1].Pan != columnPan(13, g.Cols) || grains[1].Speed != 1 {
+		t.Fatalf("mid-flood primary hit = %+v at +%v, want col 13 at +20ms speed 1", grains[1], at[1].Sub(start))
+	}
+	assertGrainGaps(t, at[1:])
+	for i := 2; i < len(grains); i++ {
+		if grains[i].Pan != columnPan(0, g.Cols) || grains[i].Speed <= 1 {
+			t.Fatalf("follow-up grain %d = %+v, want col 0 with rising speed", i, grains[i])
+		}
+		if i > 2 && grains[i].Speed <= grains[i-1].Speed {
+			t.Fatalf("follow-up grain %d speed %v not above %v", i, grains[i].Speed, grains[i-1].Speed)
+		}
+	}
+	if last := rec.cues[len(rec.cues)-1]; last.ID != SoundMotifTomori {
+		t.Fatalf("mid-flood sounds = %v, want closing motif-tomori", soundIDs(rec.cues))
+	}
+	rec.take()
+
+	// A flood started under paperGrainGap after a single reveal sounds both
+	// primary hits and still throttles its own follow-up wave grains.
+	g = wallBoard(tt, app, 0)
+	tt.Frame()
+	rec.take()
+	start = tt.Now()
+	must(t, tt.Click("cell-0-13"))
+	tt.Advance(10 * time.Millisecond)
+	must(t, tt.Click("cell-9-0"))
+	tt.Advance(time.Second)
+	grains, at = grainsOf(rec)
+	if len(grains) < 3 || len(grains) > paperGrainsPerWave+1 {
+		t.Fatalf("single then flood played %d grains, want 3 to %d", len(grains), paperGrainsPerWave+1)
+	}
+	if !at[0].Equal(start) || grains[0].Pan != columnPan(13, g.Cols) || grains[0].Speed != 1 {
+		t.Fatalf("first primary hit = %+v at +%v", grains[0], at[0].Sub(start))
+	}
+	if at[1].Sub(start) != 10*time.Millisecond || grains[1].Pan != columnPan(0, g.Cols) || grains[1].Speed != 1 {
+		t.Fatalf("flood primary hit = %+v at +%v", grains[1], at[1].Sub(start))
+	}
+	assertGrainGaps(t, at[1:])
+	if floodGrains := grains[1:]; len(floodGrains) > paperGrainsPerWave {
+		t.Fatalf("flood lifted %d grains, want at most %d", len(floodGrains), paperGrainsPerWave)
 	}
 }
 
@@ -1275,4 +1340,244 @@ func TestSoundDuelCountdownQuietOnResumeFrames(t *testing.T) {
 	assertSoundIDs(t, "short hide across 5 s", rec.take())
 	tt.Advance(time.Second)
 	assertSoundIDs(t, "next second after the hide", rec.take(), SoundDuelTick)
+}
+
+func TestSoundQuickCanvasRevealsPlayEveryPrimaryHit(t *testing.T) {
+	app, rec := newRecordedApp(7, defaultPrefs())
+	g := NewGame(Difficulty{ID: "canvas-quick", Rows: 40, Cols: 40, Mines: 40}, true, MemberTomori, 7)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	for row := range g.Rows {
+		g.Cell(row, 20).IsMine = true
+	}
+	g.RecomputeAdjacency()
+	app.game = g
+	tt := ui.NewTester(app.view, 1280, 900)
+	rec.clock = tt.Now
+
+	r, ok := tt.Find("经典棋盘")
+	if !ok {
+		t.Fatal("经典棋盘 not on screen")
+	}
+	v := app.board
+	v.center(g, 20, 13)
+	tt.Frame()
+	rec.take()
+	pointOf := func(row, col int) (float32, float32) {
+		return r.X + (float32(col)+0.5)*v.Cell - v.X, r.Y + (float32(row)+0.5)*v.Cell - v.Y
+	}
+
+	// Two single reveals under paperGrainGap apart both sound their primary hit.
+	start := tt.Now()
+	x1, y1 := pointOf(19, 21)
+	x2, y2 := pointOf(21, 21)
+	tt.ClickAt(x1, y1)
+	tt.Advance(10 * time.Millisecond)
+	tt.ClickAt(x2, y2)
+	tt.Advance(time.Second)
+	if !g.Cell(19, 21).Revealed || !g.Cell(21, 21).Revealed {
+		t.Fatal("both canvas cells should be revealed")
+	}
+	grains, at := grainsOf(rec)
+	if len(grains) != 2 {
+		t.Fatalf("quick canvas reveals played %d grains (%v), want 2 primary hits", len(grains), at)
+	}
+	if at[0] != start || at[1].Sub(at[0]) != 10*time.Millisecond {
+		t.Fatalf("canvas reveal timestamps = %v from %v, want +0ms and +10ms", at, start)
+	}
+	for i, c := range grains {
+		if c.Pan != columnPan(21, g.Cols) || c.Speed != 1 {
+			t.Fatalf("canvas primary hit %d = %+v, want col 21 pan at speed 1", i, c)
+		}
+	}
+	rec.take()
+
+	// A quick single reveal 10ms into a canvas flood still sounds its primary hit,
+	// while the flood's follow-up grains stay throttled and capped.
+	start = tt.Now()
+	fx, fy := pointOf(20, 5)
+	qx, qy := pointOf(23, 21)
+	tt.ClickAt(fx, fy)
+	tt.Advance(10 * time.Millisecond)
+	tt.ClickAt(qx, qy)
+	tt.Advance(time.Second)
+	if !g.Cell(20, 5).Revealed || !g.Cell(23, 21).Revealed {
+		t.Fatal("canvas flood and mid-flood reveal should both open")
+	}
+	grains, at = grainsOf(rec)
+	if len(grains) < 3 || len(grains) > paperGrainsPerWave+1 {
+		t.Fatalf("canvas mid-flood played %d grains, want 3 to %d", len(grains), paperGrainsPerWave+1)
+	}
+	if !at[0].Equal(start) || grains[0].Pan != columnPan(5, g.Cols) || grains[0].Speed != 1 {
+		t.Fatalf("canvas flood primary hit = %+v at +%v", grains[0], at[0].Sub(start))
+	}
+	if at[1].Sub(start) != 10*time.Millisecond || grains[1].Pan != columnPan(21, g.Cols) || grains[1].Speed != 1 {
+		t.Fatalf("canvas quick reveal hit = %+v at +%v", grains[1], at[1].Sub(start))
+	}
+	assertGrainGaps(t, at[1:])
+}
+
+func TestSoundInvalidClicksStaySilent(t *testing.T) {
+	t.Run("classic grid", func(t *testing.T) {
+		app, rec, tt := newClockedApp(defaultPrefs())
+		g := wallBoard(tt, app, 0)
+		tt.Frame()
+		rec.take()
+
+		// Non-interactive background, already-selected leader, and disabled skill button.
+		tt.ClickAt(2, 2)
+		assertSoundIDs(t, "empty background", rec.take())
+		must(t, tt.Click(FindMember(app.memberID).Name))
+		assertSoundIDs(t, "already-selected leader", rec.take())
+		must(t, tt.Click("发动技能 (E) ×0"))
+		assertSoundIDs(t, "disabled skill button", rec.take())
+
+		// Open left side: cell-0-0 is revealed empty (0), cell-0-11 is an unchordable 2.
+		must(t, tt.Click("cell-9-0"))
+		tt.Advance(time.Second)
+		rec.take()
+		if !g.Cell(0, 0).Revealed || g.Cell(0, 0).Adjacent != 0 || !g.Cell(0, 11).Revealed || g.Cell(0, 11).Adjacent == 0 {
+			t.Fatal("expected cell-0-0 empty and cell-0-11 numbered after flood")
+		}
+
+		must(t, tt.Click("cell-0-0"))
+		assertSoundIDs(t, "left-click revealed empty", rec.take())
+		must(t, tt.Click("cell-0-11"))
+		assertSoundIDs(t, "left-click unchordable number", rec.take())
+		must(t, tt.RightClick("cell-0-0"))
+		assertSoundIDs(t, "right-click revealed empty", rec.take())
+		must(t, tt.RightClick("cell-0-11"))
+		assertSoundIDs(t, "right-click revealed number", rec.take())
+
+		// Flag both mines beside cell-0-11: left-clicking a flag or an already-satisfied
+		// number with no remaining hidden neighbors has no effect and stays silent.
+		must(t, tt.RightClick("cell-0-12"))
+		must(t, tt.RightClick("cell-1-12"))
+		rec.take()
+		must(t, tt.Click("cell-0-12"))
+		assertSoundIDs(t, "left-click flagged cell", rec.take())
+		must(t, tt.Click("cell-0-11"))
+		assertSoundIDs(t, "left-click satisfied number with no hidden neighbors", rec.take())
+
+		// Post-game clicks on won and lost boards stay silent.
+		cornerBoard(tt, app, false)
+		must(t, tt.Click("cell-4-4"))
+		tt.Advance(time.Second)
+		if app.game.Status != StatusWon {
+			t.Fatal("expected won board")
+		}
+		rec.take()
+		must(t, tt.Click("cell-0-0"))
+		must(t, tt.RightClick("cell-0-0"))
+		must(t, tt.Click("cell-4-4"))
+		assertSoundIDs(t, "clicks after win", rec.take())
+
+		cornerBoard(tt, app, false)
+		must(t, tt.Click("cell-0-0"))
+		tt.Advance(time.Second)
+		if app.game.Status != StatusLost {
+			t.Fatal("expected lost board")
+		}
+		rec.take()
+		must(t, tt.Click("cell-4-4"))
+		must(t, tt.RightClick("cell-4-4"))
+		must(t, tt.Click("cell-0-0"))
+		assertSoundIDs(t, "clicks after loss", rec.take())
+	})
+
+	t.Run("classic canvas", func(t *testing.T) {
+		app, rec := newRecordedApp(7, defaultPrefs())
+		g := NewGame(Difficulty{ID: "canvas-invalid", Rows: 40, Cols: 40, Mines: 40}, true, MemberTomori, 7)
+		g.FirstClick = true
+		g.Status = StatusPlaying
+		for row := range g.Rows {
+			g.Cell(row, 20).IsMine = true
+		}
+		g.RecomputeAdjacency()
+		app.game = g
+		tt := ui.NewTester(app.view, 1280, 900)
+
+		x, y := canvasCellAt(t, tt, app, "经典棋盘", 20, 15)
+		tt.ClickAt(x, y)
+		tt.Advance(time.Second)
+		rec.take()
+
+		tt.ClickAt(x, y)
+		assertSoundIDs(t, "canvas left-click revealed empty", rec.take())
+		tt.RightClickAt(x, y)
+		assertSoundIDs(t, "canvas right-click revealed empty", rec.take())
+
+		nx, ny := canvasCellAt(t, tt, app, "经典棋盘", 20, 19)
+		tt.ClickAt(nx, ny)
+		assertSoundIDs(t, "canvas left-click unchordable number", rec.take())
+		tt.RightClickAt(nx, ny)
+		assertSoundIDs(t, "canvas right-click revealed number", rec.take())
+
+		fx, fy := canvasCellAt(t, tt, app, "经典棋盘", 20, 20)
+		tt.RightClickAt(fx, fy)
+		rec.take()
+		tt.ClickAt(fx, fy)
+		assertSoundIDs(t, "canvas left-click flagged cell", rec.take())
+
+		// Lose by opening a mine, then verify clicks on remaining cells stay silent.
+		mx, my := canvasCellAt(t, tt, app, "经典棋盘", 19, 20)
+		tt.ClickAt(mx, my)
+		tt.Advance(time.Second)
+		rec.take()
+		rx, ry := canvasCellAt(t, tt, app, "经典棋盘", 21, 21)
+		tt.ClickAt(rx, ry)
+		tt.RightClickAt(rx, ry)
+		assertSoundIDs(t, "canvas clicks after loss", rec.take())
+	})
+
+	t.Run("duel canvas", func(t *testing.T) {
+		app, rec, tt := newDuelSoundApp()
+		g := app.game
+
+		// Right-clicking AI's flag does nothing and stays silent.
+		stageAIFlag(g, 50, 50)
+		app.board.center(g, 50, 50)
+		tt.Advance(100 * time.Millisecond)
+		if c := g.Cell(50, 50); !c.Flagged || c.FlagOwner != DuelAI {
+			t.Fatal("expected AI flag at 50-50")
+		}
+		rec.take()
+		ax, ay := canvasCellAt(t, tt, app, "决斗棋盘", 50, 50)
+		tt.RightClickAt(ax, ay)
+		assertSoundIDs(t, "duel right-click AI flag", rec.take())
+
+		// Clicking during stun does nothing and stays silent.
+		g.duel.StunnedUntil = g.duel.Elapsed + 2.4
+		tt.Frame()
+		rec.take()
+		sx, sy := canvasCellAt(t, tt, app, "决斗棋盘", 52, 52)
+		tt.ClickAt(sx, sy)
+		tt.RightClickAt(sx, sy)
+		assertSoundIDs(t, "duel clicks while stunned", rec.take())
+		if g.Cell(52, 52).Revealed || g.Cell(52, 52).Flagged {
+			t.Fatal("clicks while stunned must not alter the cell")
+		}
+
+		// Left-clicking a revealed 0 cell in duel stays silent.
+		g.duel.StunnedUntil = 0
+		g.Cell(45, 45).Revealed = true
+		g.Cell(45, 45).Adjacent = 0
+		tt.Frame()
+		rec.take()
+		zx, zy := canvasCellAt(t, tt, app, "决斗棋盘", 45, 45)
+		tt.ClickAt(zx, zy)
+		tt.RightClickAt(zx, zy)
+		assertSoundIDs(t, "duel clicks on revealed empty", rec.take())
+
+		// Clicks after duel settlement stay silent.
+		g.duel.Elapsed = g.duel.Duration - 0.1
+		tt.Advance(time.Second)
+		if app.game.Status != StatusWon || !app.duelEnded {
+			t.Fatal("expected duel settlement")
+		}
+		rec.take()
+		tt.ClickAt(sx, sy)
+		tt.RightClickAt(sx, sy)
+		assertSoundIDs(t, "duel clicks after settlement", rec.take())
+	})
 }
