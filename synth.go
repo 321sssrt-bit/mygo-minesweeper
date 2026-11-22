@@ -34,6 +34,10 @@ const (
 	SoundDuelMineCue
 	SoundDuelTick
 
+	// Appended so existing IDs keep their synthesis seeds.
+	SoundPaperTouch
+	SoundPaperLiftHeavy
+
 	soundCount
 )
 
@@ -55,6 +59,8 @@ var soundNames = [soundCount]string{
 	SoundDuelPen:        "duel-pen",
 	SoundDuelMineCue:    "duel-mine-cue",
 	SoundDuelTick:       "duel-tick",
+	SoundPaperTouch:     "paper-touch",
+	SoundPaperLiftHeavy: "paper-lift-heavy",
 }
 
 func (id SoundID) String() string { return soundNames[id] }
@@ -111,12 +117,27 @@ var soundRecipes = [soundCount]soundRecipe{
 	SoundDuelPen:        {render: duelPen, peak: 0.4, fadeOut: 0.01},
 	SoundDuelMineCue:    {render: duelMineCue, peak: 0.5, fadeOut: 0.06},
 	SoundDuelTick:       {render: duelTick, peak: 0.45, fadeOut: 0.01},
+	SoundPaperTouch:     {render: paperTouch, peak: 0.25, fadeOut: 0.005},
+	SoundPaperLiftHeavy: {render: paperLiftHeavy, peak: 0.5, fadeOut: 0.015},
 }
 
 func paperLift(r *synthRand) []float64 {
 	out := samples(0.07)
 	addNoise(out, r, 0, filt{kind: bandPass, from: 3200, to: 4200, sweep: 0.05, q: 0.9}, shape{0.002, 0.018}, 1)
 	addCrackle(out, r, 0, 260, filt{kind: bandPass, from: 4500, q: 1.4}, shape{0, 0.02}, 1.4)
+	return out
+}
+
+func paperTouch(r *synthRand) []float64 {
+	out := samples(0.028)
+	addNoise(out, r, 0, filt{kind: bandPass, from: 1600, q: 0.8}, shape{0.001, 0.006}, 1)
+	return out
+}
+
+func paperLiftHeavy(r *synthRand) []float64 {
+	out := samples(0.095)
+	addNoise(out, r, 0, filt{kind: bandPass, from: 1300, to: 3200, sweep: 0.06, q: 0.8}, shape{0.004, 0.046}, 1)
+	addCrackle(out, r, 0, 420, filt{kind: bandPass, from: 4000, q: 1.2}, shape{0.003, 0.033}, 0.45)
 	return out
 }
 
