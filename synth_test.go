@@ -46,6 +46,70 @@ func TestSynthSamplesAreClean(t *testing.T) {
 	}
 }
 
+func TestSynthMotifLoudness(t *testing.T) {
+	bank := NewSoundBank()
+	measure := func(id SoundID) float64 {
+		db := shortSoundLevel(bank.Samples(id))
+		t.Logf("%-16v %6.2f dB", id, db)
+		return db
+	}
+	quietest, loudest := math.Inf(1), math.Inf(-1)
+	for id := SoundMotifTomori; id <= SoundMotifTaki; id++ {
+		db := measure(id)
+		quietest, loudest = min(quietest, db), max(loudest, db)
+	}
+	t.Logf("motif spread %.2f dB", loudest-quietest)
+	if loudest-quietest > 2 {
+		t.Errorf("motif spread %.2f dB exceeds 2 dB", loudest-quietest)
+	}
+
+	foley := []SoundID{
+		SoundPaperTouch, SoundPaperLift, SoundPaperLiftHeavy, SoundBandageOn, SoundBandageOff,
+		SoundToggle, SoundPopoverOpen, SoundPopoverClose, SoundChatNote,
+	}
+	levels := make([]float64, len(foley))
+	for i, id := range foley {
+		levels[i] = measure(id)
+	}
+	// Keep the intentionally soft paper touch and strong heavy lift from setting the reference.
+	slices.Sort(levels)
+	baseline := levels[len(levels)/2]
+	t.Logf("foley median %.2f dB, motifs %.2f to %.2f dB above it", baseline, quietest-baseline, loudest-baseline)
+	if quietest-baseline < 4 || loudest-baseline > 8 {
+		t.Error("each motif must be 4 to 8 dB above the foley median")
+	}
+	for _, id := range []SoundID{SoundWinChord, SoundHaruhikageStop} {
+		if db := measure(id); db > quietest {
+			t.Errorf("%v is %.2f dB louder than the quietest motif", id, db-quietest)
+		}
+	}
+}
+
+// Use the loudest 50 ms window so silence and reverb tails do not dilute
+// the level of a short cue. Filter coefficients are BS.1770 K-weighting at 48 kHz.
+func shortSoundLevel(samples []float32) float64 {
+	const window = SynthRate / 20
+	var energy [window]float64
+	var shelf1, shelf2, highPass1, highPass2 float64
+	var sum, peak float64
+	for i, sample := range samples {
+		x := float64(sample)
+		shelf := 1.53512485958697*x + shelf1
+		shelf1 = -2.69169618940638*x + 1.69065929318241*shelf + shelf2
+		shelf2 = 1.19839281085285*x - 0.73248077421585*shelf
+		weighted := shelf + highPass1
+		highPass1 = -2*shelf + 1.99004745483398*weighted + highPass2
+		highPass2 = shelf - 0.99007225036621*weighted
+
+		slot := i % window
+		sum -= energy[slot]
+		energy[slot] = weighted * weighted
+		sum += energy[slot]
+		peak = max(peak, sum)
+	}
+	return 10 * math.Log10(peak/window)
+}
+
 func TestSynthPaperFoley(t *testing.T) {
 	bank := NewSoundBank()
 	measure := func(id SoundID) (length int, peak, energy float64) {
