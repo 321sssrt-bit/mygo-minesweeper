@@ -74,6 +74,64 @@ func TestSynthPaperFoley(t *testing.T) {
 	}
 }
 
+func TestSynthMineThud(t *testing.T) {
+	if SoundMineThud.String() != "mine-thud" {
+		t.Errorf("mine thud name = %q, want mine-thud", SoundMineThud)
+	}
+	samples := NewSoundBank().Samples(SoundMineThud)
+	duration := float64(len(samples)) / SynthRate
+	if duration > 0.4 {
+		t.Errorf("mine thud lasts %.1f ms, want at most 400 ms", duration*1000)
+	}
+
+	var total, low, sum float64
+	for _, sample := range samples {
+		x := float64(sample)
+		total += x * x
+		sum += x
+	}
+	low = sum * sum
+	// Use Goertzel to measure only the DFT bins up to 250 Hz.
+	// Each positive-frequency bin also counts its negative-frequency mirror.
+	for bin := 1; bin*SynthRate <= 250*len(samples); bin++ {
+		coeff := 2 * math.Cos(2*math.Pi*float64(bin)/float64(len(samples)))
+		var prev, beforePrev float64
+		for _, sample := range samples {
+			prev, beforePrev = float64(sample)+coeff*prev-beforePrev, prev
+		}
+		low += 2 * (prev*prev + beforePrev*beforePrev - coeff*prev*beforePrev)
+	}
+	fraction := low / (float64(len(samples)) * total)
+	t.Logf("mine thud: %.1f ms, %.1f%% of energy at or below 250 Hz", duration*1000, fraction*100)
+	if !(fraction >= 0.8) {
+		t.Errorf("mine thud low-frequency energy fraction = %.3f, want at least 0.8", fraction)
+	}
+}
+
+func TestSynthDuelClose(t *testing.T) {
+	if SoundDuelClose.String() != "duel-close" {
+		t.Errorf("duel close name = %q, want duel-close", SoundDuelClose)
+	}
+	bank := NewSoundBank()
+	timeToPeak90 := func(id SoundID) time.Duration {
+		samples := bank.Samples(id)
+		var peak float64
+		for _, sample := range samples {
+			peak = math.Max(peak, math.Abs(float64(sample)))
+		}
+		first := slices.IndexFunc(samples, func(sample float32) bool {
+			return math.Abs(float64(sample)) >= 0.9*peak
+		})
+		return time.Duration(first) * time.Second / SynthRate
+	}
+	closeAttack := timeToPeak90(SoundDuelClose)
+	stopAttack := timeToPeak90(SoundHaruhikageStop)
+	t.Logf("time to 90%% of peak: duel close %v, Haruhikage stop %v", closeAttack, stopAttack)
+	if closeAttack <= stopAttack {
+		t.Errorf("duel close attack %v must be slower than Haruhikage stop %v", closeAttack, stopAttack)
+	}
+}
+
 func TestSynthSoundsOwnTheirSamples(t *testing.T) {
 	bank := NewSoundBank()
 	want := make(map[SoundID][]float32)

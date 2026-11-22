@@ -37,6 +37,8 @@ const (
 	// Appended so existing IDs keep their synthesis seeds.
 	SoundPaperTouch
 	SoundPaperLiftHeavy
+	SoundMineThud
+	SoundDuelClose
 
 	soundCount
 )
@@ -61,6 +63,8 @@ var soundNames = [soundCount]string{
 	SoundDuelTick:       "duel-tick",
 	SoundPaperTouch:     "paper-touch",
 	SoundPaperLiftHeavy: "paper-lift-heavy",
+	SoundMineThud:       "mine-thud",
+	SoundDuelClose:      "duel-close",
 }
 
 func (id SoundID) String() string { return soundNames[id] }
@@ -119,6 +123,8 @@ var soundRecipes = [soundCount]soundRecipe{
 	SoundDuelTick:       {render: duelTick, peak: 0.45, fadeOut: 0.01},
 	SoundPaperTouch:     {render: paperTouch, peak: 0.25, fadeOut: 0.005},
 	SoundPaperLiftHeavy: {render: paperLiftHeavy, peak: 0.5, fadeOut: 0.015},
+	SoundMineThud:       {render: mineThud, peak: 0.58, fadeOut: 0.03},
+	SoundDuelClose:      {render: duelClose, peak: 0.42, fadeOut: 0.10},
 }
 
 func paperLift(r *synthRand) []float64 {
@@ -276,6 +282,20 @@ func duelTick(r *synthRand) []float64 {
 	addTone(out, 0, 1700, shape{0.0003, 0.012}, 1)
 	addTone(out, 0, 2900, shape{0.0003, 0.006}, 0.5)
 	addNoise(out, r, 0, filt{kind: highPass, from: 4000, q: 0.7}, shape{0.0002, 0.001}, 0.4)
+	return out
+}
+
+func mineThud(r *synthRand) []float64 {
+	out := samples(0.26)
+	addNoise(out, r, 0, filt{kind: lowPass, from: 140, to: 75, sweep: 0.08, q: 0.8}, shape{0.004, 0.043}, 1)
+	addNoise(out, r, 0, filt{kind: lowPass, from: 380, q: 0.7}, shape{0.002, 0.012}, 0.25)
+	return out
+}
+
+func duelClose(_ *synthRand) []float64 {
+	out := samples(0.65)
+	addTone(out, 0, midiHz(50), shape{0.06, 0.15}, 1)
+	addTone(out, 0, midiHz(57), shape{0.06, 0.11}, 0.45)
 	return out
 }
 
