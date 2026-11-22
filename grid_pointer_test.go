@@ -298,3 +298,170 @@ func TestGridKeyboardActivationAndScreenReaderPressAction(t *testing.T) {
 			app.game.Cell(1, 2).Revealed, app.game.Moves)
 	}
 }
+
+func TestGridPointerFlagOnPressNoDoubleToggle(t *testing.T) {
+	t.Run("right press toggles flag and question immediately without double toggle on release", func(t *testing.T) {
+		app, tt := setupDeterministicGridBoard(t)
+		r := mustFindCell(t, tt, "cell-1-1")
+		cx, cy := r.X+r.W/2, r.Y+r.H/2
+		cell := app.game.Cell(1, 1)
+
+		tt.PressButton(1, cx, cy)
+		if !cell.Flagged || cell.Questioned || app.game.FlagsPlaced != 1 {
+			t.Fatalf("right press did not flag before release: flagged=%v q=%v total=%d",
+				cell.Flagged, cell.Questioned, app.game.FlagsPlaced)
+		}
+		if !tt.HasText("剩雷 0") {
+			t.Fatal("HUD remaining mines badge did not update on right press")
+		}
+		tt.ReleaseButton(1, cx, cy)
+		tt.Frame()
+		if !cell.Flagged || cell.Questioned || app.game.FlagsPlaced != 1 {
+			t.Fatalf("right release toggled flag a second time: flagged=%v q=%v total=%d",
+				cell.Flagged, cell.Questioned, app.game.FlagsPlaced)
+		}
+
+		// Second right press unflags immediately; release does not re-flag.
+		tt.PressButton(1, cx, cy)
+		if cell.Flagged || cell.Questioned || app.game.FlagsPlaced != 0 {
+			t.Fatalf("second right press did not unflag before release: flagged=%v q=%v total=%d",
+				cell.Flagged, cell.Questioned, app.game.FlagsPlaced)
+		}
+		tt.ReleaseButton(1, cx, cy)
+		tt.Frame()
+		if cell.Flagged || cell.Questioned || app.game.FlagsPlaced != 0 {
+			t.Fatalf("second right release toggled again: flagged=%v q=%v total=%d",
+				cell.Flagged, cell.Questioned, app.game.FlagsPlaced)
+		}
+
+		// With allowQuestion=true, each press steps blank -> flag -> ? -> blank.
+		app.allowQuestion = true
+		tt.PressButton(1, cx, cy)
+		if !cell.Flagged || cell.Questioned {
+			t.Fatalf("allowQuestion step 1 press failed: flagged=%v q=%v", cell.Flagged, cell.Questioned)
+		}
+		tt.ReleaseButton(1, cx, cy)
+		if !cell.Flagged || cell.Questioned {
+			t.Fatalf("allowQuestion step 1 release double-toggled: flagged=%v q=%v", cell.Flagged, cell.Questioned)
+		}
+
+		tt.PressButton(1, cx, cy)
+		if cell.Flagged || !cell.Questioned {
+			t.Fatalf("allowQuestion step 2 press failed: flagged=%v q=%v", cell.Flagged, cell.Questioned)
+		}
+		tt.ReleaseButton(1, cx, cy)
+		if cell.Flagged || !cell.Questioned {
+			t.Fatalf("allowQuestion step 2 release double-toggled: flagged=%v q=%v", cell.Flagged, cell.Questioned)
+		}
+
+		tt.PressButton(1, cx, cy)
+		if cell.Flagged || cell.Questioned {
+			t.Fatalf("allowQuestion step 3 press failed: flagged=%v q=%v", cell.Flagged, cell.Questioned)
+		}
+		tt.ReleaseButton(1, cx, cy)
+		if cell.Flagged || cell.Questioned {
+			t.Fatalf("allowQuestion step 3 release double-toggled: flagged=%v q=%v", cell.Flagged, cell.Questioned)
+		}
+	})
+
+	t.Run("flag mode left press toggles immediately without double toggle on release", func(t *testing.T) {
+		app, tt := setupDeterministicGridBoard(t)
+		r11 := mustFindCell(t, tt, "cell-1-1")
+		r12 := mustFindCell(t, tt, "cell-1-2")
+		cx, cy := r11.X+r11.W/2, r11.Y+r11.H/2
+		cell := app.game.Cell(1, 1)
+
+		tt.Key(0, ui.KeyF)
+		if !app.flagMode {
+			t.Fatal("expected flagMode=true after KeyF")
+		}
+
+		tt.Press(cx, cy)
+		if !cell.Flagged || cell.Questioned || app.game.FlagsPlaced != 1 {
+			t.Fatalf("flag-mode left press did not flag before release: flagged=%v q=%v total=%d",
+				cell.Flagged, cell.Questioned, app.game.FlagsPlaced)
+		}
+		tt.Release(cx, cy)
+		tt.Frame()
+		if !cell.Flagged || cell.Questioned || app.game.FlagsPlaced != 1 {
+			t.Fatalf("flag-mode left release toggled a second time: flagged=%v q=%v total=%d",
+				cell.Flagged, cell.Questioned, app.game.FlagsPlaced)
+		}
+
+		// Subsequent keyboard Enter on the focused cell still works in flagMode.
+		tt.Key(0, ui.KeyEnter)
+		if cell.Flagged || app.game.FlagsPlaced != 0 {
+			t.Fatalf("Enter on focused cell in flagMode did not unflag: flagged=%v total=%d",
+				cell.Flagged, app.game.FlagsPlaced)
+		}
+
+		// Full allowQuestion cycle via flag-mode left press.
+		app.allowQuestion = true
+		for step, want := range []struct {
+			flagged    bool
+			questioned bool
+		}{
+			{true, false},
+			{false, true},
+			{false, false},
+		} {
+			tt.Press(cx, cy)
+			if cell.Flagged != want.flagged || cell.Questioned != want.questioned {
+				t.Fatalf("flagMode allowQuestion step %d press: got (%v,%v) want (%v,%v)",
+					step+1, cell.Flagged, cell.Questioned, want.flagged, want.questioned)
+			}
+			tt.Release(cx, cy)
+			tt.Frame()
+			if cell.Flagged != want.flagged || cell.Questioned != want.questioned {
+				t.Fatalf("flagMode allowQuestion step %d release double-toggled: got (%v,%v) want (%v,%v)",
+					step+1, cell.Flagged, cell.Questioned, want.flagged, want.questioned)
+			}
+		}
+
+		// Leave and directly release back on origin (deferred releaseLater click) must not double-toggle.
+		app.allowQuestion = false
+		tt.Press(cx, cy)
+		if !cell.Flagged {
+			t.Fatal("expected flag on press before drag")
+		}
+		tt.Move(r12.X+r12.W/2, r12.Y+r12.H/2)
+		tt.Release(cx, cy)
+		tt.Frame()
+		if !cell.Flagged || app.game.Cell(1, 2).Flagged || app.game.FlagsPlaced != 1 {
+			t.Fatalf("deferred release after drag toggled flag: (1,1)=%v (1,2)=%v total=%d",
+				cell.Flagged, app.game.Cell(1, 2).Flagged, app.game.FlagsPlaced)
+		}
+
+		// Toggling flagMode off while holding left button must not reveal on release.
+		tt.Press(r12.X+r12.W/2, r12.Y+r12.H/2)
+		if !app.game.Cell(1, 2).Flagged {
+			t.Fatal("expected (1,2) flagged on press in flagMode")
+		}
+		tt.Key(0, ui.KeyF)
+		tt.Release(r12.X+r12.W/2, r12.Y+r12.H/2)
+		tt.Frame()
+		if !app.game.Cell(1, 2).Flagged || app.game.Cell(1, 2).Revealed || app.game.Moves != 0 {
+			t.Fatalf("release after mid-press KeyF off mutated (1,2): flagged=%v revealed=%v moves=%d",
+				app.game.Cell(1, 2).Flagged, app.game.Cell(1, 2).Revealed, app.game.Moves)
+		}
+	})
+
+	t.Run("right press while holding left press flags immediately and cancels left reveal", func(t *testing.T) {
+		app, tt := setupDeterministicGridBoard(t)
+		r11 := mustFindCell(t, tt, "cell-1-1")
+		r12 := mustFindCell(t, tt, "cell-1-2")
+
+		tt.Press(r11.X+r11.W/2, r11.Y+r11.H/2)
+		tt.PressButton(1, r12.X+r12.W/2, r12.Y+r12.H/2)
+		if !app.game.Cell(1, 2).Flagged {
+			t.Fatal("right press while holding left did not flag (1,2) immediately")
+		}
+		tt.ReleaseButton(1, r12.X+r12.W/2, r12.Y+r12.H/2)
+		tt.Release(r11.X+r11.W/2, r11.Y+r11.H/2)
+		tt.Frame()
+		if !app.game.Cell(1, 2).Flagged || app.game.Cell(1, 1).Revealed || app.game.Moves != 0 {
+			t.Fatalf("unexpected state after interleaved right+left release: (1,2).Flagged=%v (1,1).Revealed=%v moves=%d",
+				app.game.Cell(1, 2).Flagged, app.game.Cell(1, 1).Revealed, app.game.Moves)
+		}
+	})
+}

@@ -2803,9 +2803,10 @@ func (a *minesweeperApp) toggleFlagMode() {
 	a.playSound(SoundToggle, 1, 0)
 }
 
-// gridPointerPress tracks left-button press arming and leave cancellation on
-// the widget grid while suppressing mygo/ui's duplicate pointer-up Clicks() so
-// keyboard and screen-reader activation keep working through Clicks().
+// gridPointerPress tracks pointer press state on the widget grid: normal left
+// presses arm and cancel on leave, while right presses and flag-mode left
+// presses commit on press. Left-button releases suppress mygo/ui's duplicate
+// Clicks() so keyboard and screen-reader activation keep working through Clicks().
 type gridPointerPress struct {
 	downActive bool
 	downIdx    int
@@ -2860,16 +2861,22 @@ func canArmGridCell(g *Game, row, col int) bool {
 	return g.InspectNumberHover(row, col, false).Kind == HintChordable
 }
 
-func (p *gridPointerPress) handleEvent(g *Game, flagMode bool, idx, row, col int, bounds ui.Rect, ev ui.InputEvent) (handled bool, commitRow, commitCol int, commit bool) {
+func (p *gridPointerPress) handleEvent(g *Game, flagMode bool, idx, row, col int, bounds ui.Rect, ev ui.InputEvent) (handled bool, commitRow, commitCol, commitButton int, commit bool) {
 	switch ev.Kind {
 	case ui.InputPointerDown:
-		if ev.Button != 0 || flagMode {
+		if ev.Button == 1 {
 			p.cancel()
-			p.downActive = false
-			return false, -1, -1, false
+			return true, row, col, 1, true
+		}
+		if ev.Button != 0 {
+			return false, -1, -1, 0, false
 		}
 		p.downActive = true
 		p.downIdx = idx
+		if flagMode {
+			p.cancel()
+			return true, row, col, 0, true
+		}
 		if canArmGridCell(g, row, col) {
 			p.armed = true
 			p.row = row
@@ -2877,20 +2884,23 @@ func (p *gridPointerPress) handleEvent(g *Game, flagMode bool, idx, row, col int
 		} else {
 			p.cancel()
 		}
-		return true, -1, -1, false
+		return true, -1, -1, 0, false
 
 	case ui.InputPointerMove:
 		if !p.downActive || p.downIdx != idx {
-			return false, -1, -1, false
+			return false, -1, -1, 0, false
 		}
 		if p.armed && !bounds.Contains(ev.X, ev.Y) {
 			p.cancel()
 		}
-		return true, -1, -1, false
+		return true, -1, -1, 0, false
 
 	case ui.InputPointerUp:
+		if ev.Button == 1 {
+			return true, -1, -1, 0, false
+		}
 		if !p.downActive || p.downIdx != idx || ev.Button != 0 {
-			return false, -1, -1, false
+			return false, -1, -1, 0, false
 		}
 		p.downActive = false
 		inBounds := bounds.Contains(ev.X, ev.Y)
@@ -2900,16 +2910,16 @@ func (p *gridPointerPress) handleEvent(g *Game, flagMode bool, idx, row, col int
 		if p.armed && !ev.Canceled && inBounds {
 			r, c := p.row, p.col
 			p.cancel()
-			return true, r, c, true
+			return true, r, c, 0, true
 		}
 		p.cancel()
-		return true, -1, -1, false
+		return true, -1, -1, 0, false
 	}
-	return false, -1, -1, false
+	return false, -1, -1, 0, false
 }
 
 func (a *minesweeperApp) handleGridTileInput(idx, row, col int, size float32, ev ui.InputEvent) bool {
-	handled, commitRow, commitCol, commit := a.gridPress.handleEvent(
+	handled, commitRow, commitCol, commitButton, commit := a.gridPress.handleEvent(
 		a.game,
 		a.flagMode,
 		idx, row, col,
@@ -2917,7 +2927,7 @@ func (a *minesweeperApp) handleGridTileInput(idx, row, col int, size float32, ev
 		ev,
 	)
 	if commit {
-		res := a.applyCellAction(commitRow, commitCol, 0, ev.Time)
+		res := a.applyCellAction(commitRow, commitCol, commitButton, ev.Time)
 		if res.Kind != ActionNoop {
 			a.pendingResult = res
 			a.pendingRow = commitRow
@@ -3715,12 +3725,8 @@ func (a *minesweeperApp) view(c *ui.Context) {
 											})
 										}
 
-										rightClicked := tile.RightClicked()
 										clicks := tile.Clicks()
-										effectiveClicks := a.gridPress.consumeClicks(i, clicks, tile.Pressed())
-										if rightClicked {
-											a.cellMove(c, row, col, 1, now)
-										} else if effectiveClicks > 0 {
+										if a.gridPress.consumeClicks(i, clicks, tile.Pressed()) > 0 {
 											a.cellMove(c, row, col, 0, now)
 										}
 									}
