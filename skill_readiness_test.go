@@ -132,11 +132,6 @@ func TestSkillReadinessIsReadOnly(t *testing.T) {
 			if !reflect.DeepEqual(*g, before) || *boardRNG != beforeBoardRNG || *aiRNG != beforeAIRNG {
 				t.Fatal("readiness query changed game state or a random source")
 			}
-			if g.duel != nil {
-				t.Logf("three queries: charges=%d, score=%d/%d, board and AI RNG unchanged", g.SkillUsesLeft, g.duel.PlayerScore, g.duel.AIScore)
-			} else {
-				t.Logf("three queries: charges=%d, board and RNG unchanged", g.SkillUsesLeft)
-			}
 		})
 	}
 }
@@ -166,5 +161,4 @@ func assertSkillReadiness(t *testing.T, g *Game, want SkillReadiness) {
 	} else if res.Kind != ActionNoop || g.SkillUsesLeft != charges {
 		t.Fatalf("blocked skill was not a no-op: %+v, charges %d -> %d", res, charges, g.SkillUsesLeft)
 	}
-	t.Logf("readiness=%v, action=%s, charges %d -> %d, targets=%v, score delta=%d", want, res.Kind, charges, g.SkillUsesLeft, res.SkillTargets, res.ScoreDelta)
 }
