@@ -128,10 +128,15 @@ func TestDuelNativeCanvasInput(t *testing.T) {
 	if app.game.Cell(row, col).Owner != DuelPlayer {
 		t.Fatal("clicked cell did not map to player territory")
 	}
-	oldCell := app.board.Cell
-	tt.Scroll(x, y, 0, -200)
+	oldX, oldY, oldCell := app.board.X, app.board.Y, app.board.Cell
+	tt.Scroll(x, y, 40, -60)
+	if app.board.Cell != oldCell || app.board.X != oldX+40 || app.board.Y != oldY-60 {
+		t.Fatalf("scroll pan mismatch: got (%v,%v,%.2f), want (%v,%v,%.2f)",
+			app.board.X, app.board.Y, app.board.Cell, oldX+40, oldY-60, oldCell)
+	}
+	tt.Pinch(x, y, 1.25)
 	if app.board.Cell == oldCell {
-		t.Fatal("wheel did not zoom")
+		t.Fatal("pinch did not zoom")
 	}
 	tt.Advance(1200 * time.Millisecond)
 	if app.game.duel.AIScore == 0 && app.game.duel.LastAI < 0 {
@@ -1103,11 +1108,15 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 				t.Fatalf("click at initial center (%d,%d) did not reveal", centerRow, centerCol)
 			}
 
-			// Scroll zoom keeps world anchor fixed and respects [10, 42] bounds.
+			// Pinch zoom keeps world anchor fixed and respects [10, 42] bounds.
 			anchorX, anchorY := r.W*0.35, r.H*0.4
 			wx := (app.board.X + anchorX) / app.board.Cell
 			wy := (app.board.Y + anchorY) / app.board.Cell
-			tt.Scroll(r.X+anchorX, r.Y+anchorY, 0, -240)
+			beforeCell := app.board.Cell
+			tt.Pinch(r.X+anchorX, r.Y+anchorY, 1.25)
+			if app.board.Cell <= beforeCell {
+				t.Fatalf("pinch did not zoom on %s: cell=%.2f (was %.2f)", tc.name, app.board.Cell, beforeCell)
+			}
 			if math.Abs(float64((app.board.X+anchorX)/app.board.Cell-wx)) > 0.02 ||
 				math.Abs(float64((app.board.Y+anchorY)/app.board.Cell-wy)) > 0.02 {
 				t.Fatalf("zoom anchor drifted on %s", tc.name)
