@@ -721,13 +721,9 @@ func TestSoundFloodGrainsThrottled(t *testing.T) {
 	if grains[0].Speed != 1 || grains[len(grains)-1].Speed > 1.2 {
 		t.Fatalf("pitch should rise gently from 1, got %v..%v", grains[0].Speed, grains[len(grains)-1].Speed)
 	}
-	// The big flood closes on the leader's motif once its wave has spread.
-	last := len(rec.cues) - 1
-	if len(rec.cues) != len(grains)+1 || rec.cues[last].ID != SoundMotifTomori {
-		t.Fatalf("flood sounds = %v, want grains then motif-tomori", soundIDs(rec.cues))
-	}
-	if motifAt := rec.at[last]; motifAt.Before(at[len(at)-1]) || motifAt.Sub(start) > 300*time.Millisecond {
-		t.Fatalf("motif at +%v, want after the last grain and within the wave", motifAt.Sub(start))
+	// Ordinary big floods lift paper grains only; no member motif closes them.
+	if len(rec.cues) != len(grains) {
+		t.Fatalf("flood sounds = %v, want only paper-lift grains", soundIDs(rec.cues))
 	}
 	rec.take()
 
@@ -792,8 +788,8 @@ func TestSoundFloodGrainsThrottled(t *testing.T) {
 			t.Fatalf("follow-up grain %d speed %v not above %v", i, grains[i].Speed, grains[i-1].Speed)
 		}
 	}
-	if last := rec.cues[len(rec.cues)-1]; last.ID != SoundMotifTomori {
-		t.Fatalf("mid-flood sounds = %v, want closing motif-tomori", soundIDs(rec.cues))
+	if len(rec.cues) != len(grains) {
+		t.Fatalf("mid-flood sounds = %v, want only paper-lift grains", soundIDs(rec.cues))
 	}
 	rec.take()
 
@@ -843,7 +839,7 @@ func TestSoundFloodDropsStaleGrains(t *testing.T) {
 	must(t, tt.Click("cell-9-0"))
 	assertSoundIDs(t, "flood starts", rec.take(), SoundPaperLift)
 	// A stall swallows the frames the rest of the wave was due in: those
-	// grains and the closing motif are dropped, never played late.
+	// grains are dropped, never played late.
 	stalled = true
 	tt.Advance(400 * time.Millisecond)
 	stalled = false
@@ -913,11 +909,31 @@ func TestSoundMotifsFollowLeaderInBothModes(t *testing.T) {
 				}
 
 				app, rec, tt := stage()
-				wallBoard(tt, app, 0)
+				g := wallBoard(tt, app, 0)
 				must(t, tt.Click("cell-9-0"))
+				if g.RevealedSafe < bigFloodCells {
+					t.Fatalf("big flood revealed %d cells, want >= %d", g.RevealedSafe, bigFloodCells)
+				}
+				wantWash := memberImage(m.ID)
+				washFound := false
+				for _, rip := range app.ripples {
+					if rip.Color == wantWash {
+						washFound = true
+						break
+					}
+				}
+				if !washFound {
+					t.Fatalf("big flood must keep %s's 代表色 wash in ripples", m.ID)
+				}
 				tt.Advance(time.Second)
-				if got := rec.take(); got[len(got)-1].ID != motif {
-					t.Fatalf("big flood sounds = %v, want them to close on %v", soundIDs(got), motif)
+				got := rec.take()
+				if len(got) == 0 {
+					t.Fatal("big flood must still play paper-lift grains")
+				}
+				for _, c := range got {
+					if c.ID != SoundPaperLift {
+						t.Fatalf("big flood sounds = %v, want only paper-lift grains with no closing motif", soundIDs(got))
+					}
 				}
 
 				app, rec, tt = stage()
@@ -929,17 +945,25 @@ func TestSoundMotifsFollowLeaderInBothModes(t *testing.T) {
 				assertSoundIDs(t, "win", rec.take(), SoundPaperLift, motif, SoundWinChord)
 
 				app, rec, tt = stage()
-				cornerBoard(tt, app, false)
+				g = cornerBoard(tt, app, false)
 				must(t, tt.Click("cell-0-0"))
 				if app.game.Status != StatusLost {
 					t.Fatal("expected a loss")
 				}
-				assertSoundIDs(t, "loss", rec.take(), SoundPaperLift, motif)
+				lossGot := rec.take()
+				assertSoundIDs(t, "loss", lossGot, SoundMineThud)
+				if lossGot[0].Pan != columnPan(0, g.Cols) {
+					t.Fatalf("loss pan = %v, want %v", lossGot[0].Pan, columnPan(0, g.Cols))
+				}
+				tt.Advance(time.Second)
+				assertSoundIDs(t, "loss follow-up", rec.take())
 
 				app, rec, tt = stage()
 				cornerBoard(tt, app, true)
 				must(t, tt.Click("cell-0-0"))
-				assertSoundIDs(t, "春日影 loss", rec.take(), SoundPaperLift, SoundHaruhikageStop)
+				assertSoundIDs(t, "春日影 loss", rec.take(), SoundMineThud, SoundHaruhikageStop)
+				tt.Advance(time.Second)
+				assertSoundIDs(t, "春日影 loss follow-up", rec.take())
 			})
 		}
 	}
@@ -1208,9 +1232,35 @@ func TestSoundCanvasFloodGrains(t *testing.T) {
 		t.Fatalf("canvas flood grains at %v from %v, want 2 to 6 starting at the click", at, start)
 	}
 	assertGrainGaps(t, at)
-	if last := rec.cues[len(rec.cues)-1]; last.ID != SoundMotifTomori {
-		t.Fatalf("canvas flood sounds = %v, want them to close on motif-tomori", soundIDs(rec.cues))
+	if len(rec.cues) != len(grains) {
+		t.Fatalf("canvas flood sounds = %v, want only paper-lift grains with no closing motif", soundIDs(rec.cues))
 	}
+}
+
+func TestSoundClassicCanvasMineThudOnly(t *testing.T) {
+	app, rec := newRecordedApp(7, defaultPrefs())
+	g := NewGame(Difficulty{ID: "canvas-mine", Rows: 40, Cols: 40, Mines: 40}, true, MemberAnon, 7)
+	g.FirstClick = true
+	g.Status = StatusPlaying
+	for row := range g.Rows {
+		g.Cell(row, 20).IsMine = true
+	}
+	g.RecomputeAdjacency()
+	app.game = g
+	tt := ui.NewTester(app.view, 1280, 900)
+	x, y := canvasCellAt(t, tt, app, "经典棋盘", 20, 20)
+	rec.take()
+	tt.ClickAt(x, y)
+	if g.Status != StatusLost {
+		t.Fatal("expected classic canvas mine click to lose")
+	}
+	got := rec.take()
+	assertSoundIDs(t, "canvas mine hit", got, SoundMineThud)
+	if got[0].Pan != columnPan(20, g.Cols) {
+		t.Fatalf("canvas mine hit pan = %v, want %v", got[0].Pan, columnPan(20, g.Cols))
+	}
+	tt.Advance(time.Second)
+	assertSoundIDs(t, "canvas mine hit follow-up", rec.take())
 }
 
 func TestSoundDuelPassiveCuesHushInBackground(t *testing.T) {
