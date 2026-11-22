@@ -1263,6 +1263,65 @@ func TestSoundClassicCanvasMineThudOnly(t *testing.T) {
 	assertSoundIDs(t, "canvas mine hit follow-up", rec.take())
 }
 
+func TestSoundClassicMineHitClearsQueuedCues(t *testing.T) {
+	for _, haruhikage := range []bool{false, true} {
+		want := []SoundID{SoundMineThud}
+		label := "classic"
+		if haruhikage {
+			want = []SoundID{SoundMineThud, SoundHaruhikageStop}
+			label = "haruhikage"
+		}
+
+		t.Run(label+"/after big flood", func(t *testing.T) {
+			app, rec, tt := newClockedApp(defaultPrefs())
+			g := wallBoard(tt, app, 0)
+			g.Difficulty.Haruhikage = haruhikage
+			tt.Frame()
+			rec.take()
+
+			must(t, tt.Click("cell-9-0"))
+			assertSoundIDs(t, "flood starts", rec.take(), SoundPaperLift)
+			if len(app.cues.pending) == 0 {
+				t.Fatal("expected follow-up flood grains queued")
+			}
+
+			tt.Advance(10 * time.Millisecond)
+			must(t, tt.Click("cell-0-12"))
+			if g.Status != StatusLost {
+				t.Fatal("expected clicking mine to lose")
+			}
+			tt.Advance(time.Second)
+			assertSoundIDs(t, "mine hit after flood", rec.take(), want...)
+		})
+
+		t.Run(label+"/after flooding skill", func(t *testing.T) {
+			app, rec, tt := newClockedApp(defaultPrefs())
+			app.memberID = MemberRana
+			g := wallBoard(tt, app, 2)
+			g.Difficulty.Haruhikage = haruhikage
+			tt.Frame()
+			rec.take()
+
+			tt.Key(0, ui.KeyE)
+			if g.RevealedSafe < bigFloodCells || g.Status != StatusPlaying {
+				t.Fatalf("Rana's skill opened %d cells with status %v, want a big flood that plays on", g.RevealedSafe, g.Status)
+			}
+			assertSoundIDs(t, "skill fires", rec.take())
+			if len(app.cues.pending) == 0 {
+				t.Fatal("expected closing skill motif queued")
+			}
+
+			tt.Advance(10 * time.Millisecond)
+			must(t, tt.Click("cell-0-12"))
+			if g.Status != StatusLost {
+				t.Fatal("expected clicking mine to lose")
+			}
+			tt.Advance(time.Second)
+			assertSoundIDs(t, "mine hit after flooding skill", rec.take(), want...)
+		})
+	}
+}
+
 func TestSoundDuelPassiveCuesHushInBackground(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

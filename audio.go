@@ -90,6 +90,12 @@ func clampPan(pan float64) float64 {
 // playSound plays id at gain (1 = the player's volume) and pan, obeying the
 // mute switch and the master volume.
 func (a *minesweeperApp) playSound(id SoundID, gain, pan float64) {
+	// A classic 雷 hit cuts off any queued grains or skill motif right away;
+	// waiting for settleSound would let view's flushCues fire a cue due on the
+	// same frame before pendingResult reaches handleAction.
+	if id == SoundMineThud && !a.isDuel() {
+		a.clearCues()
+	}
 	a.playCue(soundCue{ID: id, Gain: gain, Pan: pan, Speed: 1})
 }
 
