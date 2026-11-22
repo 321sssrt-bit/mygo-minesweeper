@@ -46,6 +46,34 @@ func TestSynthSamplesAreClean(t *testing.T) {
 	}
 }
 
+func TestSynthPaperFoley(t *testing.T) {
+	bank := NewSoundBank()
+	measure := func(id SoundID) (length int, peak, energy float64) {
+		samples := bank.Samples(id)
+		for _, sample := range samples {
+			value := float64(sample)
+			peak = math.Max(peak, math.Abs(value))
+			energy += value * value
+		}
+		t.Logf("%s: %d samples (%.1f ms), peak %.3f, energy %.3f",
+			id, len(samples), 1000*float64(len(samples))/SynthRate, peak, energy)
+		return len(samples), peak, energy
+	}
+
+	liftLength, liftPeak, liftEnergy := measure(SoundPaperLift)
+	touchLength, touchPeak, touchEnergy := measure(SoundPaperTouch)
+	heavyLength, heavyPeak, heavyEnergy := measure(SoundPaperLiftHeavy)
+	if SoundPaperTouch.String() != "paper-touch" || SoundPaperLiftHeavy.String() != "paper-lift-heavy" {
+		t.Error("paper foley names must be paper-touch and paper-lift-heavy")
+	}
+	if touchLength < liftLength/4 || touchLength > liftLength/2 || touchPeak < liftPeak/2 || touchPeak >= liftPeak || touchEnergy >= liftEnergy {
+		t.Error("paper touch should be much shorter and quieter than paper lift")
+	}
+	if heavyLength <= liftLength || heavyLength > 3*liftLength/2 || heavyPeak < liftPeak || heavyPeak > 1.25*liftPeak || heavyEnergy < 1.5*liftEnergy {
+		t.Error("heavy paper lift should be slightly longer with similar peak and at least 50% more energy")
+	}
+}
+
 func TestSynthSoundsOwnTheirSamples(t *testing.T) {
 	bank := NewSoundBank()
 	want := make(map[SoundID][]float32)
