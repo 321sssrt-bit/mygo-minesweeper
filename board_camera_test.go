@@ -845,3 +845,254 @@ func TestCanvasCameraReducedMotionAndResetCleanup(t *testing.T) {
 		t.Fatalf("mode switch did not clear in-flight glide: gliding=%v modeIdx=%d", mApp.board.gliding(), mApp.modeIdx)
 	}
 }
+
+func TestCanvasCameraOptionAndMiddleDragPan(t *testing.T) {
+	for _, isDuel := range []bool{false, true} {
+		name := "classic-canvas"
+		if isDuel {
+			name = "duel-canvas"
+		}
+		t.Run(name, func(t *testing.T) {
+			var app *minesweeperApp
+			var tt *ui.Tester
+			var boardRect ui.Rect
+			if isDuel {
+				app, tt, boardRect = setupCameraDuelApp(t)
+			} else {
+				app, tt, boardRect = setupCameraClassicApp(t, TrackMayoiuta)
+			}
+			v, g := app.board, app.game
+			v.centerBoard(g)
+			tt.Frame()
+
+			localX, localY := boardRect.W*0.4, boardRect.H*0.4
+			screenX, screenY := boardRect.X+localX, boardRect.Y+localY
+
+			// 1. Option (Alt) + left-click with zero movement through ui.Tester must not reveal.
+			beforeX, beforeY := v.X, v.Y
+			tt.ClickAtWith(ui.Alt, screenX, screenY)
+			if v.gliding() || v.X != beforeX || v.Y != beforeY {
+				t.Fatalf("Option+click shifted camera or glided: pos=(%v,%v) gliding=%v, want (%v,%v) gliding=false",
+					v.X, v.Y, v.gliding(), beforeX, beforeY)
+			}
+			if g.FirstClick || g.Moves != 0 || g.FlagsPlaced != 0 {
+				t.Fatal("Option+click leaked cell action")
+			}
+
+			// 2. Option (Alt) + left-drag pans immediately (even within the 5px threshold,
+			// across larger drags where Option is released mid-drag, in flag mode, and starting
+			// over the minimap) without revealing or flagging any cell.
+			// mygo@v0.9.2 ui.Tester.PressButton hardcodes Mods=0, so feed modified pointer events
+			// directly into handleCanvasInput on the Tester-laid-out viewport.
+			v.centerBoard(g)
+			tt.Frame()
+			beforeX, beforeY = v.X, v.Y
+			if !app.handleCanvasInput(ui.InputEvent{
+				Kind:   ui.InputPointerDown,
+				X:      localX,
+				Y:      localY,
+				Button: 0,
+				Mods:   ui.Alt,
+			}, tt.Now()) {
+				t.Fatal("Option+PointerDown (small drag) not handled")
+			}
+			if !app.handleCanvasInput(ui.InputEvent{
+				Kind:   ui.InputPointerMove,
+				X:      localX + 3,
+				Y:      localY + 2,
+				Button: 0,
+				Mods:   ui.Alt,
+			}, tt.Now()) {
+				t.Fatal("Option+PointerMove (small drag) not handled")
+			}
+			if !app.handleCanvasInput(ui.InputEvent{
+				Kind:   ui.InputPointerUp,
+				X:      localX + 3,
+				Y:      localY + 2,
+				Button: 0,
+				Mods:   ui.Alt,
+			}, tt.Now()) {
+				t.Fatal("Option+PointerUp (small drag) not handled")
+			}
+			if v.gliding() || v.X != beforeX-3 || v.Y != beforeY-2 {
+				t.Fatalf("Option+left small drag = (%v,%v) gliding=%v, want (%v,%v) gliding=false",
+					v.X, v.Y, v.gliding(), beforeX-3, beforeY-2)
+			}
+			if g.FirstClick || g.Moves != 0 || g.FlagsPlaced != 0 {
+				t.Fatal("Option+left small drag leaked cell action")
+			}
+
+			// Larger Option+left drag where Option is released before the final move and release.
+			v.centerBoard(g)
+			tt.Frame()
+			beforeX, beforeY = v.X, v.Y
+			if !app.handleCanvasInput(ui.InputEvent{
+				Kind:   ui.InputPointerDown,
+				X:      localX,
+				Y:      localY,
+				Button: 0,
+				Mods:   ui.Alt,
+			}, tt.Now()) {
+				t.Fatal("Option+PointerDown (large drag) not handled")
+			}
+			if !app.handleCanvasInput(ui.InputEvent{
+				Kind:   ui.InputPointerMove,
+				X:      localX + 40,
+				Y:      localY + 24,
+				Button: 0,
+				Mods:   ui.Alt,
+			}, tt.Now()) {
+				t.Fatal("Option+PointerMove step 1 not handled")
+			}
+			if !app.handleCanvasInput(ui.InputEvent{
+				Kind:   ui.InputPointerMove,
+				X:      localX + 64,
+				Y:      localY + 40,
+				Button: 0,
+				Mods:   0,
+			}, tt.Now()) {
+				t.Fatal("Option+PointerMove step 2 (Option released mid-drag) not handled")
+			}
+			if !app.handleCanvasInput(ui.InputEvent{
+				Kind:   ui.InputPointerUp,
+				X:      localX + 64,
+				Y:      localY + 40,
+				Button: 0,
+				Mods:   0,
+			}, tt.Now()) {
+				t.Fatal("Option+PointerUp (Option released mid-drag) not handled")
+			}
+			if v.gliding() || v.X != beforeX-64 || v.Y != beforeY-40 {
+				t.Fatalf("Option+left drag = (%v,%v) gliding=%v, want (%v,%v) gliding=false",
+					v.X, v.Y, v.gliding(), beforeX-64, beforeY-40)
+			}
+			if g.FirstClick || g.Moves != 0 || g.FlagsPlaced != 0 {
+				t.Fatal("Option+left drag leaked cell action")
+			}
+
+			// Option+left drag in flag mode pans without placing a flag.
+			app.flagMode = true
+			v.centerBoard(g)
+			tt.Frame()
+			beforeX, beforeY = v.X, v.Y
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerDown, X: localX, Y: localY, Button: 0, Mods: ui.Alt}, tt.Now())
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerMove, X: localX + 28, Y: localY + 18, Button: 0, Mods: ui.Alt}, tt.Now())
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerUp, X: localX + 28, Y: localY + 18, Button: 0, Mods: ui.Alt}, tt.Now())
+			app.flagMode = false
+			if v.gliding() || v.X != beforeX-28 || v.Y != beforeY-18 {
+				t.Fatalf("Option+left drag in flagMode = (%v,%v) gliding=%v, want (%v,%v) gliding=false",
+					v.X, v.Y, v.gliding(), beforeX-28, beforeY-18)
+			}
+			if g.FirstClick || g.Moves != 0 || g.FlagsPlaced != 0 {
+				t.Fatal("Option+left drag in flagMode leaked cell action")
+			}
+
+			// Option+left drag starting over the minimap pans instead of triggering a minimap glide.
+			v.centerBoard(g)
+			tt.Frame()
+			beforeX, beforeY = v.X, v.Y
+			mini := v.minimapBoundsFor(g)
+			mx, my := mini.X+mini.W*0.5, mini.Y+mini.H*0.5
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerDown, X: mx, Y: my, Button: 0, Mods: ui.Alt}, tt.Now())
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerMove, X: mx - 30, Y: my - 20, Button: 0, Mods: ui.Alt}, tt.Now())
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerUp, X: mx - 30, Y: my - 20, Button: 0, Mods: ui.Alt}, tt.Now())
+			if v.gliding() || v.X != beforeX+30 || v.Y != beforeY+20 {
+				t.Fatalf("Option+left drag from minimap = (%v,%v) gliding=%v, want (%v,%v) gliding=false",
+					v.X, v.Y, v.gliding(), beforeX+30, beforeY+20)
+			}
+			if g.FirstClick || g.Moves != 0 || g.FlagsPlaced != 0 {
+				t.Fatal("Option+left drag from minimap leaked cell action")
+			}
+
+			// Mid-glide Option+left drag cancels the spring immediately and pans from displayed coordinates.
+			v.center(g, 10, 10)
+			tt.Frame()
+			tt.Key(ui.Ctrl, ui.Key0)
+			tt.Advance(60 * time.Millisecond)
+			if !v.gliding() {
+				t.Fatal("expected active glide before mid-glide Option+left drag")
+			}
+			glideX, glideY := v.X, v.Y
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerDown, X: localX, Y: localY, Button: 0, Mods: ui.Alt}, tt.Now())
+			if v.gliding() || v.X != glideX || v.Y != glideY {
+				t.Fatalf("mid-glide Option+PointerDown did not freeze camera: gliding=%v pos=(%v,%v) want=(%v,%v)",
+					v.gliding(), v.X, v.Y, glideX, glideY)
+			}
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerMove, X: localX - 32, Y: localY - 24, Button: 0, Mods: ui.Alt}, tt.Now())
+			app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerUp, X: localX - 32, Y: localY - 24, Button: 0, Mods: ui.Alt}, tt.Now())
+			wantGlideX, wantGlideY := glideX+32, glideY+24
+			if v.gliding() || abs32(v.X-wantGlideX) > 0.5 || abs32(v.Y-wantGlideY) > 0.5 {
+				t.Fatalf("mid-glide Option+left drag ended at (%v,%v) gliding=%v, want (%v,%v) gliding=false",
+					v.X, v.Y, v.gliding(), wantGlideX, wantGlideY)
+			}
+			if g.FirstClick || g.Moves != 0 || g.FlagsPlaced != 0 {
+				t.Fatal("mid-glide Option+left drag leaked cell action")
+			}
+
+			// 3. Middle-button drag (both <=5px and >5px) and zero-move click remain unchanged via ui.Tester.
+			v.centerBoard(g)
+			tt.Frame()
+			beforeX, beforeY = v.X, v.Y
+			tt.PressButton(2, screenX, screenY)
+			tt.Move(screenX+3, screenY+2)
+			tt.ReleaseButton(2, screenX+3, screenY+2)
+			if v.gliding() || v.X != beforeX-3 || v.Y != beforeY-2 {
+				t.Fatalf("middle small drag = (%v,%v) gliding=%v, want (%v,%v) gliding=false",
+					v.X, v.Y, v.gliding(), beforeX-3, beforeY-2)
+			}
+
+			v.centerBoard(g)
+			tt.Frame()
+			beforeX, beforeY = v.X, v.Y
+			tt.PressButton(2, screenX, screenY)
+			tt.Move(screenX+60, screenY+45)
+			tt.ReleaseButton(2, screenX+60, screenY+45)
+			if v.gliding() || v.X != beforeX-60 || v.Y != beforeY-45 {
+				t.Fatalf("middle drag = (%v,%v) gliding=%v, want (%v,%v) gliding=false",
+					v.X, v.Y, v.gliding(), beforeX-60, beforeY-45)
+			}
+
+			beforeX, beforeY = v.X, v.Y
+			tt.PressButton(2, screenX, screenY)
+			tt.ReleaseButton(2, screenX, screenY)
+			if v.gliding() || v.X != beforeX || v.Y != beforeY {
+				t.Fatalf("middle click shifted camera: pos=(%v,%v) want=(%v,%v)", v.X, v.Y, beforeX, beforeY)
+			}
+			if g.FirstClick || g.Moves != 0 || g.FlagsPlaced != 0 {
+				t.Fatal("middle-button gestures leaked cell action")
+			}
+
+			// 4. Unmodified left-button drag (>5px) still pans without revealing,
+			// while unmodified left-button click (<=5px) still reveals without panning.
+			v.centerBoard(g)
+			tt.Frame()
+			beforeX, beforeY = v.X, v.Y
+			tt.Press(screenX, screenY)
+			tt.Move(screenX+70, screenY+45)
+			tt.Release(screenX+70, screenY+45)
+			if v.gliding() || v.X != beforeX-70 || v.Y != beforeY-45 {
+				t.Fatalf("unmodified left drag = (%v,%v) gliding=%v, want (%v,%v) gliding=false",
+					v.X, v.Y, v.gliding(), beforeX-70, beforeY-45)
+			}
+			if g.FirstClick || g.Moves != 0 || g.FlagsPlaced != 0 {
+				t.Fatal("unmodified left drag leaked cell action")
+			}
+
+			beforeX, beforeY = v.X, v.Y
+			wantR, wantC, ok := v.cellAt(g, localX+2, localY+1)
+			if !ok {
+				t.Fatal("target cell out of bounds for unmodified left click")
+			}
+			tt.Press(screenX, screenY)
+			tt.Move(screenX+2, screenY+1)
+			tt.Release(screenX+2, screenY+1)
+			if v.X != beforeX || v.Y != beforeY {
+				t.Fatalf("unmodified left click (<=5px) unexpectedly panned: pos=(%v,%v) want=(%v,%v)",
+					v.X, v.Y, beforeX, beforeY)
+			}
+			if !g.Cell(wantR, wantC).Revealed {
+				t.Fatalf("unmodified left click did not reveal (%d,%d)", wantR, wantC)
+			}
+		})
+	}
+}
