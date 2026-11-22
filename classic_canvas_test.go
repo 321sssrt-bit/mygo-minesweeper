@@ -16,11 +16,7 @@ import (
 func classicCanvasTestView(a *minesweeperApp) func(c *ui.Context) {
 	return func(c *ui.Context) {
 		now := c.Now()
-		if a.pendingResult.Kind != ActionNoop {
-			res := a.pendingResult
-			a.pendingResult = ActionResult{}
-			a.handleAction(c, res, now)
-		}
+		a.flushPendingActions(c, now)
 		if a.game.Status == StatusPlaying {
 			if a.startedAt.IsZero() {
 				a.startedAt = now

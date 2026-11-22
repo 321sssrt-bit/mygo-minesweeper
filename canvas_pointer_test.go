@@ -429,9 +429,14 @@ func TestCanvasUnmodifiedLeftDragNoPanAndPreservedAccessibilityAndKeyboardPaths(
 				t.Fatalf("duel=%v flagMode=%v unmodified left drag moved camera: got (%v,%v,%.2f) gliding=%v, want (%v,%v,%.2f)",
 					isDuel, flagMode, v.X, v.Y, v.Cell, v.gliding(), startX, startY, startCell)
 			}
-			if g.Moves != 0 || g.FlagsPlaced != 0 {
-				t.Fatalf("duel=%v flagMode=%v unmodified left drag leaked cell action: moves=%d flags=%d",
-					isDuel, flagMode, g.Moves, g.FlagsPlaced)
+			if flagMode {
+				if g.Moves != 0 || g.FlagsPlaced != 1 || !g.Cell(19, 19).Flagged || g.Cell(23, 25).Flagged {
+					t.Fatalf("duel=%v flagMode=true unmodified left drag unexpected flag state: moves=%d flags=%d origin=%v far=%v",
+						isDuel, g.Moves, g.FlagsPlaced, g.Cell(19, 19).Flagged, g.Cell(23, 25).Flagged)
+				}
+			} else if g.Moves != 0 || g.FlagsPlaced != 0 {
+				t.Fatalf("duel=%v flagMode=false unmodified left drag leaked cell action: moves=%d flags=%d",
+					isDuel, g.Moves, g.FlagsPlaced)
 			}
 		}
 	}
@@ -524,5 +529,282 @@ func TestCanvasUnmodifiedLeftDragNoPanAndPreservedAccessibilityAndKeyboardPaths(
 	gTT.Key(0, ui.KeySpace)
 	if !gApp.game.Cell(1, 2).Revealed || gApp.game.Moves != 2 {
 		t.Fatalf("grid Space did not activate focused cell-1-2: revealed=%v moves=%d", gApp.game.Cell(1, 2).Revealed, gApp.game.Moves)
+	}
+}
+
+func TestCanvasPointerFlagOnPressAndMinimapRightClick(t *testing.T) {
+	for _, isDuel := range []bool{false, true} {
+		modeName := "classic-canvas"
+		if isDuel {
+			modeName = "duel-canvas"
+		}
+		t.Run(modeName, func(t *testing.T) {
+			t.Run("right press toggles immediately without double toggle on release", func(t *testing.T) {
+				app, tt, board := setupDeterministicCanvasBoard(t, isDuel)
+				v, g := app.board, app.game
+				r := canvasCellRect(board, v, 19, 19)
+				cx, cy := r.X+r.W/2, r.Y+r.H/2
+				cell := g.Cell(19, 19)
+
+				tt.PressButton(1, cx, cy)
+				if !cell.Flagged || cell.Questioned || g.FlagsPlaced != 1 {
+					t.Fatalf("right press did not flag before release: flagged=%v q=%v total=%d",
+						cell.Flagged, cell.Questioned, g.FlagsPlaced)
+				}
+				if isDuel && cell.FlagOwner != DuelPlayer {
+					t.Fatalf("duel right press did not assign FlagOwner=DuelPlayer: got %v", cell.FlagOwner)
+				}
+				tt.ReleaseButton(1, cx, cy)
+				tt.Frame()
+				if !cell.Flagged || cell.Questioned || g.FlagsPlaced != 1 {
+					t.Fatalf("right release toggled a second time: flagged=%v q=%v total=%d",
+						cell.Flagged, cell.Questioned, g.FlagsPlaced)
+				}
+
+				// Second right press unflags immediately; release does not re-flag.
+				tt.PressButton(1, cx, cy)
+				if cell.Flagged || cell.Questioned || g.FlagsPlaced != 0 {
+					t.Fatalf("second right press did not unflag before release: flagged=%v q=%v total=%d",
+						cell.Flagged, cell.Questioned, g.FlagsPlaced)
+				}
+				tt.ReleaseButton(1, cx, cy)
+				tt.Frame()
+				if cell.Flagged || cell.Questioned || g.FlagsPlaced != 0 {
+					t.Fatalf("second right release toggled again: flagged=%v q=%v total=%d",
+						cell.Flagged, cell.Questioned, g.FlagsPlaced)
+				}
+
+				if !isDuel {
+					// Classic canvas with allowQuestion=true steps blank -> flag -> ? -> blank on press.
+					app.allowQuestion = true
+					for step, want := range []struct {
+						flagged    bool
+						questioned bool
+					}{
+						{true, false},
+						{false, true},
+						{false, false},
+					} {
+						tt.PressButton(1, cx, cy)
+						if cell.Flagged != want.flagged || cell.Questioned != want.questioned {
+							t.Fatalf("allowQuestion step %d press: got (%v,%v) want (%v,%v)",
+								step+1, cell.Flagged, cell.Questioned, want.flagged, want.questioned)
+						}
+						tt.ReleaseButton(1, cx, cy)
+						tt.Frame()
+						if cell.Flagged != want.flagged || cell.Questioned != want.questioned {
+							t.Fatalf("allowQuestion step %d release double-toggled: got (%v,%v) want (%v,%v)",
+								step+1, cell.Flagged, cell.Questioned, want.flagged, want.questioned)
+						}
+					}
+				}
+
+				// Dragging right button from origin to neighbor flags origin once without panning or flagging neighbor.
+				app.allowQuestion = false
+				neighbor := canvasCellRect(board, v, 19, 20)
+				beforeX, beforeY := v.X, v.Y
+				tt.PressButton(1, cx, cy)
+				if !cell.Flagged || g.FlagsPlaced != 1 {
+					t.Fatalf("right press before drag did not flag origin: flagged=%v total=%d", cell.Flagged, g.FlagsPlaced)
+				}
+				tt.Move(neighbor.X+neighbor.W/2, neighbor.Y+neighbor.H/2)
+				tt.ReleaseButton(1, neighbor.X+neighbor.W/2, neighbor.Y+neighbor.H/2)
+				tt.Frame()
+				if v.X != beforeX || v.Y != beforeY {
+					t.Fatalf("right drag panned camera: got (%v,%v) want (%v,%v)", v.X, v.Y, beforeX, beforeY)
+				}
+				if !cell.Flagged || g.Cell(19, 20).Flagged || g.FlagsPlaced != 1 {
+					t.Fatalf("right drag altered flags on move/release: origin=%v neighbor=%v total=%d",
+						cell.Flagged, g.Cell(19, 20).Flagged, g.FlagsPlaced)
+				}
+			})
+
+			t.Run("flag mode left press toggles immediately without double toggle on release", func(t *testing.T) {
+				app, tt, board := setupDeterministicCanvasBoard(t, isDuel)
+				v, g := app.board, app.game
+				r := canvasCellRect(board, v, 19, 19)
+				cx, cy := r.X+r.W/2, r.Y+r.H/2
+				cell := g.Cell(19, 19)
+
+				tt.Key(0, ui.KeyF)
+				if !app.flagMode {
+					t.Fatal("expected flagMode=true after KeyF")
+				}
+
+				tt.Press(cx, cy)
+				if !cell.Flagged || cell.Questioned || g.FlagsPlaced != 1 {
+					t.Fatalf("flag-mode left press did not flag before release: flagged=%v q=%v total=%d",
+						cell.Flagged, cell.Questioned, g.FlagsPlaced)
+				}
+				tt.Release(cx, cy)
+				tt.Frame()
+				if !cell.Flagged || cell.Questioned || g.FlagsPlaced != 1 {
+					t.Fatalf("flag-mode left release toggled a second time: flagged=%v q=%v total=%d",
+						cell.Flagged, cell.Questioned, g.FlagsPlaced)
+				}
+
+				// Second left press in flagMode unflags immediately; release does not toggle again.
+				tt.Press(cx, cy)
+				if cell.Flagged || g.FlagsPlaced != 0 {
+					t.Fatalf("second flag-mode left press did not unflag before release: flagged=%v total=%d",
+						cell.Flagged, g.FlagsPlaced)
+				}
+				tt.Release(cx, cy)
+				tt.Frame()
+				if cell.Flagged || g.FlagsPlaced != 0 {
+					t.Fatalf("second flag-mode left release toggled again: flagged=%v total=%d",
+						cell.Flagged, g.FlagsPlaced)
+				}
+
+				if !isDuel {
+					app.allowQuestion = true
+					for step, want := range []struct {
+						flagged    bool
+						questioned bool
+					}{
+						{true, false},
+						{false, true},
+						{false, false},
+					} {
+						tt.Press(cx, cy)
+						if cell.Flagged != want.flagged || cell.Questioned != want.questioned {
+							t.Fatalf("flagMode allowQuestion step %d press: got (%v,%v) want (%v,%v)",
+								step+1, cell.Flagged, cell.Questioned, want.flagged, want.questioned)
+						}
+						tt.Release(cx, cy)
+						tt.Frame()
+						if cell.Flagged != want.flagged || cell.Questioned != want.questioned {
+							t.Fatalf("flagMode allowQuestion step %d release double-toggled: got (%v,%v) want (%v,%v)",
+								step+1, cell.Flagged, cell.Questioned, want.flagged, want.questioned)
+						}
+					}
+					app.allowQuestion = false
+				}
+
+				// Toggling flagMode off mid-press must not reveal or unflag on release.
+				tt.Press(cx, cy)
+				if !cell.Flagged {
+					t.Fatal("expected cell flagged on press in flagMode")
+				}
+				tt.Key(0, ui.KeyF)
+				tt.Release(cx, cy)
+				tt.Frame()
+				if !cell.Flagged || cell.Revealed || g.Moves != 0 {
+					t.Fatalf("release after mid-press KeyF off mutated cell: flagged=%v revealed=%v moves=%d",
+						cell.Flagged, cell.Revealed, g.Moves)
+				}
+
+				// Left click on minimap in flagMode still glides camera without flagging underlying cells.
+				tt.Key(0, ui.KeyF)
+				mini := v.minimapBoundsFor(g)
+				underRow, underCol, ok := v.cellAt(g, mini.X+2, mini.Y+2)
+				if !ok {
+					t.Fatal("expected valid board cell under minimap top-left")
+				}
+				flagsBefore := g.FlagsPlaced
+				tt.Press(board.X+mini.X+2, board.Y+mini.Y+2)
+				tt.Release(board.X+mini.X+2, board.Y+mini.Y+2)
+				if g.FlagsPlaced != flagsBefore || g.Cell(underRow, underCol).Flagged {
+					t.Fatalf("flagMode left click on minimap flagged underlying cell (%d,%d): flags=%d (was %d)",
+						underRow, underCol, g.FlagsPlaced, flagsBefore)
+				}
+				if !v.gliding() {
+					t.Fatal("flagMode left click on minimap did not start camera glide")
+				}
+			})
+
+			t.Run("right click on minimap does not change any cell", func(t *testing.T) {
+				app, tt, board := setupDeterministicCanvasBoard(t, isDuel)
+				v, g := app.board, app.game
+				mini := v.minimapBoundsFor(g)
+
+				centerLX, centerLY := mini.X+mini.W/2, mini.Y+mini.H/2
+				underRow, underCol, ok := v.cellAt(g, centerLX, centerLY)
+				if !ok || g.Cell(underRow, underCol).Revealed || g.Cell(underRow, underCol).Flagged {
+					t.Fatalf("precondition failed for minimap center cell (%d,%d): ok=%v", underRow, underCol, ok)
+				}
+
+				// Right press and release inside minimap (normal mode).
+				tt.PressButton(1, board.X+centerLX, board.Y+centerLY)
+				if g.FlagsPlaced != 0 || g.Cell(underRow, underCol).Flagged || g.Cell(underRow, underCol).Questioned || g.Moves != 0 {
+					t.Fatalf("minimap right press mutated cell (%d,%d): flags=%d flagged=%v q=%v moves=%d",
+						underRow, underCol, g.FlagsPlaced, g.Cell(underRow, underCol).Flagged, g.Cell(underRow, underCol).Questioned, g.Moves)
+				}
+				tt.ReleaseButton(1, board.X+centerLX, board.Y+centerLY)
+				tt.Frame()
+				if g.FlagsPlaced != 0 || g.Cell(underRow, underCol).Flagged || g.Moves != 0 {
+					t.Fatalf("minimap right release mutated cell (%d,%d): flags=%d flagged=%v moves=%d",
+						underRow, underCol, g.FlagsPlaced, g.Cell(underRow, underCol).Flagged, g.Moves)
+				}
+
+				// Right press inside minimap border, drag outside onto adjacent unrevealed cell, release outside.
+				adjRow, adjCol, adjOK := v.cellAt(g, mini.X-2, mini.Y+2)
+				if !adjOK || g.Cell(adjRow, adjCol).Revealed {
+					t.Fatalf("precondition failed for adjacent cell outside minimap (%d,%d): ok=%v", adjRow, adjCol, adjOK)
+				}
+				tt.PressButton(1, board.X+mini.X+1, board.Y+mini.Y+2)
+				tt.Move(board.X+mini.X-2, board.Y+mini.Y+2)
+				tt.ReleaseButton(1, board.X+mini.X-2, board.Y+mini.Y+2)
+				tt.Frame()
+				if g.FlagsPlaced != 0 || g.Cell(adjRow, adjCol).Flagged || g.Cell(underRow, underCol).Flagged {
+					t.Fatalf("minimap right press dragged outside leaked flag: flags=%d adj=%v under=%v",
+						g.FlagsPlaced, g.Cell(adjRow, adjCol).Flagged, g.Cell(underRow, underCol).Flagged)
+				}
+
+				// Right click on minimap while flagMode=true also leaves cells untouched.
+				tt.Key(0, ui.KeyF)
+				tt.PressButton(1, board.X+centerLX, board.Y+centerLY)
+				tt.ReleaseButton(1, board.X+centerLX, board.Y+centerLY)
+				tt.Frame()
+				if g.FlagsPlaced != 0 || g.Cell(underRow, underCol).Flagged {
+					t.Fatalf("minimap right click in flagMode mutated cell: flags=%d flagged=%v",
+						g.FlagsPlaced, g.Cell(underRow, underCol).Flagged)
+				}
+
+				// Right click on minimap over an already-flagged cell underneath must not unflag it.
+				g.ToggleFlag(underRow, underCol, false)
+				tt.Frame()
+				tt.PressButton(1, board.X+centerLX, board.Y+centerLY)
+				tt.ReleaseButton(1, board.X+centerLX, board.Y+centerLY)
+				tt.Frame()
+				if !g.Cell(underRow, underCol).Flagged || g.FlagsPlaced != 1 {
+					t.Fatalf("minimap right click unflagged existing flag underneath: flagged=%v total=%d",
+						g.Cell(underRow, underCol).Flagged, g.FlagsPlaced)
+				}
+			})
+
+			if !isDuel {
+				t.Run("same-frame left shield and right press flag preserve both feedbacks in order", func(t *testing.T) {
+					app, tt, board := setupDeterministicCanvasBoard(t, false)
+					app.memberID = MemberSoyorin
+					app.game.MemberID = MemberSoyorin
+					app.game.SkillUsesLeft = 1
+					tt.Frame()
+
+					mineR := canvasCellRect(board, app.board, 18, 18)
+					safeR := canvasCellRect(board, app.board, 19, 19)
+					mlx, mly := mineR.X-board.X+mineR.W/2, mineR.Y-board.Y+mineR.H/2
+					slx, sly := safeR.X-board.X+safeR.W/2, safeR.Y-board.Y+safeR.H/2
+					now := tt.Now()
+
+					app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerDown, Button: 0, X: mlx, Y: mly, Time: now}, now)
+					app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerUp, Button: 0, X: mlx, Y: mly, Time: now}, now)
+					app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerDown, Button: 1, X: slx, Y: sly, Time: now}, now)
+					tt.Frame()
+
+					if !app.game.Cell(18, 18).ShieldSaved || !app.game.Cell(19, 19).Flagged {
+						t.Fatalf("expected both shield and flag applied: shield=%v flag=%v",
+							app.game.Cell(18, 18).ShieldSaved, app.game.Cell(19, 19).Flagged)
+					}
+					if app.shakeAmplitude != 4.5 || !app.quoteStrip.Active || app.quoteStrip.MemberID != MemberSoyorin {
+						t.Fatalf("shield feedback was overwritten on canvas: shake=%v stripActive=%v member=%v",
+							app.shakeAmplitude, app.quoteStrip.Active, app.quoteStrip.MemberID)
+					}
+					if !tt.HasText("长崎爽世发动了「温柔的微笑」：这次就当没点过吧！") {
+						t.Fatal("shield toast was lost on canvas when same-frame right press followed left release")
+					}
+				})
+			}
+		})
 	}
 }
