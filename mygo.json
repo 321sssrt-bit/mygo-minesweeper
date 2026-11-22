@@ -1,7 +1,8 @@
 {
   "name": "MyGO!!!!! 迷子扫雷",
+  "slug": "mygo-minesweeper",
   "identifier": "dev.mygo.minesweeper",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "license": "MIT",
   "icon": "resources/icon.png"
 }
