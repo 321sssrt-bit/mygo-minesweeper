@@ -1954,7 +1954,15 @@ func (a *minesweeperApp) handleAction(c *ui.Context, res ActionResult, now time.
 		a.showQuoteStrip(actorID, quote, now)
 	}
 	if len(res.SkillTargets) > 0 {
-		a.enqueueSkillPulses(actorID, res.SkillTargets, now)
+		if a.isDuel() || a.classicOnCanvas() {
+			first := res.SkillTargets[0]
+			targets := res.SkillTargets
+			a.board.ensureVisible(a.game, first/a.game.Cols, first%a.game.Cols, now, a.motionReducedActive, func(at time.Time) {
+				a.enqueueSkillPulses(actorID, targets, at)
+			})
+		} else {
+			a.enqueueSkillPulses(actorID, res.SkillTargets, now)
+		}
 	}
 
 	switch res.Kind {

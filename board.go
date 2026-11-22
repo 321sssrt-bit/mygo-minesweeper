@@ -18,6 +18,7 @@ type cameraGlide struct {
 	targetX, targetY   float32
 	originW, originH   float32
 	last               time.Time
+	onArrive           func(time.Time)
 }
 
 type canvasPressKind uint8
@@ -313,7 +314,11 @@ func (v *boardView) stepGlide(g *Game, now time.Time) bool {
 	}
 	v.glide.last = now
 	if dt >= 1 {
+		onArrive := v.glide.onArrive
 		v.finishGlide(g)
+		if onArrive != nil {
+			onArrive(now)
+		}
 		return false
 	}
 	if dt > 0 {
@@ -333,7 +338,11 @@ func (v *boardView) stepGlide(g *Game, now time.Time) bool {
 		math.Abs(v.glide.vCell) <= cameraGlideSettleCell*60 &&
 		pxVelX <= cameraGlideSettlePx*60 &&
 		pxVelY <= cameraGlideSettlePx*60 {
+		onArrive := v.glide.onArrive
 		v.finishGlide(g)
+		if onArrive != nil {
+			onArrive(now)
+		}
 		return false
 	}
 
@@ -348,6 +357,8 @@ func (v *boardView) glideCenter(g *Game, row, col int, now time.Time, reduced bo
 	v.clamp(g)
 	tgtCell := v.Cell
 	if v.glide.active {
+		// Replacing the glide target cancels any superseded arrival callback.
+		v.glide.onArrive = nil
 		v.stepGlide(g, now)
 		if v.glide.active {
 			tgtCell = float32(v.glide.targetCell)
@@ -355,6 +366,19 @@ func (v *boardView) glideCenter(g *Game, row, col int, now time.Time, reduced bo
 	}
 	tgtX, tgtY := v.centerTarget(g, row, col, tgtCell)
 	v.startGlide(g, tgtX, tgtY, tgtCell, now, reduced)
+}
+
+func (v *boardView) ensureVisible(g *Game, row, col int, now time.Time, reduced bool, onReady func(time.Time)) {
+	if v.shows(g, row, col) {
+		onReady(now)
+		return
+	}
+	v.glideCenter(g, row, col, now, reduced)
+	if !v.glide.active {
+		onReady(now)
+		return
+	}
+	v.glide.onArrive = onReady
 }
 
 func (v *boardView) glideCenterBoard(g *Game, now time.Time, reduced bool) {
@@ -365,6 +389,7 @@ func (v *boardView) glideZoom(g *Game, atX, atY, factor float32, now time.Time, 
 	v.clamp(g)
 	baseX, baseY, baseCell := v.X, v.Y, v.Cell
 	if v.glide.active {
+		v.glide.onArrive = nil
 		v.stepGlide(g, now)
 		if v.glide.active {
 			baseCell = float32(v.glide.targetCell)

@@ -1098,3 +1098,342 @@ func TestCanvasCameraOptionAndMiddleDragPan(t *testing.T) {
 		})
 	}
 }
+
+func setupSkillCameraClassicApp(t *testing.T, seed uint64, track Difficulty, member MemberID, p *prefs) (*minesweeperApp, *ui.Tester, ui.Rect) {
+	t.Helper()
+	app := newMinesweeperAppWith(appOptions{Seed: seed, Prefs: p})
+	app.memberID = member
+	app.diffIdx = findDifficultyIdx(track.ID)
+	app.resetGame(true)
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.Frame()
+	r, ok := tt.Find("经典棋盘")
+	if !ok {
+		t.Fatal("classic canvas board missing")
+	}
+	return app, tt, r
+}
+
+func TestCanvasCameraSkillTargetGlide(t *testing.T) {
+	t.Run("off_viewport_glides_and_defers_pulses_until_arrival", func(t *testing.T) {
+		app, tt, _ := setupSkillCameraClassicApp(t, 42, TrackMayoiuta, MemberTomori, nil)
+		v, g := app.board, app.game
+		// Reveal near top-left so Tomori's preferred frontier targets stay around (5,5),
+		// then move the camera to the opposite corner so the skill target is off-viewport.
+		g.Reveal(5, 5)
+		v.center(g, 90, 90)
+		tt.Frame()
+		startX, startY := v.X, v.Y
+		fireAt := tt.Now()
+
+		tt.Key(0, ui.KeyE)
+		if !v.gliding() {
+			t.Fatal("off-viewport skill did not start camera glide")
+		}
+		if len(app.skillPulses) != 0 {
+			t.Fatalf("skill pulses started before glide finished: %+v", app.skillPulses)
+		}
+
+		lastGlidingAt := fireAt
+		var settledAt time.Time
+		for step := 0; step < 500; step++ {
+			tt.Advance(time.Millisecond)
+			if v.gliding() {
+				if len(app.skillPulses) != 0 {
+					t.Fatalf("skill pulses started mid-glide at +%dms: %+v", step+1, app.skillPulses)
+				}
+				lastGlidingAt = tt.Now()
+				continue
+			}
+			settledAt = tt.Now()
+			break
+		}
+		if settledAt.IsZero() {
+			t.Fatal("off-viewport skill glide did not settle within 500ms")
+		}
+		if !settledAt.After(fireAt) {
+			t.Fatalf("expected arrival after fire time: fire=%v settled=%v", fireAt, settledAt)
+		}
+		if len(app.skillPulses) != 1 {
+			t.Fatalf("expected 1 skill pulse on arrival, got %d (%+v)", len(app.skillPulses), app.skillPulses)
+		}
+		pulse := app.skillPulses[0]
+		tRow, tCol := pulse.Index/g.Cols, pulse.Index%g.Cols
+		if !v.shows(g, tRow, tCol) {
+			t.Fatalf("target (%d,%d) not inside visible viewport after glide (X=%v Y=%v)", tRow, tCol, v.X, v.Y)
+		}
+		if v.X == startX && v.Y == startY {
+			t.Fatal("camera did not move toward off-viewport skill target")
+		}
+		wantX, wantY := v.centerTarget(g, tRow, tCol, v.Cell)
+		if abs32(v.X-wantX) > 0.5 || abs32(v.Y-wantY) > 0.5 {
+			t.Fatalf("settled camera = (%v,%v), want centered on (%d,%d) at (%v,%v)", v.X, v.Y, tRow, tCol, wantX, wantY)
+		}
+		if !pulse.Start.After(lastGlidingAt) || pulse.Start.After(settledAt) {
+			t.Fatalf("pulse start %v outside arrival window (%v, %v]", pulse.Start, lastGlidingAt, settledAt)
+		}
+
+		// Pulse remains active for its full duration from arrival, then clears cleanly.
+		tt.Advance(120 * time.Millisecond)
+		if len(app.skillPulses) != 1 {
+			t.Fatalf("expected skill pulse active 120ms after arrival, got %d", len(app.skillPulses))
+		}
+		tt.Advance(skillPulseDuration)
+		if len(app.skillPulses) != 0 {
+			t.Fatalf("expected skill pulse cleared after duration, remaining=%d", len(app.skillPulses))
+		}
+	})
+
+	t.Run("off_viewport_multi_target_anon_and_minimap_occluded_target", func(t *testing.T) {
+		// Multi-target Anon skill: both pulses wait until the glide reaches target 0.
+		app, tt, _ := setupSkillCameraClassicApp(t, 99, TrackUtakotoba, MemberAnon, nil)
+		v, g := app.board, app.game
+		g.Reveal(25, 25)
+		v.center(g, 25, 25)
+		tt.Frame()
+
+		tt.Key(0, ui.KeyE)
+		if !v.gliding() {
+			t.Fatal("expected Anon off-viewport target 0 to start camera glide")
+		}
+		if len(app.skillPulses) != 0 {
+			t.Fatalf("expected Anon pulses deferred during glide, got %d", len(app.skillPulses))
+		}
+		lastGlidingAt := tt.Now()
+		var settledAt time.Time
+		for range 500 {
+			tt.Advance(time.Millisecond)
+			if v.gliding() {
+				if len(app.skillPulses) != 0 {
+					t.Fatalf("Anon pulses started mid-glide: %+v", app.skillPulses)
+				}
+				lastGlidingAt = tt.Now()
+				continue
+			}
+			settledAt = tt.Now()
+			break
+		}
+		if settledAt.IsZero() || len(app.skillPulses) != 2 {
+			t.Fatalf("expected 2 Anon pulses on arrival, settled=%v pulses=%d", settledAt, len(app.skillPulses))
+		}
+		r0, c0 := app.skillPulses[0].Index/g.Cols, app.skillPulses[0].Index%g.Cols
+		if !v.shows(g, r0, c0) {
+			t.Fatalf("Anon target 0 (%d,%d) not visible after glide", r0, c0)
+		}
+		for i, p := range app.skillPulses {
+			if !p.Start.After(lastGlidingAt) || p.Start.After(settledAt) {
+				t.Fatalf("Anon pulse[%d] start %v outside arrival window (%v, %v]", i, p.Start, lastGlidingAt, settledAt)
+			}
+		}
+
+		// Target occluded behind the minimap counts as outside the visible viewport and glides clear.
+		mApp, mTT, _ := setupSkillCameraClassicApp(t, 42, TrackMayoiuta, MemberTomori, nil)
+		mv, mg := mApp.board, mApp.game
+		mg.FirstClick = true
+		mg.Status = StatusPlaying
+		mg.Cell(98, 98).IsMine = true
+		mg.Cell(99, 98).IsMine = true
+		mg.Cell(98, 99).IsMine = false
+		mg.Cell(99, 99).IsMine = false
+		mg.RecomputeAdjacency()
+		mg.Reveal(99, 99)
+		mini := mv.minimapBoundsFor(mg)
+		mv.X = float32(mg.Cols)*mv.Cell - mv.Width
+		mv.Y = float32(mg.Rows)*mv.Cell - mv.Height
+		mv.clamp(mg)
+		mTT.Frame()
+		if mv.shows(mg, 98, 99) || !mv.minimapFor(mg, (99.5)*mv.Cell-mv.X, (98.5)*mv.Cell-mv.Y) {
+			t.Fatalf("precondition failed: (98,99) expected under minimap %+v (X=%v Y=%v)", mini, mv.X, mv.Y)
+		}
+		mTT.Key(0, ui.KeyE)
+		if !mv.gliding() || len(mApp.skillPulses) != 0 {
+			t.Fatalf("minimap-occluded target did not glide with deferred pulse: gliding=%v pulses=%d", mv.gliding(), len(mApp.skillPulses))
+		}
+		mTT.Advance(260 * time.Millisecond)
+		if mv.gliding() || len(mApp.skillPulses) != 1 {
+			t.Fatalf("minimap-occluded glide did not settle with pulse: gliding=%v pulses=%d", mv.gliding(), len(mApp.skillPulses))
+		}
+		tr, tc := mApp.skillPulses[0].Index/mg.Cols, mApp.skillPulses[0].Index%mg.Cols
+		if tr != 98 || tc != 99 || !mv.shows(mg, tr, tc) {
+			t.Fatalf("minimap-occluded target = (%d,%d) shows=%v, want (98,99) visible", tr, tc, mv.shows(mg, tr, tc))
+		}
+	})
+
+	t.Run("in_viewport_keeps_camera_still_and_starts_pulses_immediately", func(t *testing.T) {
+		app, tt, _ := setupSkillCameraClassicApp(t, 42, TrackMayoiuta, MemberTomori, nil)
+		v, g := app.board, app.game
+		// Keep a single numbered cell open at (50,50) so Tomori's frontier pool stays
+		// strictly on its 8 neighbours inside the viewport, while the camera is offset at (50,54).
+		g.PlaceMines(0, 0)
+		g.FirstClick = true
+		g.Status = StatusPlaying
+		g.Cell(50, 50).IsMine = false
+		g.Cell(49, 49).IsMine = true
+		g.Cell(50, 51).IsMine = false
+		g.RecomputeAdjacency()
+		g.Reveal(50, 50)
+		v.center(g, 50, 54)
+		tt.Frame()
+		beforeX, beforeY, beforeCell := v.X, v.Y, v.Cell
+		fireAt := tt.Now()
+
+		tt.Key(0, ui.KeyE)
+		if v.gliding() {
+			t.Fatal("in-viewport skill unexpectedly started camera glide")
+		}
+		if v.X != beforeX || v.Y != beforeY || v.Cell != beforeCell {
+			t.Fatalf("in-viewport skill moved camera: got (%v,%v,%.2f), want (%v,%v,%.2f)",
+				v.X, v.Y, v.Cell, beforeX, beforeY, beforeCell)
+		}
+		if len(app.skillPulses) != 1 {
+			t.Fatalf("expected immediate skill pulse, got %d", len(app.skillPulses))
+		}
+		tRow, tCol := app.skillPulses[0].Index/g.Cols, app.skillPulses[0].Index%g.Cols
+		if !v.shows(g, tRow, tCol) {
+			t.Fatalf("precondition failed: target (%d,%d) was not in viewport", tRow, tCol)
+		}
+		if !app.skillPulses[0].Start.Equal(fireAt) {
+			t.Fatalf("in-viewport pulse start = %v, want %v", app.skillPulses[0].Start, fireAt)
+		}
+		tt.Advance(200 * time.Millisecond)
+		if v.gliding() || v.X != beforeX || v.Y != beforeY || v.Cell != beforeCell {
+			t.Fatalf("camera drifted after in-viewport skill: got (%v,%v,%.2f) gliding=%v",
+				v.X, v.Y, v.Cell, v.gliding())
+		}
+	})
+
+	t.Run("reduced_motion_snaps_on_frame_0", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			mode         motionMode
+			systemReduce bool
+		}{
+			{"motion_reduced", motionReduced, false},
+			{"system_reduce_motion", motionSystem, true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				p := defaultPrefs()
+				p.Motion = tc.mode
+				app, tt, _ := setupSkillCameraClassicApp(t, 42, TrackMayoiuta, MemberTomori, &p)
+				tt.SetPreferences(ui.Preferences{ReduceMotion: tc.systemReduce})
+				tt.Frame()
+
+				v, g := app.board, app.game
+				g.Reveal(5, 5)
+				v.center(g, 90, 90)
+				tt.Frame()
+				beforeRevealed := make([]bool, len(g.Cells))
+				for i := range g.Cells {
+					beforeRevealed[i] = g.Cells[i].Revealed
+				}
+
+				tt.Key(0, ui.KeyE)
+				if v.gliding() {
+					t.Fatal("reduced motion skill unexpectedly started glide")
+				}
+				if len(app.skillPulses) != 0 {
+					t.Fatalf("reduced motion should not spawn skill pulses, got %d", len(app.skillPulses))
+				}
+				foundVisible := false
+				for i := range g.Cells {
+					if !beforeRevealed[i] && g.Cells[i].Revealed {
+						if v.shows(g, g.Cells[i].Row, g.Cells[i].Col) {
+							foundVisible = true
+							break
+						}
+					}
+				}
+				if !foundVisible {
+					t.Fatalf("reduced motion skill did not snap target into viewport on frame 0 (X=%v Y=%v)", v.X, v.Y)
+				}
+			})
+		}
+
+		// Turning on reduced motion mid-skill-glide snaps straight to target and drops deferred pulses.
+		app, tt, _ := setupSkillCameraClassicApp(t, 42, TrackMayoiuta, MemberTomori, nil)
+		v, g := app.board, app.game
+		g.Reveal(5, 5)
+		v.center(g, 90, 90)
+		tt.Frame()
+		beforeRevealed := make([]bool, len(g.Cells))
+		for i := range g.Cells {
+			beforeRevealed[i] = g.Cells[i].Revealed
+		}
+		tt.Key(0, ui.KeyE)
+		tt.Advance(48 * time.Millisecond)
+		if !v.gliding() {
+			t.Fatal("expected active skill glide before toggling ReduceMotion")
+		}
+		tt.SetPreferences(ui.Preferences{ReduceMotion: true})
+		if v.gliding() || len(app.skillPulses) != 0 {
+			t.Fatalf("mid-glide ReduceMotion failed: gliding=%v pulses=%d", v.gliding(), len(app.skillPulses))
+		}
+		foundVisible := false
+		for i := range g.Cells {
+			if !beforeRevealed[i] && g.Cells[i].Revealed && v.shows(g, g.Cells[i].Row, g.Cells[i].Col) {
+				foundVisible = true
+				break
+			}
+		}
+		if !foundVisible {
+			t.Fatalf("mid-glide ReduceMotion did not snap target into viewport (X=%v Y=%v)", v.X, v.Y)
+		}
+	})
+
+	t.Run("mid_glide_press_and_scroll_takeover", func(t *testing.T) {
+		// 1. Pointer press mid-skill-glide stops glide immediately at the painted position.
+		app, tt, boardRect := setupSkillCameraClassicApp(t, 42, TrackMayoiuta, MemberTomori, nil)
+		v, g := app.board, app.game
+		g.Reveal(5, 5)
+		v.center(g, 90, 90)
+		tt.Frame()
+
+		tt.Key(0, ui.KeyE)
+		tt.Advance(48 * time.Millisecond)
+		if !v.gliding() || len(app.skillPulses) != 0 {
+			t.Fatalf("expected active skill glide with deferred pulses at 48ms: gliding=%v pulses=%d", v.gliding(), len(app.skillPulses))
+		}
+		shownX, shownY, shownCell := v.X, v.Y, v.Cell
+		px, py := boardRect.X+boardRect.W*0.4, boardRect.Y+boardRect.H*0.4
+		tt.Press(px, py)
+		if v.gliding() || v.X != shownX || v.Y != shownY || v.Cell != shownCell {
+			t.Fatalf("press takeover failed: gliding=%v pos=(%v,%v,%.2f), want (%v,%v,%.2f)",
+				v.gliding(), v.X, v.Y, v.Cell, shownX, shownY, shownCell)
+		}
+		tt.Release(px+v.Cell*2, py)
+		tt.Advance(300 * time.Millisecond)
+		if v.gliding() || v.X != shownX || v.Y != shownY || len(app.skillPulses) != 0 {
+			t.Fatalf("glide or deferred pulses resumed after press takeover: gliding=%v pos=(%v,%v) pulses=%d",
+				v.gliding(), v.X, v.Y, len(app.skillPulses))
+		}
+
+		// 2. Scroll/wheel mid-skill-glide takes over immediately and pans from the painted position.
+		for _, sc := range []struct {
+			name string
+			send func(x, y, dx, dy float32)
+		}{
+			{"scroll", tt.Scroll},
+			{"wheel", tt.Wheel},
+		} {
+			v.center(g, 90, 90)
+			tt.Frame()
+			tt.Key(0, ui.KeyE)
+			tt.Advance(48 * time.Millisecond)
+			if !v.gliding() || len(app.skillPulses) != 0 {
+				t.Fatalf("%s: expected active skill glide at 48ms: gliding=%v pulses=%d", sc.name, v.gliding(), len(app.skillPulses))
+			}
+			panX, panY, panCell := v.X, v.Y, v.Cell
+			sc.send(boardRect.X+boardRect.W*0.4, boardRect.Y+boardRect.H*0.4, 40, 30)
+			wantX, wantY := panX+40, panY+30
+			if v.gliding() || v.Cell != panCell || abs32(v.X-wantX) > 0.5 || abs32(v.Y-wantY) > 0.5 {
+				t.Fatalf("%s takeover failed: gliding=%v pos=(%v,%v,%.2f), want (%v,%v,%.2f)",
+					sc.name, v.gliding(), v.X, v.Y, v.Cell, wantX, wantY, panCell)
+			}
+			tt.Advance(300 * time.Millisecond)
+			if v.gliding() || abs32(v.X-wantX) > 0.5 || abs32(v.Y-wantY) > 0.5 || len(app.skillPulses) != 0 {
+				t.Fatalf("%s takeover drifted or fired deferred pulses: gliding=%v pos=(%v,%v) pulses=%d",
+					sc.name, v.gliding(), v.X, v.Y, len(app.skillPulses))
+			}
+		}
+	})
+}
