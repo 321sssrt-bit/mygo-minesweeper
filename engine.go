@@ -652,6 +652,7 @@ const (
 )
 
 // SkillReadiness reports the current result without consuming charges or choosing a target.
+// Disabled and passive skills keep their reason throughout the game.
 func (g *Game) SkillReadiness() SkillReadiness {
 	if reason := g.skillBlockReason(); reason != SkillReady || g.duel != nil {
 		return reason
@@ -666,16 +667,16 @@ func (g *Game) SkillReadiness() SkillReadiness {
 
 func (g *Game) skillBlockReason() SkillReadiness {
 	switch {
-	case g.Status == StatusWon || g.Status == StatusLost:
-		return SkillGameOver
 	case !g.BandMode:
 		return SkillDisabled
+	case g.duel == nil && FindMember(g.MemberID).Passive:
+		return SkillPassive
+	case g.Status == StatusWon || g.Status == StatusLost:
+		return SkillGameOver
 	case g.Status != StatusPlaying:
 		return SkillNotStarted
 	case g.SkillUsesLeft <= 0:
 		return SkillExhausted
-	case g.duel == nil && FindMember(g.MemberID).Passive:
-		return SkillPassive
 	case g.duel != nil && g.duel.playerStunned() && g.MemberID != MemberTomori:
 		return SkillStunned
 	default:

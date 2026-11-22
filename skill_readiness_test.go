@@ -14,18 +14,26 @@ func TestSkillReadinessMatchesActivation(t *testing.T) {
 			t.Run(string(mode)+"/"+string(member.ID), func(t *testing.T) {
 				diff := Difficulty{Gameplay: mode, Rows: 9, Cols: 10, Mines: 14, SkillCharges: 1}
 				g := NewGame(diff, true, member.ID, 99)
-				assertSkillReadiness(t, g, SkillNotStarted)
-				g.Reveal(4, 4)
 				if mode == GameplayClassic && member.ID == MemberSoyorin {
+					assertSkillReadiness(t, g, SkillPassive)
+					g.Reveal(4, 4)
 					assertSkillReadiness(t, g, SkillPassive)
 					mine := firstSkillTestMine(t, g)
 					res := g.Reveal(mine.Row, mine.Col)
 					if res.Kind != ActionShielded || g.SkillUsesLeft != 0 {
 						t.Fatalf("expected passive shield to spend its charge, got %s with %d charges", res.Kind, g.SkillUsesLeft)
 					}
-				} else {
-					assertSkillReadiness(t, g, SkillReady)
+					assertSkillReadiness(t, g, SkillPassive)
+					mine = firstSkillTestMine(t, g)
+					if res := g.Reveal(mine.Row, mine.Col); res.Kind != ActionLost {
+						t.Fatalf("expected a loss after the shield was spent, got %s", res.Kind)
+					}
+					assertSkillReadiness(t, g, SkillPassive)
+					return
 				}
+				assertSkillReadiness(t, g, SkillNotStarted)
+				g.Reveal(4, 4)
+				assertSkillReadiness(t, g, SkillReady)
 				assertSkillReadiness(t, g, SkillExhausted)
 			})
 		}
@@ -36,7 +44,13 @@ func TestSkillReadinessOtherReasons(t *testing.T) {
 	diff := Difficulty{Gameplay: GameplayClassic, Rows: 9, Cols: 10, Mines: 14, SkillCharges: 1}
 	t.Run("disabled", func(t *testing.T) {
 		g := NewGame(diff, false, MemberTomori, 99)
+		assertSkillReadiness(t, g, SkillDisabled)
 		g.Reveal(4, 4)
+		assertSkillReadiness(t, g, SkillDisabled)
+		mine := firstSkillTestMine(t, g)
+		if res := g.Reveal(mine.Row, mine.Col); res.Kind != ActionLost {
+			t.Fatalf("expected a classic loss, got %s", res.Kind)
+		}
 		assertSkillReadiness(t, g, SkillDisabled)
 	})
 	t.Run("classic-lost", func(t *testing.T) {
@@ -130,7 +144,7 @@ func TestSkillReadinessIsReadOnly(t *testing.T) {
 func firstSkillTestMine(t *testing.T, g *Game) Cell {
 	t.Helper()
 	for _, c := range g.Cells {
-		if c.IsMine {
+		if c.IsMine && !c.Revealed && !c.Flagged {
 			return c
 		}
 	}
