@@ -98,11 +98,12 @@ func (b *SoundBank) Samples(id SoundID) []float32 { return b.samples[id] }
 
 type soundRecipe struct {
 	render func(r *synthRand) []float64
-	// peak is the normalized loudness; drive, when set, soft-clips before it.
+	// drive soft-limits transients before normalization to the sample peak.
 	peak, drive float64
 	fadeOut     float64
 }
 
+// Motif and closing cue peaks are calibrated against TestSynthMotifLoudness.
 var soundRecipes = [soundCount]soundRecipe{
 	SoundPaperLift:      {render: paperLift, peak: 0.45, fadeOut: 0.01},
 	SoundBandageOn:      {render: bandageOn, peak: 0.5, fadeOut: 0.02},
@@ -111,13 +112,13 @@ var soundRecipes = [soundCount]soundRecipe{
 	SoundPopoverOpen:    {render: popoverOpen, peak: 0.4, fadeOut: 0.03},
 	SoundPopoverClose:   {render: popoverClose, peak: 0.4, fadeOut: 0.02},
 	SoundChatNote:       {render: chatNote, peak: 0.45, fadeOut: 0.02},
-	SoundMotifTomori:    {render: motifTomori, peak: 0.7, fadeOut: 0.2},
-	SoundMotifAnon:      {render: motifAnon, peak: 0.7, fadeOut: 0.15},
-	SoundMotifRana:      {render: motifRana, peak: 0.7, drive: 1.6, fadeOut: 0.15},
-	SoundMotifSoyo:      {render: motifSoyo, peak: 0.75, fadeOut: 0.15},
-	SoundMotifTaki:      {render: motifTaki, peak: 0.7, fadeOut: 0.03},
-	SoundHaruhikageStop: {render: haruhikageStop, peak: 0.8, drive: 1.2, fadeOut: 0.004},
-	SoundWinChord:       {render: winChord, peak: 0.8, fadeOut: 0.35},
+	SoundMotifTomori:    {render: motifTomori, peak: 0.59, fadeOut: 0.2},
+	SoundMotifAnon:      {render: motifAnon, peak: 0.67, fadeOut: 0.15},
+	SoundMotifRana:      {render: motifRana, peak: 0.39, drive: 1.6, fadeOut: 0.15},
+	SoundMotifSoyo:      {render: motifSoyo, peak: 0.84, fadeOut: 0.15},
+	SoundMotifTaki:      {render: motifTaki, peak: 0.77, drive: 0.75, fadeOut: 0.03},
+	SoundHaruhikageStop: {render: haruhikageStop, peak: 0.45, drive: 1.2, fadeOut: 0.004},
+	SoundWinChord:       {render: winChord, peak: 0.49, fadeOut: 0.35},
 	SoundDuelPen:        {render: duelPen, peak: 0.4, fadeOut: 0.01},
 	SoundDuelMineCue:    {render: duelMineCue, peak: 0.5, fadeOut: 0.06},
 	SoundDuelTick:       {render: duelTick, peak: 0.45, fadeOut: 0.01},
@@ -331,11 +332,13 @@ func strum(out []float64, r *synthRand, start int, notes []float64, gap, brightn
 	}
 }
 
-// addBass is a warm fingered string with its fundamental reinforced, which
-// small speakers would otherwise lose.
 func addBass(out []float64, r *synthRand, start int, note, gain float64) {
-	addPluck(out, r, start, len(out)-start, midiHz(note), 1.6, 0.35, gain)
-	addTone(out, start, midiHz(note), shape{0.004, 0.6}, 0.5*gain)
+	freq := midiHz(note)
+	addPluck(out, r, start, len(out)-start, freq, 1.6, 0.35, gain)
+	addTone(out, start, freq, shape{0.004, 0.6}, 0.5*gain)
+	// The upper partials carry the bass notes on speakers that lose the fundamental.
+	addTone(out, start, 3*freq, shape{0.004, 0.18}, 0.22*gain)
+	addTone(out, start, 4*freq, shape{0.004, 0.14}, 0.16*gain)
 }
 
 func addStick(out []float64, r *synthRand, start int, gain float64) {
