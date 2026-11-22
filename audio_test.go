@@ -747,8 +747,9 @@ func TestSoundFloodGrainsThrottled(t *testing.T) {
 		t.Fatalf("quick reveal timestamps = %v from %v, want +0ms, +10ms, +40ms", at, firstAt)
 	}
 	for i, c := range grains {
-		if c.Pan != columnPan(13, g.Cols) || c.Speed != 1 {
-			t.Fatalf("quick reveal %d = %+v, want col 13 pan at speed 1", i, c)
+		wantSpeed := min(revealStreakMaxSpeed, 1+float64(i)*revealStreakRise)
+		if c.Pan != columnPan(13, g.Cols) || !gainNear(c.Speed, wantSpeed) {
+			t.Fatalf("quick reveal %d = %+v, want col 13 pan at speed %v", i, c, wantSpeed)
 		}
 	}
 	for _, row := range []int{2, 4, 6} {
@@ -778,8 +779,9 @@ func TestSoundFloodGrainsThrottled(t *testing.T) {
 	if !at[0].Equal(start) || grains[0].Pan != columnPan(0, g.Cols) || grains[0].Speed != 1 {
 		t.Fatalf("flood primary hit = %+v at +%v, want col 0 at +0ms speed 1", grains[0], at[0].Sub(start))
 	}
-	if at[1].Sub(start) != 20*time.Millisecond || grains[1].Pan != columnPan(13, g.Cols) || grains[1].Speed != 1 {
-		t.Fatalf("mid-flood primary hit = %+v at +%v, want col 13 at +20ms speed 1", grains[1], at[1].Sub(start))
+	wantSecondSpeed := min(revealStreakMaxSpeed, 1+revealStreakRise)
+	if at[1].Sub(start) != 20*time.Millisecond || grains[1].Pan != columnPan(13, g.Cols) || !gainNear(grains[1].Speed, wantSecondSpeed) {
+		t.Fatalf("mid-flood primary hit = %+v at +%v, want col 13 at +20ms speed %v", grains[1], at[1].Sub(start), wantSecondSpeed)
 	}
 	assertGrainGaps(t, at[1:])
 	for i := 2; i < len(grains); i++ {
@@ -812,10 +814,13 @@ func TestSoundFloodGrainsThrottled(t *testing.T) {
 	if !at[0].Equal(start) || grains[0].Pan != columnPan(13, g.Cols) || grains[0].Speed != 1 {
 		t.Fatalf("first primary hit = %+v at +%v", grains[0], at[0].Sub(start))
 	}
-	if at[1].Sub(start) != 10*time.Millisecond || grains[1].Pan != columnPan(0, g.Cols) || grains[1].Speed != 1 {
-		t.Fatalf("flood primary hit = %+v at +%v", grains[1], at[1].Sub(start))
+	if at[1].Sub(start) != 10*time.Millisecond || grains[1].Pan != columnPan(0, g.Cols) || !gainNear(grains[1].Speed, wantSecondSpeed) {
+		t.Fatalf("flood primary hit = %+v at +%v, want speed %v", grains[1], at[1].Sub(start), wantSecondSpeed)
 	}
 	assertGrainGaps(t, at[1:])
+	if grains[2].Speed <= grains[1].Speed {
+		t.Fatalf("flood follow-up grain speed %v should rise above its primary hit %v", grains[2].Speed, grains[1].Speed)
+	}
 	if floodGrains := grains[1:]; len(floodGrains) > paperGrainsPerWave {
 		t.Fatalf("flood lifted %d grains, want at most %d", len(floodGrains), paperGrainsPerWave)
 	}
@@ -1386,8 +1391,9 @@ func TestSoundQuickCanvasRevealsPlayEveryPrimaryHit(t *testing.T) {
 		t.Fatalf("canvas reveal timestamps = %v from %v, want +0ms and +10ms", at, start)
 	}
 	for i, c := range grains {
-		if c.Pan != columnPan(21, g.Cols) || c.Speed != 1 {
-			t.Fatalf("canvas primary hit %d = %+v, want col 21 pan at speed 1", i, c)
+		wantSpeed := min(revealStreakMaxSpeed, 1+float64(i)*revealStreakRise)
+		if c.Pan != columnPan(21, g.Cols) || !gainNear(c.Speed, wantSpeed) {
+			t.Fatalf("canvas primary hit %d = %+v, want col 21 pan at speed %v", i, c, wantSpeed)
 		}
 	}
 	rec.take()
@@ -1411,10 +1417,110 @@ func TestSoundQuickCanvasRevealsPlayEveryPrimaryHit(t *testing.T) {
 	if !at[0].Equal(start) || grains[0].Pan != columnPan(5, g.Cols) || grains[0].Speed != 1 {
 		t.Fatalf("canvas flood primary hit = %+v at +%v", grains[0], at[0].Sub(start))
 	}
-	if at[1].Sub(start) != 10*time.Millisecond || grains[1].Pan != columnPan(21, g.Cols) || grains[1].Speed != 1 {
-		t.Fatalf("canvas quick reveal hit = %+v at +%v", grains[1], at[1].Sub(start))
+	wantSecondSpeed := min(revealStreakMaxSpeed, 1+revealStreakRise)
+	if at[1].Sub(start) != 10*time.Millisecond || grains[1].Pan != columnPan(21, g.Cols) || !gainNear(grains[1].Speed, wantSecondSpeed) {
+		t.Fatalf("canvas quick reveal hit = %+v at +%v, want speed %v", grains[1], at[1].Sub(start), wantSecondSpeed)
 	}
 	assertGrainGaps(t, at[1:])
+}
+
+func TestSoundRevealStreakPitch(t *testing.T) {
+	app, rec, tt := newClockedApp(defaultPrefs())
+	wallBoard(tt, app, 0)
+	tt.Frame()
+	rec.take()
+
+	// Consecutive single reveals within revealStreakWindow climb strictly until
+	// revealStreakMaxSpeed and stay capped there.
+	const streakClicks = 8
+	for row := range streakClicks {
+		if row > 0 {
+			tt.Advance(200 * time.Millisecond)
+		}
+		must(t, tt.Click(fmt.Sprintf("cell-%d-13", row)))
+	}
+	grains, _ := grainsOf(rec)
+	if len(grains) != streakClicks {
+		t.Fatalf("streak played %d paper lifts, want %d", len(grains), streakClicks)
+	}
+	if grains[0].Speed != 1 {
+		t.Fatalf("first reveal speed = %v, want 1", grains[0].Speed)
+	}
+	reachedCap := false
+	for i := 1; i < len(grains); i++ {
+		prev, cur := grains[i-1].Speed, grains[i].Speed
+		if cur > revealStreakMaxSpeed {
+			t.Fatalf("reveal %d speed %v exceeds cap %v", i, cur, revealStreakMaxSpeed)
+		}
+		if prev < revealStreakMaxSpeed {
+			if cur <= prev {
+				t.Fatalf("reveal %d speed %v did not rise above %v", i, cur, prev)
+			}
+		} else if cur != revealStreakMaxSpeed {
+			t.Fatalf("reveal %d speed %v drifted from cap %v", i, cur, revealStreakMaxSpeed)
+		}
+		if cur == revealStreakMaxSpeed {
+			reachedCap = true
+		}
+	}
+	if !reachedCap {
+		t.Fatalf("streak of %d reveals peaked at %v, never reached cap %v", streakClicks, grains[len(grains)-1].Speed, revealStreakMaxSpeed)
+	}
+	rec.take()
+
+	// Pausing past revealStreakWindow resets to baseline; a follow-up right at
+	// the window boundary starts climbing again.
+	tt.Advance(revealStreakWindow + time.Millisecond)
+	must(t, tt.Click("cell-8-13"))
+	tt.Advance(revealStreakWindow)
+	must(t, tt.Click("cell-9-13"))
+	grains, _ = grainsOf(rec)
+	if len(grains) != 2 {
+		t.Fatalf("post-pause reveals played %d paper lifts, want 2", len(grains))
+	}
+	if grains[0].Speed != 1 {
+		t.Fatalf("reveal after pause played at speed %v, want 1", grains[0].Speed)
+	}
+	if grains[1].Speed <= 1 || grains[1].Speed > revealStreakMaxSpeed {
+		t.Fatalf("boundary follow-up played at speed %v, want within (1, %v]", grains[1].Speed, revealStreakMaxSpeed)
+	}
+	rec.take()
+
+	// Restarting or switching track resets the streak even when the next reveal
+	// lands well inside revealStreakWindow.
+	for _, tc := range []struct {
+		name string
+		do   func(t *testing.T, tt *ui.Tester)
+	}{
+		{"restart", func(t *testing.T, tt *ui.Tester) { tt.Key(0, ui.KeyR) }},
+		{"switch track", func(t *testing.T, tt *ui.Tester) {
+			must(t, tt.Click("歌单"))
+			must(t, tt.Click(Difficulties[1].Song))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, rec, tt := newClockedApp(defaultPrefs())
+			wallBoard(tt, app, 0)
+			tt.Frame()
+			rec.take()
+
+			must(t, tt.Click("cell-0-13"))
+			tt.Advance(100 * time.Millisecond)
+			must(t, tt.Click("cell-1-13"))
+			if grains, _ := grainsOf(rec); len(grains) != 2 || grains[1].Speed <= 1 {
+				t.Fatalf("expected elevated streak before %s, got %+v", tc.name, grains)
+			}
+			rec.take()
+
+			tc.do(t, tt)
+			tt.Advance(100 * time.Millisecond)
+			must(t, tt.Click("cell-0-0"))
+			grains, _ := grainsOf(rec)
+			if len(grains) == 0 || grains[0].Speed != 1 {
+				t.Fatalf("first reveal after %s = %+v, want primary hit at speed 1", tc.name, grains)
+			}
+		})
+	}
 }
 
 func TestSoundInvalidClicksStaySilent(t *testing.T) {

@@ -111,6 +111,15 @@ const (
 	paperGrainsPerWave = 6
 	// paperGrainRise raises a grain's pitch for each wave step it lies out.
 	paperGrainRise = 0.012
+	// revealStreakWindow is the longest pause between consecutive reveals that
+	// still climbs the primary paper lift's pitch.
+	revealStreakWindow = 450 * time.Millisecond
+	// revealStreakRise is the pitch step added per rapid reveal within
+	// revealStreakWindow.
+	revealStreakRise = 0.05
+	// revealStreakMaxSpeed caps the primary paper lift's pitch multiplier on a
+	// rapid reveal streak.
+	revealStreakMaxSpeed = 1.25
 	// cueLateness is how late a queued cue may still sound. Past it, as after
 	// a stalled frame or a window coming back, the cue is dropped.
 	cueLateness = 30 * time.Millisecond
@@ -137,10 +146,25 @@ type queuedCue struct {
 }
 
 // cueQueue holds the sounds a move schedules ahead: the paper grains along a
-// flood and the motif that closes it.
+// flood and the motif that closes it, plus the rapid-reveal pitch streak.
 type cueQueue struct {
-	pending   []queuedCue
-	lastGrain time.Time
+	pending      []queuedCue
+	lastGrain    time.Time
+	lastReveal   time.Time
+	revealStreak int
+}
+
+// revealSpeed advances the rapid-reveal streak for a reveal at now and returns
+// the primary paper lift's pitch multiplier.
+func (q *cueQueue) revealSpeed(now time.Time) float64 {
+	gap := now.Sub(q.lastReveal)
+	if !q.lastReveal.IsZero() && gap >= 0 && gap <= revealStreakWindow {
+		q.revealStreak++
+	} else {
+		q.revealStreak = 0
+	}
+	q.lastReveal = now
+	return min(revealStreakMaxSpeed, 1+float64(q.revealStreak)*revealStreakRise)
 }
 
 func (q *cueQueue) add(c queuedCue) {
@@ -177,9 +201,12 @@ func (q *cueQueue) next() (time.Time, bool) {
 	return q.pending[0].At, true
 }
 
-// clearCues drops every queued sound, as a new game starts.
+// clearCues drops every queued sound and resets the rapid-reveal pitch streak,
+// as a new game starts.
 func (a *minesweeperApp) clearCues() {
 	a.cues.pending = nil
+	a.cues.lastReveal = time.Time{}
+	a.cues.revealStreak = 0
 }
 
 // flushCues plays the queued cues now due and drops those overdue past
@@ -224,12 +251,14 @@ func waveSpan(wave []RevealWaveEntry) time.Duration {
 	return time.Duration(step) * rippleStepDelay
 }
 
-// playFlood sounds the move's primary paper lift immediately, then queues
-// follow-up grains along its reveal wave: each wave step that keeps
-// paperGrainGap from other grains, up to paperGrainsPerWave total
-// (including the primary hit), rising in pitch with depth.
+// playFlood sounds the move's primary paper lift immediately, rising in pitch
+// across rapid reveals within revealStreakWindow, then queues follow-up grains
+// along its reveal wave: each wave step that keeps paperGrainGap from other
+// grains, up to paperGrainsPerWave total (including the primary hit), rising
+// in pitch with depth.
 func (a *minesweeperApp) playFlood(now time.Time, pan float64, wave []RevealWaveEntry) {
-	a.playSound(SoundPaperLift, 1, pan)
+	baseSpeed := a.cues.revealSpeed(now)
+	a.playCue(soundCue{ID: SoundPaperLift, Gain: 1, Pan: pan, Speed: baseSpeed})
 	a.cues.lastGrain = now
 	var steps [waveSteps + 1]bool
 	for _, e := range wave {
@@ -245,7 +274,7 @@ func (a *minesweeperApp) playFlood(now time.Time, pan float64, wave []RevealWave
 			ID:    SoundPaperLift,
 			Gain:  1,
 			Pan:   pan,
-			Speed: 1 + paperGrainRise*float64(step),
+			Speed: baseSpeed + paperGrainRise*float64(step),
 		}})
 		lifted++
 	}
