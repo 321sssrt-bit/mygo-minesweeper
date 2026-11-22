@@ -644,17 +644,28 @@ func TestClassicCanvasPanZoomMinimapAndBoundsSafety(t *testing.T) {
 	app.board.centerBoard(app.game)
 	tt.Frame()
 
-	// Dragging > 5px pans viewport without triggering reveal or flag.
+	// Unmodified left-button drag across cells neither pans nor triggers reveal/flag,
+	// while middle-button drag pans viewport without triggering cell edits.
 	beforeX, beforeY := app.board.X, app.board.Y
 	sx, sy := boardRect.X+boardRect.W*0.4, boardRect.Y+boardRect.H*0.4
 	tt.Press(sx, sy)
 	tt.Move(sx+60, sy+45)
 	tt.Release(sx+60, sy+45)
-	if app.board.X != beforeX-60 || app.board.Y != beforeY-45 {
-		t.Fatalf("drag pan mismatch: got (%v,%v), want (%v,%v)", app.board.X, app.board.Y, beforeX-60, beforeY-45)
+	if app.board.X != beforeX || app.board.Y != beforeY {
+		t.Fatalf("unmodified left drag unexpectedly panned: got (%v,%v), want (%v,%v)", app.board.X, app.board.Y, beforeX, beforeY)
 	}
 	if app.game.FirstClick || app.game.Moves != 0 || app.game.FlagsPlaced != 0 {
-		t.Fatal("drag pan triggered unintended cell action")
+		t.Fatal("unmodified left drag triggered unintended cell action")
+	}
+
+	tt.PressButton(2, sx, sy)
+	tt.Move(sx+60, sy+45)
+	tt.ReleaseButton(2, sx+60, sy+45)
+	if app.board.X != beforeX-60 || app.board.Y != beforeY-45 {
+		t.Fatalf("middle drag pan mismatch: got (%v,%v), want (%v,%v)", app.board.X, app.board.Y, beforeX-60, beforeY-45)
+	}
+	if app.game.FirstClick || app.game.Moves != 0 || app.game.FlagsPlaced != 0 {
+		t.Fatal("middle drag pan triggered unintended cell action")
 	}
 
 	// Unmodified scroll pans without changing cell size, then pinch zooms,

@@ -89,9 +89,9 @@ func TestQAInputNavigationReset(t *testing.T) {
 	}
 	beforeX, beforeY := a.board.X, a.board.Y
 	moves := a.game.Moves
-	tt.Press(x, y)
+	tt.PressButton(2, x, y)
 	tt.Move(x+40, y+30)
-	tt.Release(x+40, y+30)
+	tt.ReleaseButton(2, x+40, y+30)
 	if a.board.X != beforeX-40 || a.board.Y != beforeY-30 || a.game.Moves != moves {
 		t.Fatalf("drag mismatch: offsets %v,%v moves %d", a.board.X, a.board.Y, a.game.Moves)
 	}

@@ -79,12 +79,12 @@ func TestCanvasCameraImmediateProgrammaticDragAndScroll(t *testing.T) {
 				t.Fatalf("programmatic centerBoard landed at (%d,%d) ok=%v, want (%d,%d)", gotR, gotC, ok, g.Rows/2, g.Cols/2)
 			}
 
-			// Drag pan updates immediately on frame 0 without gliding or cell edits.
+			// Middle-button drag pan updates immediately on frame 0 without gliding or cell edits.
 			beforeX, beforeY := v.X, v.Y
 			sx, sy := boardRect.X+boardRect.W*0.4, boardRect.Y+boardRect.H*0.4
-			tt.Press(sx, sy)
+			tt.PressButton(2, sx, sy)
 			tt.Move(sx+75, sy+50)
-			tt.Release(sx+75, sy+50)
+			tt.ReleaseButton(2, sx+75, sy+50)
 			if v.gliding() {
 				t.Fatal("drag pan unexpectedly started glide")
 			}
@@ -533,7 +533,7 @@ func TestCanvasCameraMidGlideManualInputTakeover(t *testing.T) {
 		t.Fatalf("mid-glide right-click missed displayed cell (%d,%d)", fRow, fCol)
 	}
 
-	// 3. Mid-glide drag stops spring immediately and pans from exact displayed coordinates.
+	// 3. Mid-glide middle-button drag stops spring immediately and pans from exact displayed coordinates.
 	cv.center(cg, 10, 10)
 	cTT.Frame()
 	cTT.Key(ui.Ctrl, ui.Key0)
@@ -546,13 +546,13 @@ func TestCanvasCameraMidGlideManualInputTakeover(t *testing.T) {
 	sx, sy := cBoard.X+cBoard.W*0.4, cBoard.Y+cBoard.H*0.4
 	movesBefore := cg.Moves
 	flagsBefore := cg.FlagsPlaced
-	cTT.Press(sx, sy)
+	cTT.PressButton(2, sx, sy)
 	if cv.gliding() || cv.X != dragShownX || cv.Y != dragShownY {
 		t.Fatalf("PointerDown mid-glide did not freeze at displayed pos: gliding=%v pos=(%v,%v) want=(%v,%v)",
 			cv.gliding(), cv.X, cv.Y, dragShownX, dragShownY)
 	}
 	cTT.Move(sx+dx, sy+dy)
-	cTT.Release(sx+dx, sy+dy)
+	cTT.ReleaseButton(2, sx+dx, sy+dy)
 	wantDragX, wantDragY := max(float32(0), dragShownX-dx), max(float32(0), dragShownY-dy)
 	if cv.gliding() || abs32(cv.X-wantDragX) > 0.5 || abs32(cv.Y-wantDragY) > 0.5 {
 		t.Fatalf("mid-glide drag ended at (%v,%v) gliding=%v, want (%v,%v)", cv.X, cv.Y, cv.gliding(), wantDragX, wantDragY)
@@ -1062,36 +1062,38 @@ func TestCanvasCameraOptionAndMiddleDragPan(t *testing.T) {
 				t.Fatal("middle-button gestures leaked cell action")
 			}
 
-			// 4. Unmodified left-button drag (>5px) still pans without revealing,
-			// while unmodified left-button click (<=5px) still reveals without panning.
+			// 4. Unmodified left-button drag across cells neither pans nor reveals,
+			// while in-cell movement (>5px) still reveals without panning.
 			v.centerBoard(g)
 			tt.Frame()
 			beforeX, beforeY = v.X, v.Y
 			tt.Press(screenX, screenY)
 			tt.Move(screenX+70, screenY+45)
 			tt.Release(screenX+70, screenY+45)
-			if v.gliding() || v.X != beforeX-70 || v.Y != beforeY-45 {
-				t.Fatalf("unmodified left drag = (%v,%v) gliding=%v, want (%v,%v) gliding=false",
-					v.X, v.Y, v.gliding(), beforeX-70, beforeY-45)
+			if v.gliding() || v.X != beforeX || v.Y != beforeY {
+				t.Fatalf("unmodified left drag unexpectedly moved camera: pos=(%v,%v) gliding=%v, want (%v,%v) gliding=false",
+					v.X, v.Y, v.gliding(), beforeX, beforeY)
 			}
 			if g.FirstClick || g.Moves != 0 || g.FlagsPlaced != 0 {
 				t.Fatal("unmodified left drag leaked cell action")
 			}
 
 			beforeX, beforeY = v.X, v.Y
-			wantR, wantC, ok := v.cellAt(g, localX+2, localY+1)
+			wantR, wantC, ok := v.cellAt(g, localX, localY)
 			if !ok {
 				t.Fatal("target cell out of bounds for unmodified left click")
 			}
-			tt.Press(screenX, screenY)
-			tt.Move(screenX+2, screenY+1)
-			tt.Release(screenX+2, screenY+1)
+			cellOriginX := boardRect.X + float32(wantC)*v.Cell - v.X
+			cellOriginY := boardRect.Y + float32(wantR)*v.Cell - v.Y
+			tt.Press(cellOriginX+2, cellOriginY+2)
+			tt.Move(cellOriginX+v.Cell-2, cellOriginY+v.Cell-2)
+			tt.Release(cellOriginX+v.Cell-2, cellOriginY+v.Cell-2)
 			if v.X != beforeX || v.Y != beforeY {
-				t.Fatalf("unmodified left click (<=5px) unexpectedly panned: pos=(%v,%v) want=(%v,%v)",
+				t.Fatalf("unmodified left in-cell move unexpectedly panned: pos=(%v,%v) want=(%v,%v)",
 					v.X, v.Y, beforeX, beforeY)
 			}
 			if !g.Cell(wantR, wantC).Revealed {
-				t.Fatalf("unmodified left click did not reveal (%d,%d)", wantR, wantC)
+				t.Fatalf("unmodified left in-cell move did not reveal (%d,%d)", wantR, wantC)
 			}
 		})
 	}
