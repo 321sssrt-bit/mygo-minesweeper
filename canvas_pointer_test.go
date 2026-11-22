@@ -208,6 +208,51 @@ func TestCanvasPointerPressReleaseAndCancel(t *testing.T) {
 						app.game.Status, app.game.Moves)
 				}
 			})
+
+			t.Run("mid-press camera command keeps armed while pointer stays in cell and cancels once cell leaves", func(t *testing.T) {
+				// 1. Ctrl+0 on an already-centered board keeps pointer in the same cell -> release reveals.
+				app, tt, board := setupDeterministicCanvasBoard(t, isDuel)
+				v, g := app.board, app.game
+				r := canvasCellRect(board, v, 19, 19)
+				px, py := r.X+r.W/2, r.Y+r.H/2
+
+				tt.Press(px, py)
+				tt.Key(ui.Ctrl, ui.Key0)
+				tt.Release(px, py)
+				if !g.Cell(19, 19).Revealed || g.Moves != 1 {
+					t.Fatalf("no-op Ctrl+0 canceled same-cell press: revealed=%v moves=%d",
+						g.Cell(19, 19).Revealed, g.Moves)
+				}
+
+				// 2. Small scroll (2 DIPs) while pointer stays inside the same cell -> release reveals.
+				app2, tt2, board2 := setupDeterministicCanvasBoard(t, isDuel)
+				v2, g2 := app2.board, app2.game
+				r2 := canvasCellRect(board2, v2, 19, 19)
+				px2, py2 := r2.X+r2.W/2, r2.Y+r2.H/2
+
+				tt2.Press(px2, py2)
+				tt2.Scroll(px2, py2, 2, 0)
+				tt2.Release(px2, py2)
+				if !g2.Cell(19, 19).Revealed || g2.Moves != 1 {
+					t.Fatalf("in-cell scroll canceled press: revealed=%v moves=%d",
+						g2.Cell(19, 19).Revealed, g2.Moves)
+				}
+
+				// 3. Large scroll moves cell away from pointer, then scrolling back does NOT recover.
+				app3, tt3, board3 := setupDeterministicCanvasBoard(t, isDuel)
+				v3, g3 := app3.board, app3.game
+				r3 := canvasCellRect(board3, v3, 19, 19)
+				px3, py3 := r3.X+r3.W/2, r3.Y+r3.H/2
+
+				tt3.Press(px3, py3)
+				tt3.Scroll(px3, py3, 60, 0)
+				tt3.Scroll(px3, py3, -60, 0)
+				tt3.Release(px3, py3)
+				if g3.Cell(19, 19).Revealed || g3.Moves != 0 {
+					t.Fatalf("scrolling away and back unexpectedly recovered press: revealed=%v moves=%d",
+						g3.Cell(19, 19).Revealed, g3.Moves)
+				}
+			})
 		})
 	}
 }

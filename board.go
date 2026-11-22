@@ -129,14 +129,14 @@ func isFinite32(v float32) bool {
 func (v *boardView) updateHover(g *Game) {
 	if !v.HasHover || v.minimapFor(g, v.HoverX, v.HoverY) || v.HoverX < 0 || v.HoverY < 0 || v.HoverX >= v.Width || v.HoverY >= v.Height {
 		v.HoverRow, v.HoverCol = -1, -1
-		return
-	}
-	row, col, ok := v.cellAt(g, v.HoverX, v.HoverY)
-	if !ok {
+	} else if row, col, ok := v.cellAt(g, v.HoverX, v.HoverY); !ok {
 		v.HoverRow, v.HoverCol = -1, -1
-		return
+	} else {
+		v.HoverRow, v.HoverCol = row, col
 	}
-	v.HoverRow, v.HoverCol = row, col
+	if v.pressArmed && (v.HoverRow != v.pressRow || v.HoverCol != v.pressCol) {
+		v.cancelPress()
+	}
 }
 
 func (v *boardView) panLimit(g *Game) (float32, float32) {
@@ -238,7 +238,6 @@ func stepCriticalSpring(pos, vel, target, omega, dt float64) (float64, float64) 
 }
 
 func (v *boardView) startGlide(g *Game, targetX, targetY, targetCell float32, now time.Time, reduced bool) {
-	v.cancelPress()
 	v.needsCenter = false
 	if reduced || (abs32(targetX-v.X) <= cameraGlideSettlePx && abs32(targetY-v.Y) <= cameraGlideSettlePx && abs32(targetCell-v.Cell) <= cameraGlideSettleCell) {
 		v.stopGlide()
@@ -379,7 +378,6 @@ func (v *boardView) glideZoom(g *Game, atX, atY, factor float32, now time.Time, 
 }
 
 func (v *boardView) center(g *Game, row, col int) {
-	v.cancelPress()
 	v.stopGlide()
 	v.needsCenter = false
 	if g == nil || g.Rows <= 0 || g.Cols <= 0 {
@@ -401,7 +399,6 @@ func (v *boardView) pan(g *Game, dx, dy float32) {
 	if !isFinite32(dx) || !isFinite32(dy) {
 		return
 	}
-	v.cancelPress()
 	v.stopGlide()
 	v.needsCenter = false
 	v.X += dx
@@ -413,7 +410,6 @@ func (v *boardView) zoom(g *Game, atX, atY, factor float32) {
 	if g == nil || factor <= 0 || !isFinite32(factor) || !isFinite32(atX) || !isFinite32(atY) {
 		return
 	}
-	v.cancelPress()
 	v.stopGlide()
 	v.needsCenter = false
 	if !isFinite32(v.Cell) {
@@ -690,12 +686,6 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 			v.pan(a.game, v.DragX-ev.X, v.DragY-ev.Y)
 			v.DragX, v.DragY = ev.X, ev.Y
 			return true
-		}
-		if v.pressArmed {
-			row, col, ok := v.cellAt(a.game, ev.X, ev.Y)
-			if !ok || v.minimapFor(a.game, ev.X, ev.Y) || row != v.pressRow || col != v.pressCol {
-				v.cancelPress()
-			}
 		}
 		return ev.Button >= 0
 	case ui.InputPointerUp:
