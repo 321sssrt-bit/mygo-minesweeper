@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/draw"
 	"math/rand/v2"
 	"slices"
 	"strings"
@@ -337,5 +340,38 @@ func TestStatusBarDuelReadsScoresCountdownAndCombo(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The board's scan badge keeps counting down now that the duel rows above
+// the board are gone: with the mine count fixed, its pixels change as time
+// passes.
+func TestStatusBarDuelScanBadgeCountsDown(t *testing.T) {
+	app, tt := duelStatusBarApp(t, 1280, 900)
+	board := mustFind(t, tt, "决斗棋盘")
+	tt.ClickAt(board.X+board.W/2, board.Y+board.H/2)
+	d := app.game.duel
+	d.NextAI = 1e9
+	tt.Key(0, ui.KeyE)
+	tt.Move(board.X+board.W/2, board.Y+board.H/2)
+	badge := image.Rect(int(board.X)+14, int(board.Y)+14, int(board.X)+200, int(board.Y)+44)
+	crop := func() *image.RGBA {
+		src := tt.Image()
+		out := image.NewRGBA(image.Rect(0, 0, badge.Dx(), badge.Dy()))
+		draw.Draw(out, out.Bounds(), src, badge.Min, draw.Src)
+		return out
+	}
+	tt.Advance(1500 * time.Millisecond)
+	count, ok := app.game.ScanAt(app.board.HoverRow, app.board.HoverCol)
+	if !ok {
+		t.Fatal("scan not active under the pointer")
+	}
+	before := crop()
+	tt.Advance(1000 * time.Millisecond)
+	if again, ok := app.game.ScanAt(app.board.HoverRow, app.board.HoverCol); !ok || again != count {
+		t.Fatalf("scan changed under the pointer: %d/%v, want %d", again, ok, count)
+	}
+	if bytes.Equal(before.Pix, crop().Pix) {
+		t.Error("scan badge looks the same a second later; its countdown is not shown")
 	}
 }

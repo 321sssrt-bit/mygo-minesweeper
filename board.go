@@ -1500,11 +1500,13 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 			p.AnimationFrame()
 		}
 		if count, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {
-			box := ui.Rect{X: r.X + 12, Y: r.Y + 12, W: 166, H: 34}
+			label := fmt.Sprintf("9×9 扫描：%d 雷 · %.1f 秒", count, max(0, g.duel.ScanUntil-g.duel.Elapsed))
+			textW, _ := p.MeasureText(0, ui.Span{Text: label, Size: 14})
+			box := ui.Rect{X: r.X + 12, Y: r.Y + 12, W: max(166, textW+22), H: 34}
 			p.Shadow(box, 6, 0, 1, 3, 0, pal.SlipShade)
 			p.Fill(box, dp.ScanBadgeBg, 6)
 			p.Stroke(box, dp.ScanBadgeBorder, 6, 1.2)
-			p.Text(r.X+23, r.Y+20, fmt.Sprintf("9×9 扫描：%d 雷", count), 14, dp.ScanBadgeText)
+			p.Text(r.X+23, r.Y+20, label, 14, dp.ScanBadgeText)
 		}
 		if g.duel != nil && g.Status == StatusPlaying && g.duel.playerStunned() {
 			pulse := 0.45 + 0.55*float32(0.5+0.5*math.Sin(float64(now.UnixMilli())/120.0))
