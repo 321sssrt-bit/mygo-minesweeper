@@ -52,21 +52,24 @@ type boardView struct {
 	pressRow       int
 	pressCol       int
 	pressRevealed  bool
-	LastEffect        time.Time
-	EffectCell        int
-	LastHoverHint     HoverHint
-	lastToolbarZoom   string
-	lastToolbarZoomed bool
+	LastEffect         time.Time
+	EffectCell         int
+	LastHoverHint      HoverHint
+	lastToolbarZoom    string
+	lastToolbarZoomed  bool
+	lastToolbarCanvasW float32
+	toolbarW, toolbarH float32
 }
 
 const (
-	standardCellPitch = float32(32)
-	minCanvasCell     = float32(10)
-	maxCanvasCell     = float32(42)
-	minimapMinSide    = 50
-	minimapSize       = float32(148)
-	minimapMargin     = float32(10)
-	classicMinimapPad = float32(4)
+	standardCellPitch   = float32(32)
+	minCanvasCell       = float32(10)
+	maxCanvasCell       = float32(42)
+	minimapMinSide      = 50
+	minimapSize         = float32(148)
+	minimapMargin       = float32(10)
+	canvasToolbarMargin = float32(10)
+	classicMinimapPad   = float32(4)
 
 	// Critically-damped spring parameters tuned so pan/zoom glides settle
 	// smoothly around 200ms without overshoot, clamping cross-board jumps
@@ -134,7 +137,7 @@ func isFinite32(v float32) bool {
 }
 
 func (v *boardView) updateHover(g *Game) {
-	if !v.HasHover || v.minimapFor(g, v.HoverX, v.HoverY) || v.HoverX < 0 || v.HoverY < 0 || v.HoverX >= v.Width || v.HoverY >= v.Height {
+	if !v.HasHover || v.overlayFor(g, v.HoverX, v.HoverY) || v.HoverX < 0 || v.HoverY < 0 || v.HoverX >= v.Width || v.HoverY >= v.Height {
 		v.HoverRow, v.HoverCol = -1, -1
 	} else if row, col, ok := v.cellAt(g, v.HoverX, v.HoverY); !ok {
 		v.HoverRow, v.HoverCol = -1, -1
@@ -163,14 +166,19 @@ func (v *boardView) panBoundsFor(g *Game, cell float32) (minX, maxX, minY, maxY 
 		maxY = boardH - v.Height
 	}
 	if g.duel == nil {
-		// Reserve overscroll past the bottom-right minimap so corner cells of
-		// large classic boards can always be dragged clear and clicked, even
-		// when a smaller centered board still reaches into the minimap corner.
+		// Reserve overscroll past the bottom corner overlays (bottom-right
+		// minimap and bottom-left camera toolbar) so corner cells of classic
+		// boards can always be dragged clear and clicked, even when a smaller
+		// centered board still reaches behind an overlay.
+		boardLeft := -minX
 		boardRight := boardW - minX
 		boardBottom := boardH - minY
 		if mini := v.minimapBoundsFor(g); mini.W > 0 && mini.H > 0 && boardRight > mini.X && boardBottom > mini.Y {
 			maxX = max(maxX, boardW-max(float32(0), mini.X-minimapMargin))
 			maxY = max(maxY, boardH-max(float32(0), mini.Y-minimapMargin))
+		}
+		if tb := v.toolbarBounds(); tb.W > 0 && tb.H > 0 && boardLeft < tb.X+tb.W && boardBottom > tb.Y {
+			maxY = max(maxY, boardH-max(float32(0), tb.Y-canvasToolbarMargin))
 		}
 	}
 	return minX, maxX, minY, maxY
@@ -394,26 +402,40 @@ func (v *boardView) visibleTarget(g *Game, row, col int, cell float32) (float32,
 	if v.showsAt(g, row, col, tx, ty, cell) {
 		return tx, ty
 	}
-	mini := v.minimapBoundsFor(g)
-	if mini.W <= 0 || mini.H <= 0 {
-		return tx, ty
-	}
 	cx := (float32(col) + 0.5) * cell
 	cy := (float32(row) + 0.5) * cell
-	leftX, aboveY := v.clampOffsetFor(g, cell, cx-mini.X/2, cy-mini.Y/2)
-	if mini.X >= mini.Y {
-		if v.showsAt(g, row, col, leftX, ty, cell) {
-			return leftX, ty
+	if mini := v.minimapBoundsFor(g); mini.W > 0 && mini.H > 0 {
+		leftX, aboveY := v.clampOffsetFor(g, cell, cx-mini.X/2, cy-mini.Y/2)
+		if mini.X >= mini.Y {
+			if v.showsAt(g, row, col, leftX, ty, cell) {
+				return leftX, ty
+			}
+			if v.showsAt(g, row, col, tx, aboveY, cell) {
+				return tx, aboveY
+			}
+		} else {
+			if v.showsAt(g, row, col, tx, aboveY, cell) {
+				return tx, aboveY
+			}
+			if v.showsAt(g, row, col, leftX, ty, cell) {
+				return leftX, ty
+			}
 		}
+	}
+	if tb := v.toolbarBounds(); tb.W > 0 && tb.H > 0 {
+		rightX, aboveY := v.clampOffsetFor(g, cell, cx-(tb.X+tb.W+v.Width)/2, cy-tb.Y/2)
 		if v.showsAt(g, row, col, tx, aboveY, cell) {
 			return tx, aboveY
 		}
-	} else {
-		if v.showsAt(g, row, col, tx, aboveY, cell) {
-			return tx, aboveY
+		if v.showsAt(g, row, col, rightX, ty, cell) {
+			return rightX, ty
 		}
-		if v.showsAt(g, row, col, leftX, ty, cell) {
-			return leftX, ty
+		if v.showsAt(g, row, col, rightX, aboveY, cell) {
+			return rightX, aboveY
+		}
+		_, _, _, maxY := v.panBoundsFor(g, cell)
+		if v.showsAt(g, row, col, tx, maxY, cell) {
+			return tx, maxY
 		}
 	}
 	return tx, ty
@@ -600,14 +622,41 @@ func (v *boardView) minimapFor(g *Game, x, y float32) bool {
 	return x >= mini.X && y >= mini.Y && x <= mini.X+mini.W && y <= mini.Y+mini.H
 }
 
+func (v *boardView) toolbarBounds() ui.Rect {
+	if v.toolbarW <= 0 || v.toolbarH <= 0 || v.Width <= 0 || v.Height <= 0 {
+		return ui.Rect{}
+	}
+	return ui.Rect{
+		X: canvasToolbarMargin,
+		Y: max(float32(0), v.Height-canvasToolbarMargin-v.toolbarH),
+		W: v.toolbarW,
+		H: v.toolbarH,
+	}
+}
+
+func (v *boardView) toolbarFor(x, y float32) bool {
+	if !isFinite32(x) || !isFinite32(y) {
+		return false
+	}
+	tb := v.toolbarBounds()
+	if tb.W <= 0 || tb.H <= 0 {
+		return false
+	}
+	return x >= tb.X && y >= tb.Y && x <= tb.X+tb.W && y <= tb.Y+tb.H
+}
+
+func (v *boardView) overlayFor(g *Game, x, y float32) bool {
+	return v.minimapFor(g, x, y) || v.toolbarFor(x, y)
+}
+
 func (v *boardView) showsAt(g *Game, row, col int, xOff, yOff, cell float32) bool {
 	x := (float32(col)+0.5)*cell - xOff
 	y := (float32(row)+0.5)*cell - yOff
-	return x >= 0 && y >= 0 && x < v.Width && y < v.Height && !v.minimapFor(g, x, y)
+	return x >= 0 && y >= 0 && x < v.Width && y < v.Height && !v.overlayFor(g, x, y)
 }
 
 // shows reports whether a cell's centre is on screen in the last drawn view
-// and not under the minimap.
+// and not behind the minimap or corner toolbar.
 func (v *boardView) shows(g *Game, row, col int) bool {
 	return v.showsAt(g, row, col, v.X, v.Y, v.Cell)
 }
@@ -785,6 +834,13 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 		if ev.Button < 0 || ev.Button > 2 {
 			return false
 		}
+		if v.toolbarFor(ev.X, ev.Y) {
+			v.Pressed = false
+			v.Dragging = false
+			v.cancelPress()
+			v.updateHover(a.game)
+			return true
+		}
 		// Middle-button and Option/Alt+left-button start panning immediately
 		// without triggering minimap jumps or cell presses.
 		panDrag := ev.Button == 2 || (ev.Button == 0 && ev.Mods&ui.Alt != 0)
@@ -859,7 +915,7 @@ func (a *minesweeperApp) handleCanvasInput(ev ui.InputEvent, now time.Time) bool
 		v.cancelPress()
 		v.HoverX, v.HoverY, v.HasHover = ev.X, ev.Y, true
 		v.updateHover(a.game)
-		if ev.Canceled || !armed || kind != canvasPressReveal || v.minimapFor(a.game, ev.X, ev.Y) {
+		if ev.Canceled || !armed || kind != canvasPressReveal || v.overlayFor(a.game, ev.X, ev.Y) {
 			return true
 		}
 		row, col, ok := v.cellAt(a.game, ev.X, ev.Y)
@@ -912,7 +968,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 			} else {
 				v.clamp(a.game)
 			}
-			if v.zoomLabel() != v.lastToolbarZoom || v.isZoomed() != v.lastToolbarZoomed {
+			if v.zoomLabel() != v.lastToolbarZoom || v.isZoomed() != v.lastToolbarZoomed || v.Width != v.lastToolbarCanvasW {
 				services.Invalidate()
 			}
 			a.paintBoard(p, r)
@@ -954,14 +1010,36 @@ var (
 )
 
 func (a *minesweeperApp) canvasToolbar(c *ui.Context, pal *palette, now time.Time) {
+	v := a.board
 	sc := settingsColorsForPaper(pal)
-	zoomText := a.board.zoomLabel()
-	zoomed := a.board.isZoomed()
-	a.board.lastToolbarZoom = zoomText
-	a.board.lastToolbarZoomed = zoomed
+	zoomText := v.zoomLabel()
+	zoomed := v.isZoomed()
+	v.lastToolbarZoom = zoomText
+	v.lastToolbarZoomed = zoomed
+	v.lastToolbarCanvasW = v.Width
 	tomoriColor := memberImage(MemberTomori)
+	services := c.Services()
 
-	toolbarBtn := func(key, label, value string, icon *ui.SVG, accentBase ui.Color, trailing func()) ui.Element {
+	stageW := v.Width
+	if stageW <= 100 {
+		winW, _ := c.Size()
+		stageW = max(float32(100), winW-28)
+		if a.isDuel() {
+			stageW = max(float32(100), winW-260)
+		}
+	}
+	endInset := canvasToolbarMargin
+	if hasMinimap(a.game) && stageW >= minimapSize+minimapMargin*2+canvasToolbarMargin+150 {
+		endInset = minimapSize + minimapMargin*2
+	}
+	availW := stageW - canvasToolbarMargin - endInset
+	singleRowMinW := float32(260)
+	if a.isDuel() {
+		singleRowMinW = 360
+	}
+	showDividers := availW >= singleRowMinW
+
+	toolbarBtn := func(key, label, value string, icon *ui.SVG, accentBase ui.Color, trailing func(bg ui.Color)) ui.Element {
 		btn := ui.ButtonBase(c.Key(key)).Padding(4, 8).Radius(6).Cursor(ui.CursorPointer).Label(label)
 		if value != "" {
 			btn.Value(value)
@@ -988,60 +1066,77 @@ func (a *minesweeperApp) canvasToolbar(c *ui.Context, pal *palette, now time.Tim
 				ui.Icon(c, icon).Size(12, 12).TextColor(iconCol).PassThrough()
 				ui.Text(c, label).FontSize(12).FixedLineHeight(16).TextColor(textCol).SingleLine().PassThrough()
 				if trailing != nil {
-					trailing()
+					trailing(bg)
 				}
 			})
 		})
 		return btn
 	}
 
-	bar := ui.Row(c.Key("canvas-toolbar")).Absolute().Bottom(10).Start(10).
-		Padding(4, 5).Gap(4).Radius(8).AlignItems(ui.Center).
-		Background(pal.Sheet).Border(1, pal.Rule.Alpha(1.6)).
-		Shadow(0, 2, 7, 0, pal.SlipShade).
-		Role(ui.RoleToolbar).Label("画布镜头").
-		HandleInput(func(ev ui.InputEvent) bool {
-			// Consume scroll, pinch, and non-left pointer events over the toolbar
-			// while letting left clicks reach child ButtonBase controls.
-			switch ev.Kind {
-			case ui.InputScroll, ui.InputZoom:
-				return true
-			case ui.InputPointerDown, ui.InputPointerUp:
-				if ev.Button != 0 {
+	ui.Row(c.Key("canvas-toolbar-host")).Absolute().Bottom(canvasToolbarMargin).
+		Start(canvasToolbarMargin).End(endInset).PassThrough().Children(func() {
+		bar := ui.Row(c.Key("canvas-toolbar")).MaxWidthPercent(100).Wrap().
+			Padding(4, 5).Gap(4).Radius(8).AlignItems(ui.Center).
+			Background(pal.Sheet).Border(1, pal.Rule.Alpha(1.6)).
+			Shadow(0, 2, 7, 0, pal.SlipShade).
+			Role(ui.RoleToolbar).Label("画布镜头").FocusGroup(ui.Horizontal).
+			HandleInput(func(ev ui.InputEvent) bool {
+				// Consume scroll, pinch, and non-left pointer events over the toolbar
+				// while letting left clicks reach child ButtonBase controls.
+				switch ev.Kind {
+				case ui.InputScroll, ui.InputZoom:
 					return true
+				case ui.InputPointerDown, ui.InputPointerUp:
+					if ev.Button != 0 {
+						return true
+					}
+				}
+				return false
+			}).DrawOver(func(_ *ui.Painter, r ui.Rect) {
+			if v.toolbarW != r.W || v.toolbarH != r.H {
+				v.toolbarW, v.toolbarH = r.W, r.H
+				prevX, prevY := v.X, v.Y
+				v.clamp(a.game)
+				if v.X != prevX || v.Y != prevY {
+					services.Invalidate()
 				}
 			}
-			return false
 		})
 
-	bar.Children(func() {
-		if toolbarBtn("canvas-home", "回到中心", "", canvasHomeIcon, ui.Color{}, nil).Clicked() {
-			a.board.glideCenterBoard(a.game, now, a.motionReducedActive)
-		}
-
-		ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()
-
-		if a.isDuel() {
-			if toolbarBtn("canvas-follow", "定位高松灯", "", canvasFollowIcon, tomoriColor, nil).Clicked() && a.game.duel.LastAI >= 0 {
-				last := a.game.duel.LastAI
-				a.board.glideCenter(a.game, last/a.game.Cols, last%a.game.Cols, now, a.motionReducedActive)
+		bar.Children(func() {
+			if toolbarBtn("canvas-home", "回到中心", "", canvasHomeIcon, ui.Color{}, nil).Clicked() {
+				v.glideCenterBoard(a.game, now, a.motionReducedActive)
 			}
-			ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()
-		}
 
-		if toolbarBtn("canvas-reset-zoom", "回标准大小", zoomText, canvasResetZoomIcon, ui.Color{}, func() {
-			if zoomed {
-				ui.Box(c).Padding(1, 5).Radius(4).Background(sc.TriggerOpenBg).PassThrough().Children(func() {
-					ui.Text(c, zoomText).FontSize(11).FixedLineHeight(14).Bold().TextColor(sc.TriggerOpenInk).
-						FontFeatures("tnum").SingleLine().PassThrough()
-				})
-				return
+			if showDividers {
+				ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()
 			}
-			ui.Text(c, zoomText).FontSize(11).FixedLineHeight(14).TextColor(sc.MutedInk).
-				FontFeatures("tnum").SingleLine().PassThrough()
-		}).Clicked() {
-			a.board.glideStandardPitch(a.game, now, a.motionReducedActive)
-		}
+
+			if a.isDuel() {
+				if toolbarBtn("canvas-follow", "定位高松灯", "", canvasFollowIcon, tomoriColor, nil).Clicked() && a.game.duel.LastAI >= 0 {
+					last := a.game.duel.LastAI
+					v.glideCenter(a.game, last/a.game.Cols, last%a.game.Cols, now, a.motionReducedActive)
+				}
+				if showDividers {
+					ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()
+				}
+			}
+
+			if toolbarBtn("canvas-reset-zoom", "回标准大小", zoomText, canvasResetZoomIcon, ui.Color{}, func(bg ui.Color) {
+				if zoomed {
+					ui.Box(c).Padding(1, 5).Radius(4).Background(sc.TriggerOpenBg).PassThrough().Children(func() {
+						ui.Text(c, zoomText).FontSize(11).FixedLineHeight(14).Bold().TextColor(sc.TriggerOpenInk).
+							FontFeatures("tnum").SingleLine().PassThrough()
+					})
+					return
+				}
+				pctCol := autoInkOn(bg, dayPaper.InkMuted, nightPaper.InkMuted)
+				ui.Text(c, zoomText).FontSize(11).FixedLineHeight(14).TextColor(pctCol).
+					FontFeatures("tnum").SingleLine().PassThrough()
+			}).Clicked() {
+				v.glideStandardPitch(a.game, now, a.motionReducedActive)
+			}
+		})
 	})
 }
 

@@ -303,7 +303,7 @@ func TestCanvasCornerToolbarKeyboardFocusAndActivation(t *testing.T) {
 			v, g := app.board, app.game
 			g.duel.LastAI = 420*g.Cols + 580
 
-			// 1. Focus and activate 回到中心 via keyboard.
+			// 1. Tab enters the RoleToolbar FocusGroup on 回到中心 and activates it.
 			v.center(g, 100, 100)
 			tt.Frame()
 			focusByTab(t, tt, "回到中心", 64)
@@ -313,18 +313,32 @@ func TestCanvasCornerToolbarKeyboardFocusAndActivation(t *testing.T) {
 				t.Fatalf("%s on 回到中心 landed at (%d,%d) ok=%v, want (%d,%d)", key.name, r, c, ok, g.Rows/2, g.Cols/2)
 			}
 
-			// 2. Tab to 定位高松灯 and activate via keyboard.
-			focusByTab(t, tt, "定位高松灯", 8)
+			// 2. Right arrow moves within the toolbar to 定位高松灯 and activates it.
+			tt.Key(0, ui.KeyRight)
+			if !tt.Focused("定位高松灯") {
+				t.Fatal("Right arrow from 回到中心 did not focus 定位高松灯")
+			}
 			tt.Key(0, key.k)
 			tt.Advance(260 * time.Millisecond)
 			if r, c, ok := v.cellAt(g, boardRect.W/2, boardRect.H/2); !ok || r != 420 || c != 580 {
 				t.Fatalf("%s on 定位高松灯 landed at (%d,%d) ok=%v, want (420,580)", key.name, r, c, ok)
 			}
 
-			// 3. Zoom away, Tab to 回标准大小 and activate via keyboard.
+			// 3. End jumps to 回标准大小; Home/Left wrap within the group.
 			v.zoom(g, boardRect.W/2, boardRect.H/2, 0.55)
 			tt.Frame()
-			focusByTab(t, tt, "回标准大小", 8)
+			tt.Key(0, ui.KeyEnd)
+			if !tt.Focused("回标准大小") {
+				t.Fatal("End inside toolbar did not focus 回标准大小")
+			}
+			tt.Key(0, ui.KeyHome)
+			if !tt.Focused("回到中心") {
+				t.Fatal("Home inside toolbar did not focus 回到中心")
+			}
+			tt.Key(0, ui.KeyLeft)
+			if !tt.Focused("回标准大小") {
+				t.Fatal("Left arrow from first toolbar button did not wrap to 回标准大小")
+			}
 			tt.Key(0, key.k)
 			tt.Advance(260 * time.Millisecond)
 			if v.gliding() || v.Cell != standardCellPitch {
@@ -348,7 +362,10 @@ func TestCanvasCornerToolbarKeyboardFocusAndActivation(t *testing.T) {
 			t.Fatalf("classic Enter on 回到中心 landed at (%d,%d) ok=%v, want (%d,%d)", r, c, ok, g.Rows/2, g.Cols/2)
 		}
 
-		focusByTab(t, tt, "回标准大小", 8)
+		tt.Key(0, ui.KeyRight)
+		if !tt.Focused("回标准大小") {
+			t.Fatal("classic Right arrow did not focus 回标准大小")
+		}
 		tt.Key(0, ui.KeySpace)
 		tt.Advance(260 * time.Millisecond)
 		if v.gliding() || v.Cell != standardCellPitch {
@@ -460,11 +477,14 @@ func TestCanvasCornerToolbarPaletteContrast(t *testing.T) {
 		}{
 			{"idle text", sc.LabelInk, pal.Sheet},
 			{"idle icon", sc.MutedInk, pal.Sheet},
+			{"idle unzoomed pct", autoInkOn(pal.Sheet, dayPaper.InkMuted, nightPaper.InkMuted), pal.Sheet},
 			{"idle tomori icon", autoInkOn(pal.Sheet, dayPaper.InkOf(tomori), nightPaper.InkOf(tomori)), pal.Sheet},
 			{"hover text", sc.TriggerHoverText, sc.TriggerHoverBg},
 			{"hover icon", sc.TriggerHoverInk, sc.TriggerHoverBg},
+			{"hover unzoomed pct", autoInkOn(sc.TriggerHoverBg, dayPaper.InkMuted, nightPaper.InkMuted), sc.TriggerHoverBg},
 			{"pressed text", autoInkOn(pal.Slip, dayPaper.Ink, nightPaper.Ink), pal.Slip},
 			{"pressed icon", autoInkOn(pal.Slip, dayPaper.InkOf(bandColor), nightPaper.InkOf(bandColor)), pal.Slip},
+			{"pressed unzoomed pct", autoInkOn(pal.Slip, dayPaper.InkMuted, nightPaper.InkMuted), pal.Slip},
 			{"zoomed pill", sc.TriggerOpenInk, sc.TriggerOpenBg},
 		}
 		for _, p := range pairs {
@@ -474,4 +494,250 @@ func TestCanvasCornerToolbarPaletteContrast(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestCanvasCornerToolbarClassicBottomLeftOverscroll(t *testing.T) {
+	cases := []struct {
+		name       string
+		track      Difficulty
+		winW, winH int
+		zoomSteps  int // number of Ctrl+- steps
+		targetRow  int
+		targetCol  int
+	}{
+		{"classic_30x30_960x640_100pct", TrackKageiromai, 960, 640, 0, 29, 0},
+		{"classic_30x30_960x640_zoomed_out_5steps", TrackKageiromai, 960, 640, 5, 29, 0},
+		{"classic_30x30_960x640_zoomed_out_6steps", TrackKageiromai, 960, 640, 6, 29, 0},
+		{"classic_50x50_1680x1050_zoomed_out_4steps", TrackUtakotoba, 1680, 1050, 4, 49, 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newMinesweeperApp(42)
+			app.diffIdx = findDifficultyIdx(tc.track.ID)
+			app.resetGame(false)
+			tt := ui.NewTester(app.view, tc.winW, tc.winH)
+			tt.UseScreenReader()
+			tt.Frame()
+
+			boardRect, ok := tt.Find("经典棋盘")
+			if !ok {
+				t.Fatal("经典棋盘 missing")
+			}
+			v, g := app.board, app.game
+			for range tc.zoomSteps {
+				tt.Key(ui.Ctrl, ui.KeyMinus)
+				tt.Advance(260 * time.Millisecond)
+			}
+			tt.Frame()
+
+			// Scroll far enough toward the bottom-left to pull the bottom row clear of the toolbar.
+			tt.Scroll(boardRect.X+boardRect.W/2, boardRect.Y+boardRect.H/2, -2000, 2000)
+			tt.Frame()
+
+			lx := (float32(tc.targetCol)+0.5)*v.Cell - v.X
+			ly := (float32(tc.targetRow)+0.5)*v.Cell - v.Y
+			if !v.shows(g, tc.targetRow, tc.targetCol) || v.toolbarFor(lx, ly) {
+				t.Fatalf("cell (%d,%d) still occluded by toolbar %+v at (%v,%v) (cell=%.2f, pos=(%v,%v))",
+					tc.targetRow, tc.targetCol, v.toolbarBounds(), lx, ly, v.Cell, v.X, v.Y)
+			}
+
+			// Right-clicking the cell center must flag it (not hit the toolbar).
+			tt.RightClickAt(boardRect.X+lx, boardRect.Y+ly)
+			if !g.Cell(tc.targetRow, tc.targetCol).Flagged || g.FlagsPlaced != 1 {
+				t.Fatalf("right click on (%d,%d) failed after overscroll: flagged=%v flags=%d",
+					tc.targetRow, tc.targetCol, g.Cell(tc.targetRow, tc.targetCol).Flagged, g.FlagsPlaced)
+			}
+			// Unflag then left-click reveals without jumping camera.
+			camX, camY := v.X, v.Y
+			tt.RightClickAt(boardRect.X+lx, boardRect.Y+ly)
+			tt.ClickAt(boardRect.X+lx, boardRect.Y+ly)
+			if !g.FirstClick || !g.Cell(tc.targetRow, tc.targetCol).Revealed || v.gliding() || v.X != camX || v.Y != camY {
+				t.Fatalf("left click on (%d,%d) failed: first=%v revealed=%v gliding=%v pos=(%v,%v) want=(%v,%v)",
+					tc.targetRow, tc.targetCol, g.FirstClick, g.Cell(tc.targetRow, tc.targetCol).Revealed, v.gliding(), v.X, v.Y, camX, camY)
+			}
+		})
+	}
+}
+
+func TestCanvasCornerToolbarDragIntoToolbarCancelsReveal(t *testing.T) {
+	app := newMinesweeperApp(42)
+	app.diffIdx = findDifficultyIdx(TrackKageiromai.ID)
+	app.resetGame(false)
+	tt := ui.NewTester(app.view, 960, 640)
+	tt.UseScreenReader()
+	tt.Frame()
+
+	boardRect, ok := tt.Find("经典棋盘")
+	if !ok {
+		t.Fatal("经典棋盘 missing")
+	}
+	barInfo, ok := tt.AccessByRole(ui.RoleToolbar, "画布镜头")
+	if !ok {
+		t.Fatal("canvas toolbar missing")
+	}
+	v, g := app.board, app.game
+
+	// Find a cell straddling the top edge of the toolbar so 2px above and 2px inside
+	// belong to the exact same cell.
+	probeX := barInfo.Bounds.X + barInfo.Bounds.W*0.5
+	outY := barInfo.Bounds.Y - 2
+	inY := barInfo.Bounds.Y + 2
+	// Shift v.Y slightly if the toolbar's top edge happens to land on a cell boundary.
+	rOut, cOut, okOut := v.cellAt(g, probeX-boardRect.X, outY-boardRect.Y)
+	rIn, cIn, okIn := v.cellAt(g, probeX-boardRect.X, inY-boardRect.Y)
+	if !okOut || !okIn || rOut != rIn || cOut != cIn {
+		v.pan(g, 0, 10)
+		tt.Frame()
+		rOut, cOut, okOut = v.cellAt(g, probeX-boardRect.X, outY-boardRect.Y)
+		rIn, cIn, okIn = v.cellAt(g, probeX-boardRect.X, inY-boardRect.Y)
+	}
+	if !okOut || !okIn || rOut != rIn || cOut != cIn {
+		t.Fatalf("precondition failed: expected same cell across toolbar top edge, got (%d,%d,%v) vs (%d,%d,%v)",
+			rOut, cOut, okOut, rIn, cIn, okIn)
+	}
+
+	// Press 2px above the toolbar, move 2px inside the toolbar, and release:
+	// moving onto the toolbar must disarm press and releasing must NOT reveal.
+	tt.PressButton(0, probeX, outY)
+	if !v.pressArmed || v.pressRow != rOut || v.pressCol != cOut {
+		t.Fatalf("expected cell (%d,%d) armed on press outside toolbar, got armed=%v (%d,%d)",
+			rOut, cOut, v.pressArmed, v.pressRow, v.pressCol)
+	}
+	tt.Move(probeX, inY)
+	if v.pressArmed || v.HoverRow != -1 || v.HoverCol != -1 {
+		t.Fatalf("moving onto toolbar should disarm press and clear hover: armed=%v hover=(%d,%d)",
+			v.pressArmed, v.HoverRow, v.HoverCol)
+	}
+	tt.ReleaseButton(0, probeX, inY)
+	if g.FirstClick || g.Moves != 0 || g.Cell(rOut, cOut).Revealed {
+		t.Fatalf("releasing inside toolbar unexpectedly revealed (%d,%d): first=%v moves=%d",
+			rOut, cOut, g.FirstClick, g.Moves)
+	}
+
+	// Even if a release lands inside the toolbar without an intermediate move,
+	// handleCanvasInput must cancel rather than commit.
+	app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerDown, Button: 0, X: probeX - boardRect.X, Y: outY - boardRect.Y}, tt.Now())
+	app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerUp, Button: 0, X: probeX - boardRect.X, Y: inY - boardRect.Y}, tt.Now())
+	if g.FirstClick || g.Moves != 0 || g.Cell(rOut, cOut).Revealed {
+		t.Fatalf("direct release inside toolbar unexpectedly revealed (%d,%d): first=%v moves=%d",
+			rOut, cOut, g.FirstClick, g.Moves)
+	}
+}
+
+func TestCanvasCornerToolbarSkillVisibilityClearsOverlay(t *testing.T) {
+	t.Run("duel_cell_behind_toolbar_glides_clear", func(t *testing.T) {
+		app, tt, _ := setupCameraDuelApp(t)
+		v, g := app.board, app.game
+		tb := v.toolbarBounds()
+		if tb.W <= 0 || tb.H <= 0 {
+			t.Fatal("toolbar bounds not measured")
+		}
+		row, col, ok := v.cellAt(g, tb.X+tb.W/2, tb.Y+tb.H/2)
+		if !ok {
+			t.Fatal("expected board cell behind toolbar")
+		}
+		if v.shows(g, row, col) {
+			t.Fatalf("v.shows(%d,%d) = true while cell center is behind toolbar %+v", row, col, tb)
+		}
+		arrived := false
+		v.ensureVisible(g, row, col, tt.Now(), false, func(time.Time) { arrived = true })
+		if !v.gliding() {
+			t.Fatal("ensureVisible did not start glide for cell hidden behind toolbar")
+		}
+		tt.Frame()
+		tt.Advance(260 * time.Millisecond)
+		if v.gliding() || !arrived {
+			t.Fatalf("ensureVisible glide did not finish: gliding=%v arrived=%v", v.gliding(), arrived)
+		}
+		if !v.shows(g, row, col) {
+			t.Fatalf("cell (%d,%d) still occluded after ensureVisible", row, col)
+		}
+	})
+
+	t.Run("classic_30x30_bottom_left_target_clears_toolbar", func(t *testing.T) {
+		app := newMinesweeperApp(42)
+		app.diffIdx = findDifficultyIdx(TrackKageiromai.ID)
+		app.resetGame(false)
+		tt := ui.NewTester(app.view, 960, 640)
+		tt.Frame()
+		v, g := app.board, app.game
+
+		// Target (29, 2) near the bottom-left edge of 30x30 classic.
+		tx, ty := v.visibleTarget(g, 29, 2, v.Cell)
+		if !v.showsAt(g, 29, 2, tx, ty, v.Cell) {
+			t.Fatalf("visibleTarget(29,2) = (%v,%v) still behind toolbar %+v", tx, ty, v.toolbarBounds())
+		}
+	})
+}
+
+func TestCanvasCornerToolbarNarrowViewportWrapping(t *testing.T) {
+	t.Run("520x640_duel_all_buttons_inside_and_clickable", func(t *testing.T) {
+		app := newMinesweeperApp(42)
+		app.diffIdx = findDifficultyIdx("duel")
+		app.resetGame(true)
+		app.game.duel.NextAI = 1e9
+		tt := ui.NewTester(app.view, 520, 640)
+		tt.UseScreenReader()
+		tt.Frame()
+
+		boardRect, ok := tt.Find("决斗棋盘")
+		if !ok {
+			t.Fatal("决斗棋盘 missing")
+		}
+		for _, name := range []string{"回到中心", "定位高松灯", "回标准大小"} {
+			btn, ok := tt.AccessByRole(ui.RoleButton, name)
+			if !ok {
+				t.Fatalf("narrow viewport missing button %q", name)
+			}
+			if !toolbarRectInside(btn.Bounds, boardRect) {
+				t.Fatalf("narrow viewport clipped %q %+v outside board %+v", name, btn.Bounds, boardRect)
+			}
+		}
+
+		// Zoom out and click 回标准大小 directly via mouse to prove it is unclipped and hittable.
+		v, g := app.board, app.game
+		v.zoom(g, boardRect.W/2, boardRect.H/2, 0.7)
+		tt.Frame()
+		if err := tt.Click("回标准大小"); err != nil {
+			t.Fatalf("narrow viewport click 回标准大小 failed: %v", err)
+		}
+		tt.Advance(260 * time.Millisecond)
+		if v.gliding() || v.Cell != standardCellPitch {
+			t.Fatalf("narrow viewport 回标准大小 did not restore pitch: cell=%.2f gliding=%v", v.Cell, v.gliding())
+		}
+	})
+
+	t.Run("760x640_duel_wraps_clear_of_minimap", func(t *testing.T) {
+		app := newMinesweeperApp(42)
+		app.diffIdx = findDifficultyIdx("duel")
+		app.resetGame(true)
+		app.game.duel.NextAI = 1e9
+		tt := ui.NewTester(app.view, 760, 640)
+		tt.UseScreenReader()
+		tt.Frame()
+
+		boardRect, ok := tt.Find("决斗棋盘")
+		if !ok {
+			t.Fatal("决斗棋盘 missing")
+		}
+		barInfo, ok := tt.AccessByRole(ui.RoleToolbar, "画布镜头")
+		if !ok {
+			t.Fatal("toolbar missing")
+		}
+		if !toolbarRectInside(barInfo.Bounds, boardRect) {
+			t.Fatalf("760x640 toolbar %+v escaped board %+v", barInfo.Bounds, boardRect)
+		}
+		mini := app.board.minimapBoundsFor(app.game)
+		miniScreen := ui.Rect{X: boardRect.X + mini.X, Y: boardRect.Y + mini.Y, W: mini.W, H: mini.H}
+		if toolbarRectsOverlap(barInfo.Bounds, miniScreen) {
+			t.Fatalf("760x640 toolbar %+v overlapped minimap %+v", barInfo.Bounds, miniScreen)
+		}
+		for _, name := range []string{"回到中心", "定位高松灯", "回标准大小"} {
+			btn, ok := tt.AccessByRole(ui.RoleButton, name)
+			if !ok || !toolbarRectInside(btn.Bounds, boardRect) {
+				t.Fatalf("760x640 button %q invalid: ok=%v bounds=%+v board=%+v", name, ok, btn.Bounds, boardRect)
+			}
+		}
+	})
 }

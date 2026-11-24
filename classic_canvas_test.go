@@ -1932,12 +1932,17 @@ func TestClassicCanvasBottomRightClearsMinimapAcrossZoom(t *testing.T) {
 					boardW := float32(g.Cols) * v.Cell
 					boardH := float32(g.Rows) * v.Cell
 					mini := v.minimapBoundsFor(g)
+					tb := v.toolbarBounds()
 					maxX, maxY := v.panLimit(g)
 					if boardW <= mini.X || boardH <= mini.Y {
 						wantX := max(float32(0), boardW-v.Width)
 						wantY := max(float32(0), boardH-v.Height)
+						minX, _, minY, _ := v.panBoundsFor(g, v.Cell)
+						if tb.W > 0 && tb.H > 0 && -minX < tb.X+tb.W && boardH-minY > tb.Y {
+							wantY = max(wantY, max(float32(0), boardH-max(float32(0), tb.Y-canvasToolbarMargin)))
+						}
 						if maxX != wantX || maxY != wantY {
-							t.Fatalf("non-overlapping board added overscroll: got (%v,%v), want (%v,%v)", maxX, maxY, wantX, wantY)
+							t.Fatalf("non-overlapping board added unexpected overscroll: got (%v,%v), want (%v,%v)", maxX, maxY, wantX, wantY)
 						}
 					}
 
