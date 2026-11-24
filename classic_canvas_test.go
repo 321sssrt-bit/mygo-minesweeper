@@ -1758,10 +1758,10 @@ func classicSurfaceCellAt(t *testing.T, tt *ui.Tester, app *minesweeperApp, row,
 	return r.X + (float32(col)+0.5)*v.Cell - v.X, r.Y + (float32(row)+0.5)*v.Cell - v.Y
 }
 
-// TestClassicBoardSurfaceFollowsThreshold mounts the real app shell: boards
-// up to 《影色舞》's 30×30 keep one widget per cell, while a board wider or
-// taller than that plays on the shared canvas, where flags, mine counts and
-// losses work the same way.
+// TestClassicBoardSurfaceFollowsStageFit mounts the real app shell at 1280×900:
+// boards whose fixed standard-pitch footprint fits the stage use one widget per
+// cell, while larger boards fall back to the shared canvas where flags, mine
+// counts and losses work the same way.
 func TestClassicBoardSurfaceFollowsThreshold(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -1770,10 +1770,10 @@ func TestClassicBoardSurfaceFollowsThreshold(t *testing.T) {
 	}{
 		{"9x9 mayoiboshi", Difficulties[0], false},
 		{"16x16 hekitenbansou", Difficulties[1], false},
-		{"20x20", Difficulty{ID: "mid", Gameplay: GameplayClassic, Rows: 20, Cols: 20, Mines: 80}, false},
-		{"30x30 at the threshold", TrackKageiromai, false},
-		{"30x31 one column past", Difficulty{ID: "wide", Gameplay: GameplayClassic, Rows: 30, Cols: 31, Mines: 150}, true},
-		{"31x30 one row past", Difficulty{ID: "tall", Gameplay: GameplayClassic, Rows: 31, Cols: 30, Mines: 150}, true},
+		{"20x20 taller than default stage", Difficulty{ID: "mid", Gameplay: GameplayClassic, Rows: 20, Cols: 20, Mines: 80}, true},
+		{"30x30 kageiromai", TrackKageiromai, true},
+		{"30x31", Difficulty{ID: "wide", Gameplay: GameplayClassic, Rows: 30, Cols: 31, Mines: 150}, true},
+		{"31x30", Difficulty{ID: "tall", Gameplay: GameplayClassic, Rows: 31, Cols: 30, Mines: 150}, true},
 		{"50x50 utakotoba", TrackUtakotoba, true},
 		{"100x100 mayoiuta", TrackMayoiuta, true},
 	} {
@@ -1809,8 +1809,9 @@ func TestClassicBoardSurfaceFollowsThreshold(t *testing.T) {
 }
 
 // TestSetlistSwitchesClassicSurfaceAcrossThreshold picks tracks from the
-// shipped seven-track setlist: the board surface follows each pick, both onto
-// the canvas and back to the widget grid.
+// shipped seven-track setlist: the board surface follows each pick according to
+// whether the track fits the stage at standard pitch, both onto the canvas and
+// back to the widget grid.
 func TestSetlistSwitchesClassicSurfaceAcrossThreshold(t *testing.T) {
 	app := newMinesweeperApp(42)
 	tt := ui.NewTester(app.view, 1280, 900)
@@ -1819,7 +1820,8 @@ func TestSetlistSwitchesClassicSurfaceAcrossThreshold(t *testing.T) {
 		canvas bool
 	}{
 		{TrackMayoiuta, true},
-		{TrackKageiromai, false},
+		{Difficulties[1], false},
+		{TrackKageiromai, true},
 		{TrackUtakotoba, true},
 		{Difficulties[0], false},
 	} {

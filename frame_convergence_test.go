@@ -56,7 +56,7 @@ func TestActiveFrameBenchmarkSmoke(t *testing.T) {
 		})
 	}
 	t.Run("classic-grid", func(t *testing.T) {
-		check(t, BenchmarkClassicGrid30x30ActiveFrame, false)
+		check(t, BenchmarkClassicGrid16x16ActiveFrame, false)
 	})
 
 	large := results["1000x1000"]

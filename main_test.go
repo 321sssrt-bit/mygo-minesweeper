@@ -248,12 +248,20 @@ func TestNativeUIReusedWidgetsAndMemeFlow(t *testing.T) {
 	}
 }
 
-func TestClassicBoardUsesWideWindowSpace(t *testing.T) {
+func TestClassicBoardUsesStandardPitch(t *testing.T) {
 	app := newMinesweeperApp(12345)
 	tt := ui.NewTester(app.view, 1280, 900)
-	r, ok := tt.Find("cell-0-0")
-	if !ok || r.W < 55 || r.H < 55 {
-		t.Fatalf("classic cells remain tiny: %+v found=%v", r, ok)
+	r00, ok := tt.Find("cell-0-0")
+	r01, ok1 := tt.Find("cell-0-1")
+	r10, ok2 := tt.Find("cell-1-0")
+	if !ok || !ok1 || !ok2 {
+		t.Fatalf("classic grid cells missing: (0,0)=%v (0,1)=%v (1,0)=%v", ok, ok1, ok2)
+	}
+	if r00.W != gridCellSize || r00.H != gridCellSize {
+		t.Fatalf("classic cell size = %.1fx%.1f, want %.1fx%.1f", r00.W, r00.H, gridCellSize, gridCellSize)
+	}
+	if pitchX, pitchY := r01.X-r00.X, r10.Y-r00.Y; pitchX != standardCellPitch || pitchY != standardCellPitch {
+		t.Fatalf("classic grid pitch = (%.1f, %.1f), want (%.1f, %.1f)", pitchX, pitchY, standardCellPitch, standardCellPitch)
 	}
 }
 
@@ -267,8 +275,7 @@ func TestClassicBoardFitsEveryDifficulty(t *testing.T) {
 		app.resetGame(false)
 		tt := ui.NewTester(app.view, 1280, 900)
 		tt.Frame()
-		if diff.Rows > 30 || diff.Cols > 30 {
-			// Classic boards past 30x30 route onto the shared paper canvas (#35).
+		if app.classicOnCanvas() {
 			r, ok := tt.Find("经典棋盘")
 			if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 || r.X+r.W > 1280 || r.Y+r.H > 900 {
 				t.Fatalf("difficulty %d (%s) classic canvas bounds invalid: %+v found=%v", i, diff.ID, r, ok)
@@ -278,18 +285,11 @@ func TestClassicBoardFitsEveryDifficulty(t *testing.T) {
 			}
 			continue
 		}
-		if diff.Rows > 20 {
-			// Classic boards taller than 20 rows keep the 22px cell floor and scroll inside ScrollBoth.
-			r, ok := tt.Find("cell-0-0")
-			if !ok || r.W < 22 || r.H < 22 {
-				t.Fatalf("difficulty %d (%s) top-left cell invalid: %+v found=%v", i, diff.ID, r, ok)
-			}
-			continue
-		}
+		r0, ok0 := tt.Find("cell-0-0")
 		label := fmt.Sprintf("cell-%d-%d", app.game.Rows-1, app.game.Cols-1)
-		r, ok := tt.Find(label)
-		if !ok || r.Y+r.H > 900 {
-			t.Fatalf("difficulty %d (%s) bottom cell clipped: %+v", i, diff.ID, r)
+		rLast, okLast := tt.Find(label)
+		if !ok0 || !okLast || r0.W != gridCellSize || r0.H != gridCellSize || rLast.X+rLast.W > 1280 || rLast.Y+rLast.H > 900 {
+			t.Fatalf("difficulty %d (%s) grid cells invalid or clipped: first=%+v last=%+v", i, diff.ID, r0, rLast)
 		}
 	}
 }
@@ -921,11 +921,8 @@ func TestHaruhikageMovedToDuelAndKageiromaiLossIsPlain(t *testing.T) {
 	app.game.Status = StatusPlaying
 	app.game.Cell(0, 0).IsMine = true
 	app.game.RecomputeAdjacency()
-	cell0, ok := tt.Find("cell-0-0")
-	if !ok {
-		t.Fatal("cell-0-0 not found on 《影色舞》")
-	}
-	tt.ClickAt(cell0.X+cell0.W/2, cell0.Y+cell0.H/2)
+	x0, y0 := classicSurfaceCellAt(t, tt, app, 0, 0)
+	tt.ClickAt(x0, y0)
 	if app.game.Status != StatusLost {
 		t.Fatalf("expected StatusLost on 《影色舞》 mine hit, got %v", app.game.Status)
 	}

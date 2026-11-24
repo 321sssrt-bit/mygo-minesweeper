@@ -390,6 +390,16 @@ func writeSnapshot(t *testing.T, app *minesweeperApp, canvas bool, width, height
 			// that cell; the hint needs a refresh frame plus its 1ms timer.
 			tt.Move(r.X+r.W/2, r.Y+r.H/2)
 			tt.Advance(20 * time.Millisecond)
+		} else if r, ok := tt.Find("经典棋盘"); ok {
+			tt.Frame()
+			v := app.board
+			if !v.shows(app.game, hoverRow, hoverCol) {
+				v.center(app.game, hoverRow, hoverCol)
+				tt.Frame()
+			}
+			x := r.X + (float32(hoverCol)+0.5)*v.Cell - v.X
+			y := r.Y + (float32(hoverRow)+0.5)*v.Cell - v.Y
+			tt.Move(x, y)
 		}
 	}
 	tt.Frame()

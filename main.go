@@ -284,7 +284,9 @@ type minesweeperApp struct {
 	pendingActions       []pendingCellAction
 	duelNoticeAt         time.Time
 	duelEnded            bool
-	classicSize          float32
+	classicSurface       classicSurfaceState
+	stageChromeW         float32
+	stageChromeH         float32
 	ripples              map[int]tileRipple
 	bandages             map[int]bandageAnim
 	duelPopups           []duelPopup
@@ -937,14 +939,168 @@ func (a *minesweeperApp) bandMode() bool {
 	return a.modeIdx == 0
 }
 
-// classicGridMaxSide is the widest classic board, 《影色舞》's 30×30, that
-// is still laid out as one widget per cell.
-const classicGridMaxSide = 30
+const (
+	gridCellGap     = float32(2)
+	gridCellSize    = standardCellPitch - gridCellGap
+	gridCellRadius  = float32(4)
+	gridNumberSize  = standardCellPitch * 0.55
+	gridPropScale   = float32(0.86)
+	gridBoardPad    = float32(8)
+	gridStageMargin = float32(4)
 
-// classicOnCanvas reports whether the current classic board is too large
-// for per-cell widgets and plays on the shared pan/zoom canvas instead.
+	defaultWindowW      = float32(1280)
+	defaultWindowH      = float32(900)
+	defaultStageChromeW = float32(338)
+	defaultStageChromeH = float32(292)
+)
+
+type classicSurfaceState struct {
+	valid        bool
+	game         *Game
+	diffID       string
+	rows         int
+	cols         int
+	winW         float32
+	winH         float32
+	useCanvas    bool
+	needsMeasure bool
+}
+
+// gridBoardOuterSize returns the stage footprint required to display a classic
+// widget grid at standardCellPitch without clipping its border shadow.
+func gridBoardOuterSize(rows, cols int) (w, h float32) {
+	inset := gridBoardPad*2 + gridStageMargin*2
+	w = float32(cols)*standardCellPitch - gridCellGap + inset
+	h = float32(rows)*standardCellPitch - gridCellGap + inset
+	return w, h
+}
+
+func classicGridFitsStage(rows, cols int, stageW, stageH float32) bool {
+	needW, needH := gridBoardOuterSize(rows, cols)
+	return needW <= stageW && needH <= stageH
+}
+
+func (a *minesweeperApp) estimatedStageSize(winW, winH float32) (float32, float32) {
+	chromeW := a.stageChromeW
+	if chromeW <= 0 {
+		chromeW = defaultStageChromeW
+	}
+	chromeH := a.stageChromeH
+	if chromeH <= 0 {
+		chromeH = defaultStageChromeH
+	}
+	return winW - chromeW, winH - chromeH
+}
+
+// syncClassicSurface decides whether a classic board uses the fixed-pitch
+// widget grid or falls back to the pan/zoom canvas. It re-evaluates only when
+// the track/game or window size changes, preserving in-progress game state on
+// resize transitions.
+func (a *minesweeperApp) syncClassicSurface(winW, winH float32, now time.Time) {
+	if a.isDuel() {
+		return
+	}
+	s := &a.classicSurface
+	if s.valid &&
+		s.game == a.game &&
+		s.diffID == a.game.Difficulty.ID &&
+		s.rows == a.game.Rows &&
+		s.cols == a.game.Cols &&
+		s.winW == winW &&
+		s.winH == winH {
+		return
+	}
+	sameGame := s.valid &&
+		s.game == a.game &&
+		s.diffID == a.game.Difficulty.ID &&
+		s.rows == a.game.Rows &&
+		s.cols == a.game.Cols
+	prevCanvas := s.useCanvas
+
+	availW, availH := a.estimatedStageSize(winW, winH)
+	useCanvas := !classicGridFitsStage(a.game.Rows, a.game.Cols, availW, availH)
+	*s = classicSurfaceState{
+		valid:        true,
+		game:         a.game,
+		diffID:       a.game.Difficulty.ID,
+		rows:         a.game.Rows,
+		cols:         a.game.Cols,
+		winW:         winW,
+		winH:         winH,
+		useCanvas:    useCanvas,
+		needsMeasure: true,
+	}
+	if sameGame && prevCanvas != useCanvas {
+		a.onClassicSurfaceSwitch(useCanvas, now)
+	}
+}
+
+func (a *minesweeperApp) onClassicSurfaceSwitch(toCanvas bool, now time.Time) {
+	if toCanvas {
+		a.gridPress.downActive = false
+		a.gridPress.cancel()
+		a.gridPress.clearSuppressed()
+		a.classicHoverRow, a.classicHoverCol = -1, -1
+		a.classicHoverHint = HoverHint{}
+		a.board = newBoardView()
+		return
+	}
+	onArrive := a.board.glide.onArrive
+	a.board.Pressed = false
+	a.board.Dragging = false
+	a.board.cancelPress()
+	a.board.stopGlide()
+	a.board.HasHover = false
+	a.board.HoverRow, a.board.HoverCol = -1, -1
+	if onArrive != nil {
+		// All cells are immediately visible on the grid, so deliver any
+		// deferred skill pulse callback instead of dropping it with the glide.
+		onArrive(now)
+	}
+}
+
+func (a *minesweeperApp) measureClassicStage(services ui.Services, stage ui.Rect, winW, winH float32, now time.Time) {
+	s := &a.classicSurface
+	if !s.valid || !s.needsMeasure || a.isDuel() {
+		return
+	}
+	if s.game != a.game || s.winW != winW || s.winH != winH {
+		return
+	}
+	// Defer calibration while the inline memes drawer is open so its temporary
+	// height neither skews chrome measurement nor drops a pending recheck.
+	if a.showMemes || a.memeDrawerValue > 0 {
+		return
+	}
+	s.needsMeasure = false
+	if stage.W > 0 && stage.H > 0 {
+		a.stageChromeW = winW - stage.W
+		a.stageChromeH = winH - stage.H
+		useCanvas := !classicGridFitsStage(a.game.Rows, a.game.Cols, stage.W, stage.H)
+		if useCanvas != s.useCanvas {
+			s.useCanvas = useCanvas
+			a.onClassicSurfaceSwitch(useCanvas, now)
+			services.Invalidate()
+		}
+	}
+}
+
+// classicOnCanvas reports whether the current classic board plays on the
+// shared pan/zoom canvas because it does not fit the stage at standard pitch.
 func (a *minesweeperApp) classicOnCanvas() bool {
-	return !a.isDuel() && max(a.game.Rows, a.game.Cols) > classicGridMaxSide
+	if a.isDuel() {
+		return false
+	}
+	s := &a.classicSurface
+	if s.valid &&
+		s.game == a.game &&
+		s.diffID == a.game.Difficulty.ID &&
+		s.rows == a.game.Rows &&
+		s.cols == a.game.Cols {
+		return s.useCanvas
+	}
+	availW, availH := a.estimatedStageSize(defaultWindowW, defaultWindowH)
+	return !classicGridFitsStage(a.game.Rows, a.game.Cols, availW, availH)
 }
 
 func (a *minesweeperApp) pushChat(speaker, colorHex, text string) {
@@ -993,7 +1149,7 @@ func (a *minesweeperApp) resetGame(initial bool) {
 	a.pendingActions = nil
 	a.duelEnded = false
 	a.duelNoticeAt = time.Time{}
-	a.classicSize = 0
+	a.classicSurface = classicSurfaceState{}
 	a.board = newBoardView()
 	a.ripples = nil
 	a.bandages = nil
@@ -1205,10 +1361,6 @@ func bandageBounceTransform(elapsed time.Duration) (scale float32, rotDeg float3
 	osc := math.Cos(u * 2 * math.Pi * 0.95)
 	impulse := env * osc
 	return float32(1 + 0.25*impulse), float32(10 * impulse)
-}
-
-func tileSlipTilt(cellIndex int) float32 {
-	return float32((cellIndex*37)%7-3) * 0.22
 }
 
 // paintPeelOverlay draws a waiting or lifting paper slip decoration over an
@@ -3038,6 +3190,7 @@ func (a *minesweeperApp) handleGridTileInput(idx, row, col int, size float32, ev
 
 func (a *minesweeperApp) view(c *ui.Context) {
 	now := c.Now()
+	winW, winH := c.Size()
 	a.lastFrameNow = now
 	defer func() { a.viewMounted = true }()
 	defer a.flushChatNote()
@@ -3046,6 +3199,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	a.flushCues(now)
 	a.systemReduceMotion = c.Preferences().ReduceMotion
 	a.syncMotionState(a.reducedMotion(c))
+	a.syncClassicSurface(winW, winH, now)
 	a.flushPendingActions(c, now)
 	if a.isDuel() {
 		a.tickDuel(c, now)
@@ -3152,9 +3306,9 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		})
 
 		// Main 2-Column Workspace: Left Sidebar + Right Stage
-		ui.Row(c).Grow(1).Gap(12).AlignItems(ui.Stretch).Children(func() {
+		ui.Row(c).Grow(1).MinHeight(0).Gap(12).AlignItems(ui.Stretch).Children(func() {
 			// Left Sidebar: Member Roster + Live Meters + Band Group Chat
-			ui.Column(c).Width(272).Padding(10).Gap(10).Radius(12).
+			ui.Column(c).Width(272).Shrink(0).MinHeight(0).Padding(10).Gap(10).Radius(12).
 				Background(t.Surface).Border(1, t.Border).Children(func() {
 				ui.Text(c, "乐队成员").FontSize(13).Bold().TextColor(t.TextMuted)
 
@@ -3333,7 +3487,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			})
 
 			// Right Main Stage: Companion Banner + HUD + Board (+ Optional Memes Drawer)
-			ui.Column(c).Grow(1).Gap(10).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Gap(10).Children(func() {
 				// Active Member Banner themed to the selected member!
 				banner := ui.Themed(c.Key("member-banner"), memberTheme).Padding(10, 12).Radius(4).Background(t.Surface).
 					Shadow(0, 1, 3, 0, pal.SlipShade)
@@ -3361,7 +3515,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									}
 									ui.Text(c, skillTip).FontSize(12).TextColor(t.TextMuted).SingleLine()
 								})
-								ui.Text(c, a.quote).FontSize(13).Bold()
+								ui.Text(c, a.quote).FontSize(13).Bold().SingleLine().FixedLineHeight(20)
 							})
 						})
 
@@ -3494,7 +3648,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				}
 
 				// Board Stage
-				ui.Column(c).Grow(1).Padding(12).Gap(10).Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
+				ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Padding(12).Gap(10).Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
 					// HUD Bar
 					ui.Row(c).Padding(8, 12).Radius(9).Background(t.Background.Alpha(0.75)).
 						Border(1, t.Border).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
@@ -3537,42 +3691,14 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						a.duelBoard(c)
 						return
 					}
-					if a.classicOnCanvas() {
-						a.classicBoard(c)
-						return
-					}
-					// Minesweeper Grid
-					cellSize := float32(40)
-					cellFont := float32(15)
-					if a.game.Cols >= 28 {
-						cellSize = 32
-						cellFont = 15
-					} else if a.game.Cols >= 18 {
-						cellSize = 36
-						cellFont = 16
-					} else if a.game.Cols >= 16 {
-						cellSize = 38
-						cellFont = 17
-					}
-
-					availableW, availableH := c.Size()
-					byWidth := (availableW - 342 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
-					byHeight := (availableH - 230 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
-					cellSize = max(22, min(64, min(byWidth, byHeight)))
-					cellFont = max(12, cellSize*0.48)
-					ui.Column(c.Key("classic-grid-stage")).Grow(1).FillWidth().Clip().Children(func() {
-						stage := ui.ScrollBoth(c).Grow(1).FillWidth().Clip().Draw(func(p *ui.Painter, bounds ui.Rect) {
-							byWidth := (bounds.W - 28 - float32(a.game.Cols-1)*3) / float32(a.game.Cols)
-							byHeight := (bounds.H - 28 - float32(a.game.Rows-1)*3) / float32(a.game.Rows)
-							size := max(22, min(64, min(byWidth, byHeight)))
-							if size != a.classicSize {
-								a.classicSize = size
-								p.After(time.Millisecond)
-							}
-						})
-						if a.classicSize > 0 {
-							cellSize = a.classicSize
-							cellFont = max(12, cellSize*0.48)
+					a.syncClassicSurface(winW, winH, now)
+					services := c.Services()
+					ui.Column(c.Key("classic-stage-host")).Grow(1).FillWidth().MinWidth(0).MinHeight(0).Draw(func(p *ui.Painter, r ui.Rect) {
+						a.measureClassicStage(services, r, winW, winH, p.Now())
+					}).Children(func() {
+						if a.classicOnCanvas() {
+							a.classicBoard(c)
+							return
 						}
 						a.pruneRipples(now)
 						a.pruneBandages(now)
@@ -3590,319 +3716,300 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						hintColor := memberColor
 						nextHoverRow, nextHoverCol := -1, -1
 
-						stage.Children(func() {
-							ui.Column(c).FillWidth().AlignItems(ui.Center).Padding(4).Children(func() {
-								// Graph paper: ruled lines run through the gaps between cells.
-								const gridGap, gridPad = float32(3), float32(8)
-								grid := ui.Grid(c).Columns(a.game.Cols).Gap(gridGap).Padding(gridPad).Radius(4).
-									Shadow(0, 1, 3, 0, pal.SlipShade)
-								pitch := cellSize + gridGap
-								grid.Draw(func(p *ui.Painter, r ui.Rect) {
-									p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
-										p.Fill(r, pal.Board, 4)
-										for x := r.X + gridPad - gridGap/2; x <= r.X+r.W; x += pitch {
-											p.Line(x, r.Y, x, r.Y+r.H, 1, pal.Grid)
-										}
-										for y := r.Y + gridPad - gridGap/2; y <= r.Y+r.H; y += pitch {
-											p.Line(r.X, y, r.X+r.W, y, 1, pal.Grid)
-										}
-									})
-								})
-								type gridLiftingSlip struct {
-									row, col, idx int
-									peelT         float32
-									tilt          float32
-								}
-								type gridPeelingBandage struct {
-									row, col int
-									shield   bool
-									peelT    float32
-									tilt     float32
-								}
-								var gridLifting []gridLiftingSlip
-								var gridPeeling []gridPeelingBandage
-								grid.Children(func() {
-									for i := range a.game.Cells {
-										cell := &a.game.Cells[i]
-										row, col := cell.Row, cell.Col
-										cellIdx, cellRow, cellCol, tileSize := i, row, col, cellSize
-										tile := ui.Box(c.Key(i)).Size(cellSize, cellSize).Radius(4).Center().
-											TabStop(false).Label(fmt.Sprintf("cell-%d-%d", row, col)).
-											HandleInput(func(ev ui.InputEvent) bool {
-												return a.handleGridTileInput(cellIdx, cellRow, cellCol, tileSize, ev)
-											})
-										if tile.Hovered() {
-											nextHoverRow, nextHoverCol = row, col
-										}
-										isHintCenter := hoverHint.Kind != HintNone && i == hoverHint.Center
-										isHintTarget := hoverHint.Kind != HintNone && containsIndex(hoverHint.Targets, i)
-
-										var peel tilePeelState
-										if cell.Revealed && !cell.Flagged {
-											peel = a.tilePeelAt(i, now)
-										}
-										washActive := peel.stage == tilePeelLifting || peel.stage == tilePeelWashOnly
-										washColor := bandColor
-										if peel.washColor.A > 0 {
-											washColor = peel.washColor
-										}
-										bAnim, hasBandage := a.bandageAnimAt(i, now)
-
-										// Revealed cells are the bare graph paper (no fill); hidden
-										// ones are paper slips stuck on it, each a touch askew.
-										var tileBg ui.Color
-										var slip bool
-										var tileCursor bool
-										var tileText string
-										var tileTextSize float32
-										var tileTextColor ui.Color
-										var tileArt *ui.SVG
-
-										if val := cellAccessValue(cell); val != "" {
-											tile.Value(val).Description(val)
-										}
-										switch {
-										case cell.Revealed:
-											switch {
-											case cell.Exploded:
-												tileBg, tileArt = pal.Boom, art.KnotHit
-											case cell.IsMine:
-												tileArt = art.Knot
-											case cell.Adjacent > 0:
-												if peel.stage != tilePeelCovered {
-													if isHintCenter {
-														tileBg = hintColor.Alpha(0.38)
-													} else if washActive {
-														tileBg = washColor.Alpha(0.22 * peel.washAlpha)
-													} else if tile.Hovered() {
-														tileBg = pal.Ink.Alpha(0.05)
-													}
-												}
-												tileCursor = true
-												tileText = fmt.Sprintf("%d", cell.Adjacent)
-												tileTextSize = cellFont * 1.08
-												tileTextColor = numberInk(cell.Adjacent, pal.Dark)
-											default:
-												if washActive {
-													tileBg = washColor.Alpha(0.26 * peel.washAlpha)
-												}
-											}
-										case cell.WrongFlag:
-											slip, tileArt = true, art.WrongFlag
-										case cell.Flagged:
-											slip, tileArt, tileCursor = true, art.Flag, true
-											if cell.ShieldSaved {
-												tileArt = art.Shield
-											}
-										case cell.Questioned:
-											slip, tileCursor = true, true
-											tileText, tileTextSize, tileTextColor = "?", cellFont*1.08, pal.Graphite
-										default:
-											slip, tileCursor = true, true
-										}
-										if slip {
-											tileBg = pal.Slip
-											if isHintTarget {
-												tileBg = hintColor.Alpha(0.42).Over(pal.Slip)
-											} else if tile.Hovered() {
-												tileBg = pal.Slip.Mix(pal.Sheet, 0.45)
-											}
-										}
-
-										tiltCopy := tileSlipTilt(i)
-										if slip {
-											// Paint the slip's subtle hand-stuck tilt and shadow in the
-											// decorative layer so the cell's hit-test and focus bounds
-											// never shift when revealed, flagged, or shaken.
-											bgCopy := tileBg
-											shadeCopy := pal.SlipShade
-											sx, sy := shakeX, shakeY
-											tile.Draw(func(p *ui.Painter, r ui.Rect) {
-												cx, cy := r.X+r.W/2, r.Y+r.H/2
-												xf := ui.Rotation(tiltCopy)
-												if sx != 0 || sy != 0 {
-													xf = xf.Then(ui.Translation(sx, sy))
-												}
-												p.Transform(xf, cx, cy, func() {
-													p.Shadow(r, 4, 0, 1, 1.5, 0, shadeCopy)
-													if bgCopy.A > 0 {
-														p.Fill(r, bgCopy, 4)
-													}
-												})
-											})
-										} else if shakeX != 0 || shakeY != 0 {
-											bgCopy := tileBg
-											sx, sy := shakeX, shakeY
-											tile.Draw(func(p *ui.Painter, r ui.Rect) {
-												if bgCopy.A == 0 {
-													return
-												}
-												p.Transform(ui.Translation(sx, sy), 0, 0, func() {
-													p.Fill(r, bgCopy, 4)
-												})
-											})
-										} else {
-											tile.Background(tileBg)
-										}
-										if tileCursor {
-											tile.Cursor(ui.CursorPointer)
-										}
-										if tileText != "" || tileArt != nil {
-											hasBounce := cell.Flagged && !cell.WrongFlag && hasBandage && bAnim.Kind == bandageBounce
-											var bounceScale, bounceRot float32
-											if hasBounce {
-												bounceScale, bounceRot = bandageBounceTransform(now.Sub(bAnim.Start))
-											}
-											tile.Children(func() {
-												var el ui.Element
-												if tileArt != nil {
-													el = ui.Image(c, tileArt).Size(cellSize*0.82, cellSize*0.82).PassThrough()
-												} else {
-													el = ui.Text(c, tileText).FontSize(tileTextSize).Bold().TextColor(tileTextColor).PassThrough()
-												}
-												switch {
-												case hasBounce:
-													xf := ui.Scaling(bounceScale, bounceScale).Then(ui.Rotation(tiltCopy + bounceRot))
-													if shakeX != 0 || shakeY != 0 {
-														xf = xf.Then(ui.Translation(shakeX, shakeY))
-													}
-													el.Transform(xf)
-												case slip:
-													xf := ui.Rotation(tiltCopy)
-													if shakeX != 0 || shakeY != 0 {
-														xf = xf.Then(ui.Translation(shakeX, shakeY))
-													}
-													el.Transform(xf)
-												case shakeX != 0 || shakeY != 0:
-													el.Translate(shakeX, shakeY)
-												}
-											})
-										}
-										switch {
-										case peel.stage == tilePeelCovered:
-											coverBg := pal.Slip
-											if tile.Hovered() {
-												coverBg = pal.Slip.Mix(pal.Sheet, 0.45)
-											}
-											shadeCopy := pal.SlipShade
-											cellIdx := i
-											sx, sy := shakeX, shakeY
-											tile.DrawOver(func(p *ui.Painter, r ui.Rect) {
-												draw := func() {
-													paintPeelOverlay(p, r, 4, coverBg, shadeCopy, tiltCopy, cellIdx, false, 0, true)
-												}
-												if sx != 0 || sy != 0 {
-													p.Transform(ui.Translation(sx, sy), 0, 0, draw)
-												} else {
-													draw()
-												}
-											})
-										case peel.stage == tilePeelLifting:
-											gridLifting = append(gridLifting, gridLiftingSlip{
-												row: row, col: col, idx: i, peelT: peel.peelT, tilt: tiltCopy,
-											})
-										case !cell.Flagged && hasBandage && bAnim.Kind == bandagePeel:
-											gridPeeling = append(gridPeeling, gridPeelingBandage{
-												row:    row,
-												col:    col,
-												shield: bAnim.Shield,
-												peelT:  float32(now.Sub(bAnim.Start)) / float32(bandagePeelDuration),
-												tilt:   tiltCopy,
-											})
-										}
-
-										clicks := tile.Clicks()
-										if a.gridPress.consumeClicks(i, clicks, tile.Pressed()) > 0 {
-											a.cellMove(c, row, col, 0, now)
-										}
+						ui.Column(c.Key("classic-grid-stage")).Grow(1).FillWidth().MinWidth(0).MinHeight(0).Clip().
+							Padding(gridStageMargin).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+							// Graph paper: ruled lines run through the gaps between cells at standardCellPitch.
+							rows, cols := a.game.Rows, a.game.Cols
+							grid := ui.Grid(c.Key("classic-grid")).Shrink(0).Columns(cols).Gap(gridCellGap).Padding(gridBoardPad).Radius(gridCellRadius).
+								Shadow(0, 1, 3, 0, pal.SlipShade)
+							grid.Draw(func(p *ui.Painter, r ui.Rect) {
+								p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
+									p.Fill(r, pal.Board, gridCellRadius)
+									originX := r.X + gridBoardPad - gridCellGap/2
+									originY := r.Y + gridBoardPad - gridCellGap/2
+									for col := 0; col <= cols; col++ {
+										x := originX + float32(col)*standardCellPitch
+										p.Line(x, r.Y, x, r.Y+r.H, 1, pal.Grid)
+									}
+									for row := 0; row <= rows; row++ {
+										y := originY + float32(row)*standardCellPitch
+										p.Line(r.X, y, r.X+r.W, y, 1, pal.Grid)
 									}
 								})
-								hasGridPulses := !a.motionReducedActive && len(a.skillPulses) > 0
-								hasGridBursts := !a.motionReducedActive && len(a.knotBursts) > 0
-								if len(gridLifting) > 0 || len(gridPeeling) > 0 || hasGridPulses || hasGridBursts {
-									liftingCopy := gridLifting
-									peelingCopy := gridPeeling
-									pulsesCopy := slices.Clone(a.skillPulses)
-									burstsCopy := slices.Clone(a.knotBursts)
-									cols := a.game.Cols
-									slipCol, shadeCol := pal.Slip, pal.SlipShade
-									flagBmp, shieldBmp := art.FlagBitmap, art.ShieldBitmap
-									sx, sy := shakeX, shakeY
-									palCopy := pal
-									grid.DrawOver(func(p *ui.Painter, r ui.Rect) {
-										drawNow := p.Now()
-										drawOverlays := func() {
-											for _, ls := range liftingCopy {
-												cellRect := ui.Rect{
-													X: r.X + gridPad + float32(ls.col)*pitch,
-													Y: r.Y + gridPad + float32(ls.row)*pitch,
-													W: cellSize,
-													H: cellSize,
+							})
+							type gridLiftingSlip struct {
+								row, col, idx int
+								peelT         float32
+							}
+							type gridPeelingBandage struct {
+								row, col int
+								shield   bool
+								peelT    float32
+							}
+							var gridLifting []gridLiftingSlip
+							var gridPeeling []gridPeelingBandage
+							grid.Children(func() {
+								for i := range a.game.Cells {
+									cell := &a.game.Cells[i]
+									row, col := cell.Row, cell.Col
+									cellIdx, cellRow, cellCol := i, row, col
+									tile := ui.Box(c.Key(i)).Size(gridCellSize, gridCellSize).Radius(gridCellRadius).Center().
+										TabStop(false).Label(fmt.Sprintf("cell-%d-%d", row, col)).
+										HandleInput(func(ev ui.InputEvent) bool {
+											return a.handleGridTileInput(cellIdx, cellRow, cellCol, gridCellSize, ev)
+										})
+									if tile.Hovered() {
+										nextHoverRow, nextHoverCol = row, col
+									}
+									isHintCenter := hoverHint.Kind != HintNone && i == hoverHint.Center
+									isHintTarget := hoverHint.Kind != HintNone && containsIndex(hoverHint.Targets, i)
+
+									var peel tilePeelState
+									if cell.Revealed && !cell.Flagged {
+										peel = a.tilePeelAt(i, now)
+									}
+									washActive := peel.stage == tilePeelLifting || peel.stage == tilePeelWashOnly
+									washColor := bandColor
+									if peel.washColor.A > 0 {
+										washColor = peel.washColor
+									}
+									bAnim, hasBandage := a.bandageAnimAt(i, now)
+
+									// Revealed cells are the bare graph paper (no fill); hidden
+									// ones are square paper slips matching the canvas at 100%.
+									var tileBg ui.Color
+									var slip bool
+									var tileCursor bool
+									var tileText string
+									var tileTextColor ui.Color
+									var tileArt *ui.SVG
+
+									if val := cellAccessValue(cell); val != "" {
+										tile.Value(val).Description(val)
+									}
+									switch {
+									case cell.Revealed:
+										switch {
+										case cell.Exploded:
+											tileBg, tileArt = pal.Boom, art.KnotHit
+										case cell.IsMine:
+											tileArt = art.Knot
+										case cell.Adjacent > 0:
+											if peel.stage != tilePeelCovered {
+												if isHintCenter {
+													tileBg = hintColor.Alpha(0.38)
+												} else if washActive {
+													tileBg = washColor.Alpha(0.22 * peel.washAlpha)
+												} else if tile.Hovered() {
+													tileBg = pal.Ink.Alpha(0.05)
 												}
-												paintPeelOverlay(p, cellRect, 4, slipCol, shadeCol, ls.tilt, ls.idx, true, ls.peelT, true)
 											}
-											for _, pb := range peelingCopy {
-												cellRect := ui.Rect{
-													X: r.X + gridPad + float32(pb.col)*pitch,
-													Y: r.Y + gridPad + float32(pb.row)*pitch,
-													W: cellSize,
-													H: cellSize,
-												}
-												bmp := flagBmp
-												if pb.shield {
-													bmp = shieldBmp
-												}
-												cx, cy := cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2
-												p.Transform(ui.Rotation(pb.tilt), cx, cy, func() {
-													paintBandagePeel(p, cellRect, bmp, 0.82, pb.peelT)
-												})
-											}
-											if hasGridPulses {
-												for _, pulse := range pulsesCopy {
-													elapsed := drawNow.Sub(pulse.Start)
-													if elapsed < 0 || elapsed >= skillPulseDuration {
-														continue
-													}
-													row, col := pulse.Index/cols, pulse.Index%cols
-													cellRect := ui.Rect{
-														X: r.X + gridPad + float32(col)*pitch,
-														Y: r.Y + gridPad + float32(row)*pitch,
-														W: cellSize,
-														H: cellSize,
-													}
-													paintSkillTargetPulse(p, cellRect, 4, pulse.MemberID, palCopy, float32(elapsed)/float32(skillPulseDuration))
-												}
-											}
-											if hasGridBursts {
-												for _, burst := range burstsCopy {
-													elapsed := drawNow.Sub(burst.Start)
-													if elapsed < 0 || elapsed >= knotBurstDuration {
-														continue
-													}
-													row, col := burst.Index/cols, burst.Index%cols
-													cellRect := ui.Rect{
-														X: r.X + gridPad + float32(col)*pitch,
-														Y: r.Y + gridPad + float32(row)*pitch,
-														W: cellSize,
-														H: cellSize,
-													}
-													paintKnotBurst(p, cellRect, palCopy, float32(elapsed)/float32(knotBurstDuration))
-												}
+											tileCursor = true
+											tileText = cellDigits[cell.Adjacent]
+											tileTextColor = numberInk(cell.Adjacent, pal.Dark)
+										default:
+											if washActive {
+												tileBg = washColor.Alpha(0.26 * peel.washAlpha)
 											}
 										}
-										if sx != 0 || sy != 0 {
-											p.Transform(ui.Translation(sx, sy), 0, 0, drawOverlays)
-										} else {
-											drawOverlays()
+									case cell.WrongFlag:
+										slip, tileArt = true, art.WrongFlag
+									case cell.Flagged:
+										slip, tileArt, tileCursor = true, art.Flag, true
+										if cell.ShieldSaved {
+											tileArt = art.Shield
 										}
-										if hasGridPulses || hasGridBursts {
-											p.AnimationFrame()
+									case cell.Questioned:
+										slip, tileCursor = true, true
+										tileText, tileTextColor = "?", pal.Graphite
+									default:
+										slip, tileCursor = true, true
+									}
+									if slip {
+										tileBg = pal.Slip
+										if isHintTarget {
+											tileBg = hintColor.Alpha(0.42).Over(pal.Slip)
+										} else if tile.Hovered() {
+											tileBg = pal.Slip.Mix(pal.Sheet, 0.45)
 										}
-									})
+									}
+
+									if slip {
+										bgCopy := tileBg
+										shadeCopy := pal.SlipShade
+										sx, sy := shakeX, shakeY
+										tile.Draw(func(p *ui.Painter, r ui.Rect) {
+											draw := func() {
+												paintSlip(p, r, gridCellRadius, bgCopy, shadeCopy, ui.Color{}, nil, ui.Color{}, true)
+											}
+											if sx != 0 || sy != 0 {
+												p.Transform(ui.Translation(sx, sy), 0, 0, draw)
+											} else {
+												draw()
+											}
+										})
+									} else if shakeX != 0 || shakeY != 0 {
+										bgCopy := tileBg
+										sx, sy := shakeX, shakeY
+										tile.Draw(func(p *ui.Painter, r ui.Rect) {
+											if bgCopy.A == 0 {
+												return
+											}
+											p.Transform(ui.Translation(sx, sy), 0, 0, func() {
+												p.Fill(r, bgCopy, gridCellRadius)
+											})
+										})
+									} else {
+										tile.Background(tileBg)
+									}
+									if tileCursor {
+										tile.Cursor(ui.CursorPointer)
+									}
+									if tileText != "" || tileArt != nil {
+										hasBounce := cell.Flagged && !cell.WrongFlag && hasBandage && bAnim.Kind == bandageBounce
+										var bounceScale, bounceRot float32
+										if hasBounce {
+											bounceScale, bounceRot = bandageBounceTransform(now.Sub(bAnim.Start))
+										}
+										tile.Children(func() {
+											var el ui.Element
+											if tileArt != nil {
+												propSize := gridCellSize * gridPropScale
+												el = ui.Image(c, tileArt).Size(propSize, propSize).PassThrough()
+											} else {
+												el = ui.Text(c, tileText).FontSize(gridNumberSize).Bold().TextColor(tileTextColor).PassThrough()
+											}
+											switch {
+											case hasBounce:
+												xf := ui.Scaling(bounceScale, bounceScale).Then(ui.Rotation(bounceRot))
+												if shakeX != 0 || shakeY != 0 {
+													xf = xf.Then(ui.Translation(shakeX, shakeY))
+												}
+												el.Transform(xf)
+											case shakeX != 0 || shakeY != 0:
+												el.Translate(shakeX, shakeY)
+											}
+										})
+									}
+									switch {
+									case peel.stage == tilePeelCovered:
+										coverBg := pal.Slip
+										if tile.Hovered() {
+											coverBg = pal.Slip.Mix(pal.Sheet, 0.45)
+										}
+										shadeCopy := pal.SlipShade
+										cellIdx := i
+										sx, sy := shakeX, shakeY
+										tile.DrawOver(func(p *ui.Painter, r ui.Rect) {
+											draw := func() {
+												paintPeelOverlay(p, r, gridCellRadius, coverBg, shadeCopy, 0, cellIdx, false, 0, true)
+											}
+											if sx != 0 || sy != 0 {
+												p.Transform(ui.Translation(sx, sy), 0, 0, draw)
+											} else {
+												draw()
+											}
+										})
+									case peel.stage == tilePeelLifting:
+										gridLifting = append(gridLifting, gridLiftingSlip{
+											row: row, col: col, idx: i, peelT: peel.peelT,
+										})
+									case !cell.Flagged && hasBandage && bAnim.Kind == bandagePeel:
+										gridPeeling = append(gridPeeling, gridPeelingBandage{
+											row:    row,
+											col:    col,
+											shield: bAnim.Shield,
+											peelT:  float32(now.Sub(bAnim.Start)) / float32(bandagePeelDuration),
+										})
+									}
+
+									clicks := tile.Clicks()
+									if a.gridPress.consumeClicks(i, clicks, tile.Pressed()) > 0 {
+										a.cellMove(c, row, col, 0, now)
+									}
 								}
 							})
+							hasGridPulses := !a.motionReducedActive && len(a.skillPulses) > 0
+							hasGridBursts := !a.motionReducedActive && len(a.knotBursts) > 0
+							if len(gridLifting) > 0 || len(gridPeeling) > 0 || hasGridPulses || hasGridBursts {
+								liftingCopy := gridLifting
+								peelingCopy := gridPeeling
+								pulsesCopy := slices.Clone(a.skillPulses)
+								burstsCopy := slices.Clone(a.knotBursts)
+								slipCol, shadeCol := pal.Slip, pal.SlipShade
+								flagBmp, shieldBmp := art.FlagBitmap, art.ShieldBitmap
+								sx, sy := shakeX, shakeY
+								palCopy := pal
+								grid.DrawOver(func(p *ui.Painter, r ui.Rect) {
+									drawNow := p.Now()
+									drawOverlays := func() {
+										for _, ls := range liftingCopy {
+											cellRect := ui.Rect{
+												X: r.X + gridBoardPad + float32(ls.col)*standardCellPitch,
+												Y: r.Y + gridBoardPad + float32(ls.row)*standardCellPitch,
+												W: gridCellSize,
+												H: gridCellSize,
+											}
+											paintPeelOverlay(p, cellRect, gridCellRadius, slipCol, shadeCol, 0, ls.idx, true, ls.peelT, true)
+										}
+										for _, pb := range peelingCopy {
+											cellRect := ui.Rect{
+												X: r.X + gridBoardPad + float32(pb.col)*standardCellPitch,
+												Y: r.Y + gridBoardPad + float32(pb.row)*standardCellPitch,
+												W: gridCellSize,
+												H: gridCellSize,
+											}
+											bmp := flagBmp
+											if pb.shield {
+												bmp = shieldBmp
+											}
+											paintBandagePeel(p, cellRect, bmp, gridPropScale, pb.peelT)
+										}
+										if hasGridPulses {
+											for _, pulse := range pulsesCopy {
+												elapsed := drawNow.Sub(pulse.Start)
+												if elapsed < 0 || elapsed >= skillPulseDuration {
+													continue
+												}
+												row, col := pulse.Index/cols, pulse.Index%cols
+												cellRect := ui.Rect{
+													X: r.X + gridBoardPad + float32(col)*standardCellPitch,
+													Y: r.Y + gridBoardPad + float32(row)*standardCellPitch,
+													W: gridCellSize,
+													H: gridCellSize,
+												}
+												paintSkillTargetPulse(p, cellRect, gridCellRadius, pulse.MemberID, palCopy, float32(elapsed)/float32(skillPulseDuration))
+											}
+										}
+										if hasGridBursts {
+											for _, burst := range burstsCopy {
+												elapsed := drawNow.Sub(burst.Start)
+												if elapsed < 0 || elapsed >= knotBurstDuration {
+													continue
+												}
+												row, col := burst.Index/cols, burst.Index%cols
+												cellRect := ui.Rect{
+													X: r.X + gridBoardPad + float32(col)*standardCellPitch,
+													Y: r.Y + gridBoardPad + float32(row)*standardCellPitch,
+													W: gridCellSize,
+													H: gridCellSize,
+												}
+												paintKnotBurst(p, cellRect, palCopy, float32(elapsed)/float32(knotBurstDuration))
+											}
+										}
+									}
+									if sx != 0 || sy != 0 {
+										p.Transform(ui.Translation(sx, sy), 0, 0, drawOverlays)
+									} else {
+										drawOverlays()
+									}
+									if hasGridPulses || hasGridBursts {
+										p.AnimationFrame()
+									}
+								})
+							}
+							a.stageHighlightsOverlay(c, pal, now)
 						})
-						a.stageHighlightsOverlay(c, pal, now)
 						if nextHoverRow != a.classicHoverRow || nextHoverCol != a.classicHoverCol {
 							a.classicHoverRow = nextHoverRow
 							a.classicHoverCol = nextHoverCol
