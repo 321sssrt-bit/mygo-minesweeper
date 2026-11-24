@@ -115,8 +115,8 @@ var activeCanvasTracks = []struct{ name, track string }{
 	{"1000x1000", "duel"},
 }
 
-func BenchmarkClassicGrid30x30ActiveFrame(b *testing.B) {
-	benchmarkActiveFrame(b, TrackKageiromai.ID, false)
+func BenchmarkClassicGrid16x16ActiveFrame(b *testing.B) {
+	benchmarkActiveFrame(b, Difficulties[1].ID, false)
 }
 
 func benchmarkActiveFrame(b *testing.B, track string, canvas bool) {
@@ -125,7 +125,7 @@ func benchmarkActiveFrame(b *testing.B, track string, canvas bool) {
 	app.resetGame(true)
 	pinStartQuote(app)
 	g, v := app.game, app.board
-	openPct := stageActiveBenchmark(g)
+	openPct := stageActiveBenchmark(g, !canvas)
 	row, col := g.Rows/2, g.Cols/2
 	if d := g.duel; d != nil {
 		d.NextAI = d.Duration + 1
@@ -244,7 +244,7 @@ func benchmarkActiveFrame(b *testing.B, track string, canvas bool) {
 	}
 }
 
-func stageActiveBenchmark(g *Game) float64 {
+func stageActiveBenchmark(g *Game, flagBounce bool) float64 {
 	// Every track takes the same centered crop of one seeded 100×100 sample.
 	// The reserved center guarantees the same hint and effect tiles.
 	const side = 100
@@ -263,7 +263,7 @@ func stageActiveBenchmark(g *Game) float64 {
 			if absInt(dr) <= 2 && absInt(dc) <= 5 {
 				mine = dr == -1 && dc == 0
 				opened = dr == 0 && (dc <= -3 || dc == 0)
-				cell.Flagged = mine || (g.Rows == 30 && dr == 2 && dc == -3)
+				cell.Flagged = mine || (flagBounce && dr == 2 && dc == -3)
 				if cell.Flagged {
 					g.FlagsPlaced++
 				}

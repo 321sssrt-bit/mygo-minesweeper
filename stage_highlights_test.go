@@ -90,10 +90,12 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 			}, true, MemberAnon, 99)
 
 			viewFn := app.view
+			winH := 830
 			if backend == "canvas" {
 				viewFn = classicCanvasTestView(app)
+				winH = 900
 			}
-			tt := ui.NewTester(viewFn, 1280, 900)
+			tt := ui.NewTester(viewFn, 1280, winH)
 			tt.Frame()
 
 			// Idle KeyE must be a complete noop: no quote strip, no skill pulses.
