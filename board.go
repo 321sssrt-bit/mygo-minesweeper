@@ -144,24 +144,48 @@ func (v *boardView) updateHover(g *Game) {
 	}
 }
 
+func (v *boardView) panBoundsFor(g *Game, cell float32) (minX, maxX, minY, maxY float32) {
+	boardW := float32(g.Cols) * cell
+	boardH := float32(g.Rows) * cell
+	// Negative offsets center the board inside the stage when smaller than the viewport.
+	if boardW < v.Width {
+		minX = (boardW - v.Width) / 2
+		maxX = minX
+	} else {
+		maxX = boardW - v.Width
+	}
+	if boardH < v.Height {
+		minY = (boardH - v.Height) / 2
+		maxY = minY
+	} else {
+		maxY = boardH - v.Height
+	}
+	if g.duel == nil {
+		// Reserve overscroll past the bottom-right minimap so corner cells of
+		// large classic boards can always be dragged clear and clicked, even
+		// when a smaller centered board still reaches into the minimap corner.
+		boardRight := boardW - minX
+		boardBottom := boardH - minY
+		if mini := v.minimapBoundsFor(g); mini.W > 0 && mini.H > 0 && boardRight > mini.X && boardBottom > mini.Y {
+			maxX = max(maxX, boardW-max(float32(0), mini.X-minimapMargin))
+			maxY = max(maxY, boardH-max(float32(0), mini.Y-minimapMargin))
+		}
+	}
+	return minX, maxX, minY, maxY
+}
+
+func (v *boardView) clampOffsetFor(g *Game, cell, x, y float32) (float32, float32) {
+	minX, maxX, minY, maxY := v.panBoundsFor(g, cell)
+	return max(minX, min(maxX, x)), max(minY, min(maxY, y))
+}
+
 func (v *boardView) panLimit(g *Game) (float32, float32) {
 	return v.panLimitFor(g, v.Cell)
 }
 
 func (v *boardView) panLimitFor(g *Game, cell float32) (float32, float32) {
-	boardW := float32(g.Cols) * cell
-	boardH := float32(g.Rows) * cell
-	maxX := max(float32(0), boardW-v.Width)
-	maxY := max(float32(0), boardH-v.Height)
-	if g.duel == nil {
-		// Reserve overscroll past the bottom-right minimap so corner cells of
-		// large classic boards can always be dragged clear and clicked.
-		if mini := v.minimapBoundsFor(g); mini.W > 0 && mini.H > 0 && boardW > mini.X && boardH > mini.Y {
-			maxX = max(maxX, boardW-max(float32(0), mini.X-minimapMargin))
-			maxY = max(maxY, boardH-max(float32(0), mini.Y-minimapMargin))
-		}
-	}
-	return maxX, maxY
+	_, maxX, _, maxY := v.panBoundsFor(g, cell)
+	return max(float32(0), maxX), max(float32(0), maxY)
 }
 
 func (v *boardView) clamp(g *Game) {
@@ -186,9 +210,7 @@ func (v *boardView) clamp(g *Game) {
 	if !isFinite32(v.Y) {
 		v.Y = 0
 	}
-	maxX, maxY := v.panLimit(g)
-	v.X = max(0, min(maxX, v.X))
-	v.Y = max(0, min(maxY, v.Y))
+	v.X, v.Y = v.clampOffsetFor(g, v.Cell, v.X, v.Y)
 	v.updateHover(g)
 }
 
@@ -223,8 +245,7 @@ func (v *boardView) finishGlide(g *Game) {
 func (v *boardView) centerTarget(g *Game, row, col int, cell float32) (float32, float32) {
 	rawX := (float32(col)+0.5)*cell - v.Width/2
 	rawY := (float32(row)+0.5)*cell - v.Height/2
-	maxX, maxY := v.panLimitFor(g, cell)
-	return max(0, min(maxX, rawX)), max(0, min(maxY, rawY))
+	return v.clampOffsetFor(g, cell, rawX, rawY)
 }
 
 func (v *boardView) zoomTarget(g *Game, baseX, baseY, baseCell, atX, atY, factor float32) (float32, float32, float32) {
@@ -234,8 +255,8 @@ func (v *boardView) zoomTarget(g *Game, baseX, baseY, baseCell, atX, atY, factor
 	worldY := (baseY + atY) / old
 	rawX := worldX*next - atX
 	rawY := worldY*next - atY
-	maxX, maxY := v.panLimitFor(g, next)
-	return max(0, min(maxX, rawX)), max(0, min(maxY, rawY)), next
+	tx, ty := v.clampOffsetFor(g, next, rawX, rawY)
+	return tx, ty, next
 }
 
 func stepCriticalSpring(pos, vel, target, omega, dt float64) (float64, float64) {
@@ -370,11 +391,9 @@ func (v *boardView) visibleTarget(g *Game, row, col int, cell float32) (float32,
 	if mini.W <= 0 || mini.H <= 0 {
 		return tx, ty
 	}
-	maxX, maxY := v.panLimitFor(g, cell)
 	cx := (float32(col) + 0.5) * cell
 	cy := (float32(row) + 0.5) * cell
-	leftX := max(0, min(maxX, cx-mini.X/2))
-	aboveY := max(0, min(maxY, cy-mini.Y/2))
+	leftX, aboveY := v.clampOffsetFor(g, cell, cx-mini.X/2, cy-mini.Y/2)
 	if mini.X >= mini.Y {
 		if v.showsAt(g, row, col, leftX, ty, cell) {
 			return leftX, ty
