@@ -951,7 +951,7 @@ const (
 	defaultWindowW      = float32(1280)
 	defaultWindowH      = float32(900)
 	defaultStageChromeW = float32(338)
-	defaultStageChromeH = float32(292)
+	defaultStageChromeH = float32(217)
 )
 
 type classicSurfaceState struct {
@@ -3197,8 +3197,9 @@ const statusBarHeight = float32(44)
 // gives up width when the window is narrow.
 func (a *minesweeperApp) statusBar(c *ui.Context, pal *palette, memberTheme *ui.Theme, member Member, now time.Time) {
 	t := c.Theme()
+	barBg := t.Background.Alpha(0.75).Over(t.Surface)
 	ui.Row(c.Key("status-bar")).Label("状态栏").Height(statusBarHeight).Shrink(0).Padding(0, 12).Radius(9).
-		Background(t.Background.Alpha(0.75)).Border(1, t.Border).AlignItems(ui.Center).Gap(10).Children(func() {
+		Background(barBg).Border(1, t.Border).AlignItems(ui.Center).Gap(10).Children(func() {
 		ui.Badge(c, "剩雷 "+formatDigits(a.game.RemainingMines())).Shrink(0).
 			Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
 		ui.Badge(c, "用时 "+formatDigits(a.elapsed)+" 秒").Shrink(0).
@@ -3212,11 +3213,11 @@ func (a *minesweeperApp) statusBar(c *ui.Context, pal *palette, memberTheme *ui.
 		// Below the minimum window the progress group is clipped rather than
 		// painted over the skill entry.
 		ui.Row(c).Grow(1).MinWidth(0).Clip().AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "排练完成度").FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(0)
+			ui.Text(c, "排练完成度").FontSize(12).TextColor(setlistInk(pal, barBg, pal.InkMuted)).SingleLine().Shrink(0)
 			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 				hatchProgress(c, "排练完成度", targetProg, displayProg, pal.blendInkOf(bandColor), pal)
 			})
-			ui.Textf(c, "%.0f%%", targetProg*100).FontSize(12).Bold().TextColor(t.Accent).
+			ui.Textf(c, "%.0f%%", targetProg*100).FontSize(12).Bold().TextColor(setlistAccentInk(pal, barBg)).
 				FontFeatures("tnum").SingleLine().Shrink(0)
 		})
 
