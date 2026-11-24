@@ -691,6 +691,15 @@ func (a *minesweeperApp) paintPopoverExitContents(p *ui.Painter, box ui.Rect, ki
 						p.Text(inner.X+30, y+5, entry.Diff.Song, 13, t.Text)
 					}
 					p.Text(inner.X+30, y+21, setlistTrackSpec(entry.Diff), 11, t.TextMuted)
+					if entry.Diff.Gameplay != GameplayDuel {
+						bestInk := t.TextMuted
+						if _, ok := a.bestTimes[entry.Diff.ID]; ok {
+							bestInk = t.Text
+						}
+						best := ui.Span{Text: a.bestTimeText(entry.Diff.ID), Size: 11, Color: bestInk}
+						bw, _ := p.MeasureText(0, best)
+						p.RichText(inner.X+inner.W-10-bw, y+21, 0, best)
+					}
 					y += rowH + 2
 				}
 			}
@@ -2335,6 +2344,24 @@ func setlistTrackSpec(d Difficulty) string {
 	return fmt.Sprintf("%d×%d · %s 雷", d.Cols, d.Rows, formatGroupedInt(d.Mines))
 }
 
+// bestTimeText is the fastest-clear line shown for a track, with a
+// placeholder until the track has been cleared.
+func (a *minesweeperApp) bestTimeText(id string) string {
+	if best, ok := a.bestTimes[id]; ok {
+		return fmt.Sprintf("最快 %d 秒", best)
+	}
+	return "最快 --"
+}
+
+// setlistTrackDescription is what screen readers hear for a setlist entry:
+// its spec plus, for classic tracks, the fastest clear.
+func (a *minesweeperApp) setlistTrackDescription(d Difficulty) string {
+	if d.Gameplay == GameplayDuel {
+		return setlistTrackSpec(d)
+	}
+	return setlistTrackSpec(d) + " · " + a.bestTimeText(d.ID)
+}
+
 func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme) {
 	cur := a.game.Difficulty
 	isOpen := a.popoverOpen(popoverSetlist)
@@ -2430,7 +2457,7 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 							selected := entry.Index == a.diffIdx
 							item := ui.ButtonBase(c.Key(entry.Index)).FillWidth().Padding(6, 10).Radius(6).
 								Cursor(ui.CursorPointer).Role(ui.RoleOption).Label(d.Song).
-								Description(setlistTrackSpec(d)).
+								Description(a.setlistTrackDescription(d)).
 								AccessSelected(selected).PositionInSet(trackNo, len(Difficulties))
 							if focusSelected && selected {
 								item.Focus()
@@ -2467,7 +2494,16 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 												ui.Text(c, d.Label).FontSize(11).TextColor(itemMutedInk).PassThrough()
 											}
 										})
-										ui.Text(c, setlistTrackSpec(d)).FontSize(11).TextColor(itemMutedInk).FontFeatures("tnum").PassThrough()
+										ui.Row(c).FillWidth().AlignItems(ui.Baseline).Justify(ui.SpaceBetween).Gap(8).PassThrough().Children(func() {
+											ui.Text(c, setlistTrackSpec(d)).FontSize(11).TextColor(itemMutedInk).FontFeatures("tnum").PassThrough()
+											if d.Gameplay != GameplayDuel {
+												bestInk := itemMutedInk
+												if _, ok := a.bestTimes[d.ID]; ok {
+													bestInk = t.Text
+												}
+												ui.Text(c, a.bestTimeText(d.ID)).FontSize(11).TextColor(bestInk).FontFeatures("tnum").PassThrough()
+											}
+										})
 									})
 									if selected {
 										ui.Icon(c, setlistCheckIcon).Size(13, 13).TextColor(selectedInk).PassThrough()
@@ -3487,11 +3523,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						}
 
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							bestText := "最快 --"
-							if best, ok := a.bestTimes[a.game.Difficulty.ID]; ok {
-								bestText = fmt.Sprintf("最快 %d 秒", best)
-							}
-							ui.Badge(c, bestText)
+							ui.Badge(c, a.bestTimeText(a.game.Difficulty.ID))
 							ui.Badge(c, "用时 "+formatDigits(a.elapsed)+" 秒").
 								Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
 						})
