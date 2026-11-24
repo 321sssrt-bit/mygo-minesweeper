@@ -2954,41 +2954,6 @@ func (a *minesweeperApp) settingsControl(c *ui.Context, pal *palette) {
 	}
 }
 
-func (a *minesweeperApp) duelHUD(c *ui.Context) {
-	d := a.game.duel
-	hud := duelHUDFor(a.renderedPaper().Dark)
-	ui.Row(c).Grow(0).Padding(8, 10).Gap(12).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Badge(c, fmt.Sprintf("你 %d", d.PlayerScore)).Background(hud.Player.Bg).TextColor(hud.Player.Text)
-			ui.Badge(c, fmt.Sprintf("高松灯 %d", d.AIScore)).Background(hud.AI.Bg).TextColor(hud.AI.Text)
-			ui.Badge(c, "剩余 "+formatClock(int(d.remaining()))).Background(c.Theme().Accent.Alpha(0.18))
-		})
-	})
-	ui.Row(c).Padding(4, 8).Gap(8).Children(func() {
-		ui.Badge(c, fmt.Sprintf("连击 ×%d", d.PlayerCombo))
-		if d.playerStunned() {
-			ui.Badge(c, fmt.Sprintf("硬直 %.1f 秒", d.StunnedUntil-d.Elapsed)).Background(hud.Stun.Bg).TextColor(hud.Stun.Text)
-		} else {
-			ui.Badge(c, "确定全雷时左键点数字收雷 · +75/雷")
-		}
-		if d.Elapsed < d.ScanUntil {
-			ui.Badge(c, fmt.Sprintf("扫描 %.1f 秒", d.ScanUntil-d.Elapsed)).Background(hud.Scan.Bg).TextColor(hud.Scan.Text)
-		}
-		ui.Badge(c, fmt.Sprintf("插旗 %d", a.game.FlagsPlaced))
-	})
-	if a.game.Status == StatusWon {
-		label := "平局 · 势均力敌"
-		if d.PlayerScore > d.AIScore {
-			label = "险胜也是爱音大胜利"
-		} else if d.PlayerScore < d.AIScore {
-			label = "惜败 · 这局别发 SNS"
-		}
-		ui.Row(c).Padding(4, 8).Children(func() {
-			ui.Badge(c, label).Background(c.Theme().Accent.Alpha(0.22))
-		})
-	}
-}
-
 func (a *minesweeperApp) toggleFlagMode() {
 	a.flagMode = !a.flagMode
 	a.gridPress.cancel()
@@ -3177,34 +3142,20 @@ func (a *minesweeperApp) handleGridTileInput(idx, row, col int, size float32, ev
 // game state, so the board never shifts when labels change.
 const statusBarHeight = float32(44)
 
-// statusBar is the single row above the board: 剩雷, 用时, 排练完成度, the
-// skill entry and 重开, left to right. It never wraps; only the progress bar
-// gives up width when the window is narrow.
+// statusBar is the single row above the board: 剩雷, 用时, 排练完成度 (in a
+// duel: both scores, the countdown and the combo), then the skill entry and
+// 重开, left to right. It never wraps; only the leading group gives up width
+// when the window is narrow.
 func (a *minesweeperApp) statusBar(c *ui.Context, pal *palette, memberTheme *ui.Theme, member Member, now time.Time) {
 	t := c.Theme()
 	barBg := t.Background.Alpha(0.75).Over(t.Surface)
 	ui.Row(c.Key("status-bar")).Label("状态栏").Height(statusBarHeight).Shrink(0).Padding(0, 12).Radius(9).
 		Background(barBg).Border(1, t.Border).AlignItems(ui.Center).Gap(10).Children(func() {
-		ui.Badge(c, "剩雷 "+formatDigits(a.game.RemainingMines())).Shrink(0).
-			Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
-		ui.Badge(c, "用时 "+formatDigits(a.elapsed)+" 秒").Shrink(0).
-			Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
-
-		targetProg := a.game.Progress()
-		displayProg, progMoving := a.progressVisual.update(targetProg, now, meterGlideDuration, a.motionReducedActive)
-		if progMoving {
-			c.AnimationFrame()
+		if a.isDuel() {
+			a.duelStatusItems(c)
+		} else {
+			a.classicStatusItems(c, pal, barBg, now)
 		}
-		// Below the minimum window the progress group is clipped rather than
-		// painted over the skill entry.
-		ui.Row(c).Grow(1).MinWidth(0).Clip().AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "排练完成度").FontSize(12).TextColor(setlistInk(pal, barBg, pal.InkMuted)).SingleLine().Shrink(0)
-			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-				hatchProgress(c, "排练完成度", targetProg, displayProg, pal.blendInkOf(bandColor), pal)
-			})
-			ui.Textf(c, "%.0f%%", targetProg*100).FontSize(12).Bold().TextColor(setlistAccentInk(pal, barBg)).
-				FontFeatures("tnum").SingleLine().Shrink(0)
-		})
 
 		skillLabel := fmt.Sprintf("发动技能 (E) ×%d", a.game.SkillUsesLeft)
 		canUse := a.bandMode() && !member.Passive && a.game.Status == StatusPlaying && a.game.SkillUsesLeft > 0
@@ -3244,6 +3195,60 @@ func (a *minesweeperApp) statusBar(c *ui.Context, pal *palette, memberTheme *ui.
 		if resetBtn.Clicked() {
 			a.resetGame(false)
 		}
+	})
+}
+
+func (a *minesweeperApp) classicStatusItems(c *ui.Context, pal *palette, barBg ui.Color, now time.Time) {
+	t := c.Theme()
+	ui.Badge(c, "剩雷 "+formatDigits(a.game.RemainingMines())).Shrink(0).
+		Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
+	ui.Badge(c, "用时 "+formatDigits(a.elapsed)+" 秒").Shrink(0).
+		Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
+
+	targetProg := a.game.Progress()
+	displayProg, progMoving := a.progressVisual.update(targetProg, now, meterGlideDuration, a.motionReducedActive)
+	if progMoving {
+		c.AnimationFrame()
+	}
+	// Below the minimum window the progress group is clipped rather than
+	// painted over the skill entry.
+	ui.Row(c).Grow(1).MinWidth(0).Clip().AlignItems(ui.Center).Gap(8).Children(func() {
+		ui.Text(c, "排练完成度").FontSize(12).TextColor(setlistInk(pal, barBg, pal.InkMuted)).SingleLine().Shrink(0)
+		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+			hatchProgress(c, "排练完成度", targetProg, displayProg, pal.blendInkOf(bandColor), pal)
+		})
+		ui.Textf(c, "%.0f%%", targetProg*100).FontSize(12).Bold().TextColor(setlistAccentInk(pal, barBg)).
+			FontFeatures("tnum").SingleLine().Shrink(0)
+	})
+}
+
+// duelStatusItems fills the status bar's leading slot during a duel. Once the
+// duel is settled the countdown and combo give way to the verdict.
+func (a *minesweeperApp) duelStatusItems(c *ui.Context) {
+	t := c.Theme()
+	d := a.game.duel
+	hud := duelHUDFor(a.renderedPaper().Dark)
+	// Clipped like the classic progress group so the skill entry and 重开
+	// never get painted over.
+	ui.Row(c.Key("duel-status")).Grow(1).MinWidth(0).Clip().AlignItems(ui.Center).Gap(8).Children(func() {
+		ui.Badge(c, fmt.Sprintf("你 %d", d.PlayerScore)).Shrink(0).
+			Background(hud.Player.Bg).TextColor(hud.Player.Text).FontFeatures("tnum")
+		ui.Badge(c, fmt.Sprintf("高松灯 %d", d.AIScore)).Shrink(0).
+			Background(hud.AI.Bg).TextColor(hud.AI.Text).FontFeatures("tnum")
+		if a.game.Status == StatusWon {
+			verdict := "平局 · 势均力敌"
+			if d.PlayerScore > d.AIScore {
+				verdict = "险胜也是爱音大胜利"
+			} else if d.PlayerScore < d.AIScore {
+				verdict = "惜败 · 这局别发 SNS"
+			}
+			ui.Badge(c, verdict).Shrink(0).Background(t.Accent.Alpha(0.18)).TextColor(t.Accent)
+			return
+		}
+		ui.Badge(c, "剩余 "+formatClock(int(d.remaining()))).Shrink(0).
+			Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
+		ui.Badge(c, fmt.Sprintf("连击 ×%d", d.PlayerCombo)).Shrink(0).
+			Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
 	})
 }
 
@@ -3653,7 +3658,6 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					a.statusBar(c, pal, memberTheme, member, now)
 
 					if a.isDuel() {
-						a.duelHUD(c)
 						a.duelBoard(c)
 						return
 					}
