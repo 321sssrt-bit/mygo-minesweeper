@@ -3152,7 +3152,7 @@ func (a *minesweeperApp) statusBar(c *ui.Context, pal *palette, memberTheme *ui.
 	ui.Row(c.Key("status-bar")).Label("状态栏").Height(statusBarHeight).Shrink(0).Padding(0, 12).Radius(9).
 		Background(barBg).Border(1, t.Border).AlignItems(ui.Center).Gap(10).Children(func() {
 		if a.isDuel() {
-			a.duelStatusItems(c)
+			a.duelStatusItems(c, pal, barBg)
 		} else {
 			a.classicStatusItems(c, pal, barBg, now)
 		}
@@ -3224,10 +3224,12 @@ func (a *minesweeperApp) classicStatusItems(c *ui.Context, pal *palette, barBg u
 
 // duelStatusItems fills the status bar's leading slot during a duel. Once the
 // duel is settled the countdown and combo give way to the verdict.
-func (a *minesweeperApp) duelStatusItems(c *ui.Context) {
+func (a *minesweeperApp) duelStatusItems(c *ui.Context, pal *palette, barBg ui.Color) {
 	t := c.Theme()
 	d := a.game.duel
-	hud := duelHUDFor(a.renderedPaper().Dark)
+	hud := duelHUDFor(pal.Dark)
+	accentBg := t.Accent.Alpha(0.18)
+	accentInk := setlistAccentInk(pal, accentBg.Over(barBg))
 	// Clipped like the classic progress group so the skill entry and 重开
 	// never get painted over.
 	ui.Row(c.Key("duel-status")).Grow(1).MinWidth(0).Clip().AlignItems(ui.Center).Gap(8).Children(func() {
@@ -3242,13 +3244,13 @@ func (a *minesweeperApp) duelStatusItems(c *ui.Context) {
 			} else if d.PlayerScore < d.AIScore {
 				verdict = "惜败 · 这局别发 SNS"
 			}
-			ui.Badge(c, verdict).Shrink(0).Background(t.Accent.Alpha(0.18)).TextColor(t.Accent)
+			ui.Badge(c, verdict).Shrink(0).Background(accentBg).TextColor(accentInk)
 			return
 		}
 		ui.Badge(c, "剩余 "+formatClock(int(d.remaining()))).Shrink(0).
-			Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
+			Background(accentBg).TextColor(accentInk).FontFeatures("tnum")
 		ui.Badge(c, fmt.Sprintf("连击 ×%d", d.PlayerCombo)).Shrink(0).
-			Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
+			Background(accentBg).TextColor(accentInk).FontFeatures("tnum")
 	})
 }
 

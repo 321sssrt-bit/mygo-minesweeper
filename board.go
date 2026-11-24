@@ -1499,8 +1499,11 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		if len(a.ripples) > 0 || len(a.bandages) > 0 || len(a.skillPulses) > 0 || len(a.knotBursts) > 0 {
 			p.AnimationFrame()
 		}
-		if count, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {
-			label := fmt.Sprintf("9×9 扫描：%d 雷 · %.1f 秒", count, max(0, g.duel.ScanUntil-g.duel.Elapsed))
+		if d := g.duel; d != nil && g.Status == StatusPlaying && d.Elapsed < d.ScanUntil {
+			label := fmt.Sprintf("扫描 %.1f 秒", d.ScanUntil-d.Elapsed)
+			if count, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {
+				label = fmt.Sprintf("9×9 扫描：%d 雷 · %.1f 秒", count, d.ScanUntil-d.Elapsed)
+			}
 			textW, _ := p.MeasureText(0, ui.Span{Text: label, Size: 14})
 			box := ui.Rect{X: r.X + 12, Y: r.Y + 12, W: max(166, textW+22), H: 34}
 			p.Shadow(box, 6, 0, 1, 3, 0, pal.SlipShade)

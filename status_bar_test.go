@@ -343,35 +343,51 @@ func TestStatusBarDuelReadsScoresCountdownAndCombo(t *testing.T) {
 	}
 }
 
-// The board's scan badge keeps counting down now that the duel rows above
-// the board are gone: with the mine count fixed, its pixels change as time
-// passes.
+// The board's scan badge carries the scan countdown now that the duel rows
+// above the board are gone: it shows up for a scan started from the status
+// bar with the pointer off the board, ticks down, and leaves at the whistle.
 func TestStatusBarDuelScanBadgeCountsDown(t *testing.T) {
 	app, tt := duelStatusBarApp(t, 1280, 900)
 	board := mustFind(t, tt, "决斗棋盘")
 	tt.ClickAt(board.X+board.W/2, board.Y+board.H/2)
 	d := app.game.duel
 	d.NextAI = 1e9
-	tt.Key(0, ui.KeyE)
-	tt.Move(board.X+board.W/2, board.Y+board.H/2)
-	badge := image.Rect(int(board.X)+14, int(board.Y)+14, int(board.X)+200, int(board.Y)+44)
-	crop := func() *image.RGBA {
+	badge := image.Rect(int(board.X)+14, int(board.Y)+14, int(board.X)+120, int(board.Y)+44)
+	crop := func() []byte {
 		src := tt.Image()
 		out := image.NewRGBA(image.Rect(0, 0, badge.Dx(), badge.Dy()))
 		draw.Draw(out, out.Bounds(), src, badge.Min, draw.Src)
-		return out
+		return out.Pix
 	}
 	tt.Advance(1500 * time.Millisecond)
-	count, ok := app.game.ScanAt(app.board.HoverRow, app.board.HoverCol)
-	if !ok {
-		t.Fatal("scan not active under the pointer")
+	plain := crop()
+
+	must(t, tt.Click(fmt.Sprintf("发动技能 (E) ×%d", app.game.SkillUsesLeft)))
+	if d.Elapsed >= d.ScanUntil {
+		t.Fatal("skill did not start a scan")
 	}
-	before := crop()
+	tt.Advance(1500 * time.Millisecond)
+	if _, hovered := app.game.ScanAt(app.board.HoverRow, app.board.HoverCol); hovered {
+		t.Fatal("pointer is still over a board cell")
+	}
+	first := crop()
+	if bytes.Equal(first, plain) {
+		t.Fatal("no scan badge while scanning with the pointer off the board")
+	}
 	tt.Advance(1000 * time.Millisecond)
-	if again, ok := app.game.ScanAt(app.board.HoverRow, app.board.HoverCol); !ok || again != count {
-		t.Fatalf("scan changed under the pointer: %d/%v, want %d", again, ok, count)
-	}
-	if bytes.Equal(before.Pix, crop().Pix) {
+	if bytes.Equal(first, crop()) {
 		t.Error("scan badge looks the same a second later; its countdown is not shown")
+	}
+
+	// A draw keeps the shot free of confetti and the 春日影 drama.
+	d.AIScore = d.PlayerScore
+	d.Elapsed = d.Duration - 0.05
+	d.ScanUntil = d.Duration + 5
+	tt.Advance(100 * time.Millisecond)
+	if !app.duelEnded || d.Elapsed >= d.ScanUntil {
+		t.Fatalf("want a settled duel inside the scan window: ended=%v elapsed=%v scanUntil=%v", app.duelEnded, d.Elapsed, d.ScanUntil)
+	}
+	if !bytes.Equal(plain, crop()) {
+		t.Error("scan badge still drawn on the settled board")
 	}
 }
