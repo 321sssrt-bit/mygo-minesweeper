@@ -277,7 +277,7 @@ func maxChannelDiff(a, b color.Color) int {
 // the shipped app icon, staying on the day paper in both themes.
 func TestHeaderMiniIconMatchesAppIcon(t *testing.T) {
 	const (
-		logicalSize = 40
+		logicalSize = topBarIconSize
 		scale       = 2
 		pxSize      = logicalSize * scale
 		nudge       = 2
@@ -351,7 +351,7 @@ func TestHeaderMiniIconMatchesAppIcon(t *testing.T) {
 			img := tt.Image()
 			want := compositeOver(pal.Desk, wantRaw)
 
-			// Search the top-left header area for the 80x80 icon patch.
+			// Search the top-left header area for the scaled top-bar icon patch.
 			// In night mode the desk lamp gradient sits behind the transparent
 			// outer margin, so compare opaque interior pixels in night mode and
 			// all pixels in day mode.

@@ -951,7 +951,7 @@ const (
 	defaultWindowW      = float32(1280)
 	defaultWindowH      = float32(900)
 	defaultStageChromeW = float32(338)
-	defaultStageChromeH = float32(217)
+	defaultStageChromeH = float32(148)
 )
 
 type classicSurfaceState struct {
@@ -2517,8 +2517,16 @@ func (a *minesweeperApp) setlistTrackDescription(d Difficulty) string {
 func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme) {
 	cur := a.game.Difficulty
 	isOpen := a.popoverOpen(popoverSetlist)
+	winW, _ := c.Size()
+	compact := topBarCompactSetlist(winW)
+	padH := float32(12)
+	rowGap := float32(8)
+	if compact {
+		padH = 10
+		rowGap = 6
+	}
 	trigger := ui.ButtonBase(c.Key("setlist-trigger")).
-		Padding(6, 12).Radius(6).Cursor(ui.CursorPointer).
+		Padding(6, padH).Radius(6).Cursor(ui.CursorPointer).
 		Label("歌单").Value(cur.Song).HasPopup(ui.PopupListBox).Expanded(isOpen)
 
 	var triggerBg ui.Color
@@ -2539,13 +2547,15 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 		Shadow(0, 1, 2, 0, pal.SlipShade.Alpha(0.45))
 
 	trigger.Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(8).PassThrough().Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(rowGap).PassThrough().Children(func() {
 			ui.Box(c).Size(3, 14).Radius(2).Background(triggerInk).PassThrough()
-			ui.Text(c, "歌单").FontSize(12).Bold().TextColor(triggerInk).PassThrough()
-			ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()
-			ui.Text(c, fmt.Sprintf("《%s》", cur.Song)).FontSize(13).Bold().TextColor(t.Text).PassThrough()
-			if cur.Label != "" && cur.Label != cur.Song {
-				ui.Text(c, cur.Label).FontSize(11).TextColor(t.TextMuted).PassThrough()
+			if !compact {
+				ui.Text(c, "歌单").FontSize(12).Bold().TextColor(triggerInk).SingleLine().PassThrough()
+				ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()
+			}
+			ui.Text(c, fmt.Sprintf("《%s》", cur.Song)).FontSize(13).Bold().TextColor(t.Text).SingleLine().PassThrough()
+			if !compact && cur.Label != "" && cur.Label != cur.Song {
+				ui.Text(c, cur.Label).FontSize(11).TextColor(t.TextMuted).SingleLine().PassThrough()
 			}
 			chevron, chevronColor := setlistChevronDown, pal.InkMuted
 			if isOpen {
@@ -3252,6 +3262,51 @@ func (a *minesweeperApp) duelStatusItems(c *ui.Context, pal *palette, barBg ui.C
 	})
 }
 
+const (
+	topBarIconSize = 30
+	// topBarCompactWidth is the window width below which the setlist trigger drops
+	// its prefix and track label so the merged top bar stays single-line down to
+	// the minimum window width.
+	topBarCompactWidth = float32(1060)
+)
+
+func topBarCompactSetlist(winW float32) bool {
+	return winW < topBarCompactWidth
+}
+
+func (a *minesweeperApp) topBar(c *ui.Context, pal *palette, t *ui.Theme) {
+	ui.Row(c.Key("top-bar")).Label("顶部栏").AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Wrap().Children(func() {
+		ui.Row(c.Key("top-bar-left")).AlignItems(ui.Center).Gap(10).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+				bandMark(c, topBarIconSize)
+				ui.Text(c, "MyGO!!!!! 迷子扫雷").FontSize(17).Bold().SingleLine()
+			})
+			a.setlistControl(c, pal, t)
+		})
+
+		ui.Row(c.Key("top-bar-right")).AlignItems(ui.Center).Gap(8).Children(func() {
+			if ui.Segmented(c, &a.modeIdx, "乐队 Live", "纯正经典").Label("游戏模式").Disabled(a.isDuel()).Changed() {
+				a.resetGame(false)
+			}
+			ui.ToggleGroup(c, func() {
+				flagMode := a.flagMode
+				if ui.Toggle(c, &flagMode, "插旗模式 (F)").Tooltip("开启后左键直接贴创可贴插旗").Changed() {
+					a.toggleFlagMode()
+				}
+				memeProgress := fmt.Sprintf("%d/%d", len(a.unlockedMemes), len(AllMemes))
+				if ui.Toggle(c, &a.showMemes, fmt.Sprintf("名场面图鉴 %s", memeProgress)).
+					Label("名场面图鉴").
+					Description(fmt.Sprintf("已收集 %s，展开或收起已解锁的 MyGO!!!!! 名场面", memeProgress)).
+					FontFeatures("tnum").
+					Tooltip("展开或收起已解锁的 MyGO!!!!! 名场面").Changed() {
+					a.playSound(SoundToggle, 1, 0)
+				}
+			}).Label("工具开关")
+			a.settingsControl(c, pal)
+		})
+	})
+}
+
 func (a *minesweeperApp) view(c *ui.Context) {
 	now := c.Now()
 	winW, winH := c.Size()
@@ -3328,45 +3383,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		})
 	}
 	root.Children(func() {
-		// Top Header Bar
-		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-				bandMark(c, 40)
-				ui.Column(c).Gap(2).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						ui.Text(c, "MyGO!!!!! 迷子扫雷").FontSize(21).Bold()
-						ui.Badge(c, fmt.Sprintf("《%s》", a.game.Difficulty.Song)).
-							Background(t.Accent.Alpha(0.14)).TextColor(t.Accent)
-						ui.Badge(c, fmt.Sprintf("名场面 %d/%d", len(a.unlockedMemes), len(AllMemes)))
-					})
-					ui.Text(c, "「迷子でもいい、迷子でも進め。」").
-						FontSize(12).TextColor(t.TextMuted)
-				})
-			})
-
-			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-				if ui.Segmented(c, &a.modeIdx, "乐队 Live", "纯正经典").Label("游戏模式").Disabled(a.isDuel()).Changed() {
-					a.resetGame(false)
-				}
-				a.settingsControl(c, pal)
-			})
-		})
-
-		// Setlist & Toolbar Row
-		ui.Row(c).Padding(8, 12).Radius(10).Background(t.Surface).Border(1, t.Border).
-			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Wrap().Children(func() {
-			a.setlistControl(c, pal, t)
-
-			ui.ToggleGroup(c, func() {
-				flagMode := a.flagMode
-				if ui.Toggle(c, &flagMode, "插旗模式 (F)").Tooltip("开启后左键直接贴创可贴插旗").Changed() {
-					a.toggleFlagMode()
-				}
-				if ui.Toggle(c, &a.showMemes, "名场面图鉴").Tooltip("展开或收起已解锁的 MyGO!!!!! 名场面").Changed() {
-					a.playSound(SoundToggle, 1, 0)
-				}
-			}).Label("工具开关")
-		})
+		a.topBar(c, pal, t)
 
 		// Main 2-Column Workspace: Left Sidebar + Right Stage
 		ui.Row(c).Grow(1).MinHeight(0).Gap(12).AlignItems(ui.Stretch).Children(func() {

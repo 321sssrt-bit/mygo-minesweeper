@@ -62,8 +62,8 @@ func TestTopBarToolbarLayoutAndSettingsPopoverNoOverflow(t *testing.T) {
 				tt := ui.NewTester(app.view, vp.w, vp.h)
 				tt.UseScreenReader()
 
-				// Collapsed home screen: top bar right has mode segmented + 设置;
-				// secondary bar has 歌单 on the left and 插旗模式 (F) + 名场面图鉴 on the right.
+				// Collapsed home screen: single merged top bar has 歌单 on the left
+				// and mode segmented + 插旗模式 (F) + 名场面图鉴 + 设置 on the right.
 				liveRect, ok := tt.Find("乐队 Live")
 				if !ok {
 					t.Fatal("missing 乐队 Live mode segment")
@@ -78,15 +78,15 @@ func TestTopBarToolbarLayoutAndSettingsPopoverNoOverflow(t *testing.T) {
 				}
 				setlistRect, ok := tt.Find("歌单")
 				if !ok {
-					t.Fatal("missing 歌单 trigger in secondary bar")
+					t.Fatal("missing 歌单 trigger in top bar")
 				}
 				flagRect, ok := tt.Find("插旗模式 (F)")
 				if !ok {
-					t.Fatal("missing 插旗模式 (F) toggle in secondary bar")
+					t.Fatal("missing 插旗模式 (F) toggle in top bar")
 				}
 				memesRect, ok := tt.Find("名场面图鉴")
 				if !ok {
-					t.Fatal("missing 名场面图鉴 toggle in secondary bar")
+					t.Fatal("missing 名场面图鉴 toggle in top bar")
 				}
 
 				for name, r := range map[string]ui.Rect{
@@ -101,14 +101,15 @@ func TestTopBarToolbarLayoutAndSettingsPopoverNoOverflow(t *testing.T) {
 						t.Fatalf("%s overflows %dx%d viewport: %+v", name, vp.w, vp.h, r)
 					}
 				}
-				if abs32(liveRect.Y-settingsRect.Y) > 12 || settingsRect.X <= classicRect.X {
-					t.Fatalf("top bar controls misaligned: live=%+v classic=%+v settings=%+v", liveRect, classicRect, settingsRect)
+				if abs32(setlistRect.Y-liveRect.Y) > 12 || abs32(liveRect.Y-flagRect.Y) > 12 ||
+					abs32(flagRect.Y-memesRect.Y) > 12 || abs32(memesRect.Y-settingsRect.Y) > 12 {
+					t.Fatalf("merged top bar wrapped onto two lines: setlist=%+v live=%+v flag=%+v memes=%+v settings=%+v",
+						setlistRect, liveRect, flagRect, memesRect, settingsRect)
 				}
-				if abs32(setlistRect.Y-flagRect.Y) > 12 || abs32(flagRect.Y-memesRect.Y) > 12 {
-					t.Fatalf("secondary bar wrapped onto two lines: setlist=%+v flag=%+v memes=%+v", setlistRect, flagRect, memesRect)
-				}
-				if flagRect.X <= setlistRect.X || memesRect.X <= flagRect.X {
-					t.Fatalf("secondary bar left/right ordering broken: setlist=%+v flag=%+v memes=%+v", setlistRect, flagRect, memesRect)
+				if liveRect.X <= setlistRect.X || classicRect.X <= liveRect.X ||
+					flagRect.X <= classicRect.X || memesRect.X <= flagRect.X || settingsRect.X <= memesRect.X {
+					t.Fatalf("merged top bar left/right ordering broken: setlist=%+v live=%+v classic=%+v flag=%+v memes=%+v settings=%+v",
+						setlistRect, liveRect, classicRect, flagRect, memesRect, settingsRect)
 				}
 				if tt.HasText("夜间台灯") || tt.HasText("? 标记") {
 					t.Fatal("夜间台灯 and ? 标记 must not appear on the collapsed home bars")
