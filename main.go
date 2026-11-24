@@ -3209,7 +3209,9 @@ func (a *minesweeperApp) statusBar(c *ui.Context, pal *palette, memberTheme *ui.
 		if progMoving {
 			c.AnimationFrame()
 		}
-		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Center).Gap(8).Children(func() {
+		// Below the minimum window the progress group is clipped rather than
+		// painted over the skill entry.
+		ui.Row(c).Grow(1).MinWidth(0).Clip().AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, "排练完成度").FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(0)
 			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 				hatchProgress(c, "排练完成度", targetProg, displayProg, pal.blendInkOf(bandColor), pal)
