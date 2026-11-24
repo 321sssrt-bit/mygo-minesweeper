@@ -1222,12 +1222,12 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 				}
 			}
 
-			// Zoom-out then Ctrl+0 glides cleanly to board center with zoomed-out cell size.
+			// Zoom-out then Ctrl+0 glides cleanly back to standard pitch and board center.
 			tt.Key(ui.Ctrl, ui.KeyMinus)
 			tt.Key(ui.Ctrl, ui.Key0)
 			tt.Advance(260 * time.Millisecond)
-			if app.board.gliding() || app.board.Cell >= 42 {
-				t.Fatalf("Ctrl+- then Ctrl+0 did not converge: cell=%v gliding=%v", app.board.Cell, app.board.gliding())
+			if app.board.gliding() || abs32(app.board.Cell-standardCellPitch) > 0.05 {
+				t.Fatalf("Ctrl+- then Ctrl+0 did not converge to standard pitch %.0f: cell=%v gliding=%v", standardCellPitch, app.board.Cell, app.board.gliding())
 			}
 			reRow, reCol, ok := app.board.cellAt(app.game, r.W/2, r.H/2)
 			if !ok || reRow != tc.rows/2 || reCol != tc.cols/2 {
@@ -1245,9 +1245,11 @@ func TestDuel1000FirstFrameParity(t *testing.T) {
 	tt := ui.NewTester(app.view, 1280, 900)
 	tt.Frame()
 
-	// Preserve original 1000x1000 initial offset (487*26, 487*26) and fixed 148x148 minimap.
-	if app.board.X != 487*26 || app.board.Y != 487*26 || app.board.Cell != 26 {
-		t.Fatalf("1000x1000 initial viewport drifted: X=%v Y=%v Cell=%v", app.board.X, app.board.Y, app.board.Cell)
+	// 1000x1000 opens at standard cell pitch centered on the board and keeps the fixed 148x148 minimap.
+	wantX, wantY := app.board.centerTarget(app.game, app.game.Rows/2, app.game.Cols/2, standardCellPitch)
+	if app.board.Cell != standardCellPitch || abs32(app.board.X-wantX) > 0.5 || abs32(app.board.Y-wantY) > 0.5 {
+		t.Fatalf("1000x1000 initial viewport = (X=%v Y=%v Cell=%v), want centered (X=%v Y=%v Cell=%v)",
+			app.board.X, app.board.Y, app.board.Cell, wantX, wantY, standardCellPitch)
 	}
 	v := newBoardView()
 	v.Width, v.Height = 120, 120

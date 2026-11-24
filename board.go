@@ -58,6 +58,9 @@ type boardView struct {
 }
 
 const (
+	standardCellPitch = float32(32)
+	minCanvasCell     = float32(10)
+	maxCanvasCell     = float32(42)
 	minimapMinSide    = 50
 	minimapSize       = float32(148)
 	minimapMargin     = float32(10)
@@ -87,9 +90,7 @@ func classicMinimapPlot(mini ui.Rect) ui.Rect {
 
 func newBoardView() *boardView {
 	return &boardView{
-		Cell:        26,
-		X:           487 * 26,
-		Y:           487 * 26,
+		Cell:        standardCellPitch,
 		needsCenter: true,
 		HoverRow:    -1,
 		HoverCol:    -1,
@@ -165,9 +166,9 @@ func (v *boardView) panLimitFor(g *Game, cell float32) (float32, float32) {
 
 func (v *boardView) clamp(g *Game) {
 	if !isFinite32(v.Cell) {
-		v.Cell = 26
+		v.Cell = standardCellPitch
 	}
-	v.Cell = max(10, min(42, v.Cell))
+	v.Cell = max(minCanvasCell, min(maxCanvasCell, v.Cell))
 	if !isFinite32(v.Width) || v.Width < 100 {
 		v.Width = 100
 	}
@@ -227,8 +228,8 @@ func (v *boardView) centerTarget(g *Game, row, col int, cell float32) (float32, 
 }
 
 func (v *boardView) zoomTarget(g *Game, baseX, baseY, baseCell, atX, atY, factor float32) (float32, float32, float32) {
-	old := max(float32(10), min(float32(42), baseCell))
-	next := max(10, min(42, old*factor))
+	old := max(minCanvasCell, min(maxCanvasCell, baseCell))
+	next := max(minCanvasCell, min(maxCanvasCell, old*factor))
 	worldX := (baseX + atX) / old
 	worldY := (baseY + atY) / old
 	rawX := worldX*next - atX
@@ -392,18 +393,21 @@ func (v *boardView) visibleTarget(g *Game, row, col int, cell float32) (float32,
 	return tx, ty
 }
 
-func (v *boardView) targetCellForGlide(g *Game, now time.Time) float32 {
+func (v *boardView) retargetGlide(g *Game, now time.Time) {
 	v.clamp(g)
-	tgtCell := v.Cell
 	if v.glide.active {
 		// Replacing the glide target cancels any superseded arrival callback.
 		v.glide.onArrive = nil
 		v.stepGlide(g, now)
-		if v.glide.active {
-			tgtCell = float32(v.glide.targetCell)
-		}
 	}
-	return tgtCell
+}
+
+func (v *boardView) targetCellForGlide(g *Game, now time.Time) float32 {
+	v.retargetGlide(g, now)
+	if v.glide.active {
+		return float32(v.glide.targetCell)
+	}
+	return v.Cell
 }
 
 func (v *boardView) glideCenter(g *Game, row, col int, now time.Time, reduced bool) {
@@ -432,6 +436,12 @@ func (v *boardView) ensureVisible(g *Game, row, col int, now time.Time, reduced 
 
 func (v *boardView) glideCenterBoard(g *Game, now time.Time, reduced bool) {
 	v.glideCenter(g, g.Rows/2, g.Cols/2, now, reduced)
+}
+
+func (v *boardView) glideResetView(g *Game, now time.Time, reduced bool) {
+	v.retargetGlide(g, now)
+	tgtX, tgtY := v.centerTarget(g, g.Rows/2, g.Cols/2, standardCellPitch)
+	v.startGlide(g, tgtX, tgtY, standardCellPitch, now, reduced)
 }
 
 func (v *boardView) glideZoom(g *Game, atX, atY, factor float32, now time.Time, reduced bool) {
@@ -486,10 +496,10 @@ func (v *boardView) zoom(g *Game, atX, atY, factor float32) {
 	v.stopGlide()
 	v.needsCenter = false
 	if !isFinite32(v.Cell) {
-		v.Cell = 26
+		v.Cell = standardCellPitch
 	}
-	old := max(float32(10), v.Cell)
-	next := max(10, min(42, old*factor))
+	old := max(minCanvasCell, v.Cell)
+	next := max(minCanvasCell, min(maxCanvasCell, old*factor))
 	worldX := (v.X + atX) / old
 	worldY := (v.Y + atY) / old
 	v.Cell = next
@@ -858,11 +868,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 			a.syncMotionState(a.reducedMotionPainter(p))
 			if v.needsCenter {
 				v.needsCenter = false
-				if a.game != nil && (a.game.Rows != 1000 || a.game.Cols != 1000) {
-					v.centerBoard(a.game)
-				} else {
-					v.clamp(a.game)
-				}
+				v.centerBoard(a.game)
 			} else if v.stepGlide(a.game, p.Now()) {
 				p.AnimationFrame()
 			} else {
@@ -1255,15 +1261,19 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 			}
 		}
 		// The caption sits on a scrap of the sheet so it reads over slips.
-		captionText := fmt.Sprintf("%.0f%% · 拖动平移 / 滚轮缩放", v.Cell/42*100)
-		if v.HoverRow >= 0 && v.HoverCol >= 0 {
-			captionText = fmt.Sprintf("(%d, %d) · %s", v.HoverRow, v.HoverCol, captionText)
-		}
-		caption := ui.Span{Text: captionText, Size: 12, Color: t.TextMuted}
+		caption := ui.Span{Text: v.zoomCaption(), Size: 12, Color: t.TextMuted}
 		cw, ch := p.MeasureText(0, caption)
 		p.Fill(ui.Rect{X: r.X + 8, Y: r.Y + r.H - 36, W: cw + 12, H: ch + 8}, pal.Sheet.Alpha(0.92), 6)
 		p.RichText(r.X+14, r.Y+r.H-32, 0, caption)
 	})
+}
+
+func (v *boardView) zoomCaption() string {
+	text := fmt.Sprintf("%.0f%% · 拖动平移 / 滚轮缩放", v.Cell/standardCellPitch*100)
+	if v.HoverRow >= 0 && v.HoverCol >= 0 {
+		return fmt.Sprintf("(%d, %d) · %s", v.HoverRow, v.HoverCol, text)
+	}
+	return text
 }
 
 // cellDigits are the numbers a revealed cell can show, by count.

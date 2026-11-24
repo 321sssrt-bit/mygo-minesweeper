@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -457,8 +458,8 @@ func TestCanvasCameraFarJumpClampsToViewportSpan(t *testing.T) {
 			combinedSpans, curCell, tgtCell)
 	}
 	tt.Advance(240 * time.Millisecond)
-	if v.gliding() || abs32(v.Cell-35) > 0.05 {
-		t.Fatalf("zoom-out + Ctrl+0 did not settle at Cell=35: cell=%.2f gliding=%v", v.Cell, v.gliding())
+	if v.gliding() || abs32(v.Cell-standardCellPitch) > 0.05 {
+		t.Fatalf("zoom-out + Ctrl+0 did not settle at standard pitch %.0f: cell=%.2f gliding=%v", standardCellPitch, v.Cell, v.gliding())
 	}
 	if rEnd, cEnd, ok := v.cellAt(g, boardRect.W/2, boardRect.H/2); !ok || rEnd != g.Rows/2 || cEnd != g.Cols/2 {
 		t.Fatalf("zoom-out + Ctrl+0 settled at (%d,%d), want (%d,%d)", rEnd, cEnd, g.Rows/2, g.Cols/2)
@@ -673,6 +674,8 @@ func TestCanvasCameraMidGlideManualInputTakeover(t *testing.T) {
 	zv, zg := zApp.board, zApp.game
 	zv.center(zg, 500, 500)
 	zTT.Frame()
+	zCell0 := zv.Cell
+	zWantIn := min(maxCanvasCell, zCell0*1.2)
 	if err := zTT.Click("放大"); err != nil {
 		t.Fatalf("click 放大 before mid-glide minimap click: %v", err)
 	}
@@ -681,8 +684,8 @@ func TestCanvasCameraMidGlideManualInputTakeover(t *testing.T) {
 		t.Fatal("expected zoom glide active at 50ms")
 	}
 	frozenCell := zv.Cell
-	if frozenCell <= 26 || frozenCell >= 31.1 {
-		t.Fatalf("expected mid-glide zoom cell in (26, 31.1), got %.2f", frozenCell)
+	if frozenCell <= zCell0 || frozenCell >= zWantIn-0.1 {
+		t.Fatalf("expected mid-glide zoom cell in (%.2f, %.2f), got %.2f", zCell0, zWantIn-0.1, frozenCell)
 	}
 	zMini := zv.minimapBoundsFor(zg)
 	// Click near (505, 505) on the minimap (well within 2 viewport spans so no far clamp).
@@ -1484,4 +1487,143 @@ func TestCanvasCameraSkillTargetGlide(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestCanvasStandardPitchInitialCenterAndCtrl0Reset(t *testing.T) {
+	tracks := []struct {
+		name      string
+		id        string
+		boardName string
+		isDuel    bool
+	}{
+		{"duel-1000x1000", "duel", "决斗棋盘", true},
+		{"duel-500x500", "senzaihyoumei", "决斗棋盘", true},
+		{"classic-50x50", TrackUtakotoba.ID, "经典棋盘", false},
+		{"classic-100x100", TrackMayoiuta.ID, "经典棋盘", false},
+	}
+
+	for _, tc := range tracks {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newMinesweeperApp(42)
+			app.diffIdx = findDifficultyIdx(tc.id)
+			app.resetGame(true)
+			if tc.isDuel {
+				app.game.duel.NextAI = 1e9
+			}
+			tt := ui.NewTester(app.view, 1280, 900)
+			tt.Frame()
+
+			boardRect, ok := tt.Find(tc.boardName)
+			if !ok {
+				t.Fatalf("%s missing", tc.boardName)
+			}
+			v, g := app.board, app.game
+
+			if v.Cell != standardCellPitch {
+				t.Fatalf("initial Cell = %.2f, want standard pitch %.2f", v.Cell, standardCellPitch)
+			}
+			if got := v.zoomCaption(); !strings.HasPrefix(got, "100% · ") {
+				t.Fatalf("initial zoom caption = %q, want 100%% prefix", got)
+			}
+			wantCenterX, wantCenterY := v.centerTarget(g, g.Rows/2, g.Cols/2, standardCellPitch)
+			if abs32(v.X-wantCenterX) > 0.5 || abs32(v.Y-wantCenterY) > 0.5 {
+				t.Fatalf("initial camera = (%v,%v), want centered (%v,%v)", v.X, v.Y, wantCenterX, wantCenterY)
+			}
+			gotR, gotC, ok := v.cellAt(g, boardRect.W/2, boardRect.H/2)
+			if !ok || gotR != g.Rows/2 || gotC != g.Cols/2 {
+				t.Fatalf("initial center cell = (%d,%d) ok=%v, want (%d,%d)", gotR, gotC, ok, g.Rows/2, g.Cols/2)
+			}
+
+			// Zoom bounds [10, 42] remain preserved and readout scales from standard pitch.
+			v.zoom(g, boardRect.W/2, boardRect.H/2, 10)
+			if v.Cell != maxCanvasCell {
+				t.Fatalf("max zoom Cell = %.2f, want %.2f", v.Cell, maxCanvasCell)
+			}
+			if got := v.zoomCaption(); !strings.HasPrefix(got, "131% · ") {
+				t.Fatalf("max zoom caption = %q, want 131%% prefix", got)
+			}
+			v.zoom(g, boardRect.W/2, boardRect.H/2, 0.01)
+			if v.Cell != minCanvasCell {
+				t.Fatalf("min zoom Cell = %.2f, want %.2f", v.Cell, minCanvasCell)
+			}
+			if got := v.zoomCaption(); !strings.HasPrefix(got, "31% · ") {
+				t.Fatalf("min zoom caption = %q, want 31%% prefix", got)
+			}
+
+			// Zoom and pan away, then Ctrl+0 glides back to standard pitch and board center.
+			v.zoom(g, boardRect.W/2, boardRect.H/2, 2.0)
+			v.center(g, 0, 0)
+			tt.Frame()
+			if v.Cell == standardCellPitch {
+				t.Fatalf("precondition failed: expected zoomed cell != %.0f", standardCellPitch)
+			}
+			tt.Key(ui.Ctrl, ui.Key0)
+			if !v.gliding() {
+				t.Fatal("Ctrl+0 did not start reset glide")
+			}
+			tt.Advance(260 * time.Millisecond)
+			if v.gliding() {
+				t.Fatal("Ctrl+0 glide did not settle after 260ms")
+			}
+			if abs32(v.Cell-standardCellPitch) > 0.05 {
+				t.Fatalf("Ctrl+0 settled Cell = %.2f, want %.2f", v.Cell, standardCellPitch)
+			}
+			if got := v.zoomCaption(); !strings.HasPrefix(got, "100% · ") {
+				t.Fatalf("Ctrl+0 settled zoom caption = %q, want 100%% prefix", got)
+			}
+			gotR, gotC, ok = v.cellAt(g, boardRect.W/2, boardRect.H/2)
+			if !ok || gotR != g.Rows/2 || gotC != g.Cols/2 {
+				t.Fatalf("Ctrl+0 settled center = (%d,%d) ok=%v, want (%d,%d)", gotR, gotC, ok, g.Rows/2, g.Cols/2)
+			}
+
+			// Zoomed while already centered: Ctrl+0 still restores standard pitch.
+			v.zoom(g, boardRect.W/2, boardRect.H/2, 1.25)
+			tt.Frame()
+			tt.Key(ui.Ctrl, ui.Key0)
+			if !v.gliding() {
+				t.Fatal("Ctrl+0 did not start zoom-only reset glide")
+			}
+			tt.Advance(260 * time.Millisecond)
+			if v.gliding() || abs32(v.Cell-standardCellPitch) > 0.05 {
+				t.Fatalf("Ctrl+0 zoom-only reset settled Cell = %.2f gliding=%v, want %.2f", v.Cell, v.gliding(), standardCellPitch)
+			}
+
+			// Reduced motion: Ctrl+0 snaps immediately to standard pitch and center.
+			tt.SetPreferences(ui.Preferences{ReduceMotion: true})
+			v.zoom(g, boardRect.W/2, boardRect.H/2, 0.6)
+			v.center(g, 0, 0)
+			tt.Frame()
+			tt.Key(ui.Ctrl, ui.Key0)
+			if v.gliding() {
+				t.Fatal("Ctrl+0 unexpectedly glided under reduced motion")
+			}
+			if v.Cell != standardCellPitch {
+				t.Fatalf("reduced Ctrl+0 Cell = %.2f, want %.2f", v.Cell, standardCellPitch)
+			}
+			gotR, gotC, ok = v.cellAt(g, boardRect.W/2, boardRect.H/2)
+			if !ok || gotR != g.Rows/2 || gotC != g.Cols/2 {
+				t.Fatalf("reduced Ctrl+0 center = (%d,%d) ok=%v, want (%d,%d)", gotR, gotC, ok, g.Rows/2, g.Cols/2)
+			}
+			tt.SetPreferences(ui.Preferences{ReduceMotion: false})
+
+			// Duel "回到中心" button only recenters without resetting zoom.
+			if tc.isDuel {
+				v.zoom(g, boardRect.W/2, boardRect.H/2, 0.75)
+				keptCell := v.Cell
+				v.center(g, 480, 480)
+				tt.Frame()
+				if err := tt.Click("回到中心"); err != nil {
+					t.Fatalf("click 回到中心: %v", err)
+				}
+				tt.Advance(260 * time.Millisecond)
+				if v.gliding() || abs32(v.Cell-keptCell) > 0.05 {
+					t.Fatalf("回到中心 changed zoom to %.2f (gliding=%v), want preserved %.2f", v.Cell, v.gliding(), keptCell)
+				}
+				gotR, gotC, ok = v.cellAt(g, boardRect.W/2, boardRect.H/2)
+				if !ok || gotR != g.Rows/2 || gotC != g.Cols/2 {
+					t.Fatalf("回到中心 center = (%d,%d) ok=%v, want (%d,%d)", gotR, gotC, ok, g.Rows/2, g.Cols/2)
+				}
+			}
+		})
+	}
 }

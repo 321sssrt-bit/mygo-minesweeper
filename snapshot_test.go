@@ -33,9 +33,11 @@ var snapshotScenes = []snapshotScene{
 	{name: "won", stage: stageWonScene},
 	{name: "lost", stage: stageLostScene},
 	{name: "duel", stage: stageDuelScene},
+	{name: "duel-open", stage: stageDuelOpenScene},
 	{name: "senzaihyoumei", stage: stageSenzaihyoumeiScene},
 	{name: "setlist-shipped", stage: stageShippedSetlistScene},
 	{name: "settings-shipped", stage: stageShippedSettingsScene},
+	{name: "classic-canvas-open", stage: stageClassicCanvasOpenScene},
 	{name: "classic-canvas-live", stage: stageClassicCanvasLiveScene, canvas: true},
 	{name: "classic-canvas-won", stage: stageClassicCanvasWonScene, canvas: true},
 	{name: "classic-canvas-lost", stage: stageClassicCanvasLostScene, canvas: true},
@@ -140,6 +142,29 @@ func stageDuelScene(dark bool) *minesweeperApp {
 	app.resetGame(true)
 	pinStartQuote(app)
 	playDuelGame(app, duelStageRow, duelStageCol, 137)
+	return app
+}
+
+// stageDuelOpenScene stages the opening state of the million-cell duel so the
+// snapshot captures the initial standard-pitch centered canvas and 100% readout.
+func stageDuelOpenScene(dark bool) *minesweeperApp {
+	app := newMinesweeperApp(9)
+	app.darkMode = dark
+	app.diffIdx = findDifficultyIdx("duel")
+	app.resetGame(true)
+	pinStartQuote(app)
+	return app
+}
+
+// stageClassicCanvasOpenScene stages the opening state of the 50×50 classic
+// canvas track through the full app shell so the snapshot captures the initial
+// standard-pitch centered canvas and 100% readout.
+func stageClassicCanvasOpenScene(dark bool) *minesweeperApp {
+	app := newMinesweeperApp(20261116)
+	app.darkMode = dark
+	app.diffIdx = findDifficultyIdx(TrackUtakotoba.ID)
+	app.resetGame(true)
+	pinStartQuote(app)
 	return app
 }
 
@@ -342,8 +367,10 @@ func writeSnapshot(t *testing.T, app *minesweeperApp, canvas bool, width, height
 		app.game.duel.Elapsed = elapsed
 		app.elapsed = int(elapsed)
 		app.lastTick = tt.Now()
-		// The board's real size only exists after a frame's draw.
-		app.board.center(app.game, app.game.Rows/2, app.game.Cols/2-2)
+		if app.game.Status != StatusIdle {
+			// The board's real size only exists after a frame's draw.
+			app.board.center(app.game, app.game.Rows/2, app.game.Cols/2-2)
+		}
 	} else if canvas {
 		// The board's real size only exists after a frame's draw.
 		tt.Frame()

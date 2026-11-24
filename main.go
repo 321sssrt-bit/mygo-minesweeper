@@ -3079,7 +3079,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			a.board.glideZoom(a.game, a.board.Width/2, a.board.Height/2, 1/1.15, now, a.motionReducedActive)
 		}
 		if c.Shortcut(ui.Ctrl, ui.Key0) {
-			a.board.glideCenterBoard(a.game, now, a.motionReducedActive)
+			a.board.glideResetView(a.game, now, a.motionReducedActive)
 		}
 	}
 
