@@ -18,8 +18,8 @@ func setupDeterministicCanvasBoard(t *testing.T, isDuel bool) (*minesweeperApp, 
 			ID:           "canvas-ptr-duel",
 			Song:         "春日影",
 			Gameplay:     GameplayDuel,
-			Rows:         40,
-			Cols:         40,
+			Rows:         50,
+			Cols:         50,
 			Mines:        2,
 			SkillCharges: 2,
 			DuelDuration: 300,
@@ -31,8 +31,8 @@ func setupDeterministicCanvasBoard(t *testing.T, isDuel bool) (*minesweeperApp, 
 			ID:           "canvas-ptr-classic",
 			Song:         "诗超绊",
 			Gameplay:     GameplayClassic,
-			Rows:         40,
-			Cols:         40,
+			Rows:         50,
+			Cols:         50,
 			Mines:        2,
 			SkillCharges: 2,
 		}, true, MemberTomori, 42)
@@ -40,7 +40,7 @@ func setupDeterministicCanvasBoard(t *testing.T, isDuel bool) (*minesweeperApp, 
 	app.game.FirstClick = true
 	app.game.Status = StatusPlaying
 	app.game.Cell(18, 18).IsMine = true
-	app.game.Cell(39, 39).IsMine = true
+	app.game.Cell(49, 49).IsMine = true
 	app.game.RecomputeAdjacency()
 
 	tt := ui.NewTester(app.view, 1280, 900)

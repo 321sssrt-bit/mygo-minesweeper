@@ -58,6 +58,7 @@ type boardView struct {
 }
 
 const (
+	minimapMinSide    = 50
 	minimapSize       = float32(148)
 	minimapMargin     = float32(10)
 	classicMinimapPad = float32(4)
@@ -154,7 +155,7 @@ func (v *boardView) panLimitFor(g *Game, cell float32) (float32, float32) {
 	if g.duel == nil {
 		// Reserve overscroll past the bottom-right minimap so corner cells of
 		// large classic boards can always be dragged clear and clicked.
-		if mini := v.minimapBoundsFor(g); boardW > mini.X && boardH > mini.Y {
+		if mini := v.minimapBoundsFor(g); mini.W > 0 && mini.H > 0 && boardW > mini.X && boardH > mini.Y {
 			maxX = max(maxX, boardW-max(float32(0), mini.X-minimapMargin))
 			maxY = max(maxY, boardH-max(float32(0), mini.Y-minimapMargin))
 		}
@@ -365,6 +366,9 @@ func (v *boardView) visibleTarget(g *Game, row, col int, cell float32) (float32,
 		return tx, ty
 	}
 	mini := v.minimapBoundsFor(g)
+	if mini.W <= 0 || mini.H <= 0 {
+		return tx, ty
+	}
 	maxX, maxY := v.panLimitFor(g, cell)
 	cx := (float32(col) + 0.5) * cell
 	cy := (float32(row) + 0.5) * cell
@@ -513,8 +517,15 @@ func (v *boardView) cellAt(g *Game, x, y float32) (int, int, bool) {
 	return int(rowF), int(colF), true
 }
 
+func hasMinimap(g *Game) bool {
+	return max(g.Rows, g.Cols) >= minimapMinSide
+}
+
 func (v *boardView) minimapBoundsFor(g *Game) ui.Rect {
-	if g != nil && g.Rows == 1000 && g.Cols == 1000 {
+	if !hasMinimap(g) {
+		return ui.Rect{}
+	}
+	if g.Rows == 1000 && g.Cols == 1000 {
 		return ui.Rect{
 			X: v.Width - minimapSize - minimapMargin,
 			Y: v.Height - minimapSize - minimapMargin,
@@ -536,6 +547,9 @@ func (v *boardView) minimapFor(g *Game, x, y float32) bool {
 		return false
 	}
 	mini := v.minimapBoundsFor(g)
+	if mini.W <= 0 || mini.H <= 0 {
+		return false
+	}
 	return x >= mini.X && y >= mini.Y && x <= mini.X+mini.W && y <= mini.Y+mini.H
 }
 
@@ -1228,16 +1242,17 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 			p.Stroke(ui.Rect{X: r.X + 2, Y: r.Y + 2, W: r.W - 4, H: r.H - 4}, duelHUDFor(pal.Dark).Banner.Pulse.Alpha(pulse), 8, 4)
 			p.AnimationFrame()
 		}
-		mini := v.minimapBoundsFor(g)
-		mini.X += r.X
-		mini.Y += r.Y
-		if classic {
-			plot := classicMinimapPlot(mini)
-			view := minimapViewportRect(plot, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
-			paintClassicMinimap(p, g, mini, plot, view, pal, classicMinimapForPaper(pal))
-		} else {
-			view := minimapViewportRect(mini, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
-			paintDuelMinimap(p, g, mini, view, t.Border)
+		if mini := v.minimapBoundsFor(g); mini.W > 0 && mini.H > 0 {
+			mini.X += r.X
+			mini.Y += r.Y
+			if classic {
+				plot := classicMinimapPlot(mini)
+				view := minimapViewportRect(plot, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
+				paintClassicMinimap(p, g, mini, plot, view, pal, classicMinimapForPaper(pal))
+			} else {
+				view := minimapViewportRect(mini, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
+				paintDuelMinimap(p, g, mini, view, t.Border)
+			}
 		}
 		// The caption sits on a scrap of the sheet so it reads over slips.
 		captionText := fmt.Sprintf("%.0f%% · 拖动平移 / 滚轮缩放", v.Cell/42*100)

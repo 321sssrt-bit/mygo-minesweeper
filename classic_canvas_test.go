@@ -1523,9 +1523,9 @@ func TestClassicMinimapShowsOwnProgressOnlyAndClickToJump(t *testing.T) {
 				t.Errorf("viewport contrast on opened = %.2f < 3.5", got)
 			}
 
-			// Stage a 10x10 classic board with distinct regions for every state so
-			// each cell spans ~14.8px on the minimap and stays cleanly away from
-			// the viewport outline when zoomed in.
+			// Stage a 50x50 classic board at the minimap threshold with distinct
+			// interior cells for every state so each cell stays well clear of
+			// both the rounded card clip and the viewport outline.
 			app := newMinesweeperApp(7)
 			app.darkMode = dark
 			app.memberID = MemberSoyorin
@@ -1533,19 +1533,19 @@ func TestClassicMinimapShowsOwnProgressOnlyAndClickToJump(t *testing.T) {
 			app.game = NewGame(Difficulty{
 				ID:           "classic-minimap-test",
 				Gameplay:     GameplayClassic,
-				Rows:         10,
-				Cols:         10,
+				Rows:         50,
+				Cols:         50,
 				Mines:        4,
 				SkillCharges: 1,
 			}, true, MemberSoyorin, 7)
 			g := app.game
 			g.FirstClick = true
 			g.Status = StatusPlaying
-			// Mines: (1,7) flagged, (3,7) shielded, (8,8) unhit mine revealed on loss, (5,7) hit mine.
-			g.Cell(1, 7).IsMine = true
-			g.Cell(3, 7).IsMine = true
-			g.Cell(8, 8).IsMine = true
-			g.Cell(5, 7).IsMine = true
+			// Mines: (20,30) flagged, (24,30) shielded, (30,35) unhit mine revealed on loss, (26,30) hit mine.
+			g.Cell(20, 30).IsMine = true
+			g.Cell(24, 30).IsMine = true
+			g.Cell(30, 35).IsMine = true
+			g.Cell(26, 30).IsMine = true
 			g.RecomputeAdjacency()
 
 			tt := ui.NewTester(classicCanvasTestView(app), 1280, 900)
@@ -1567,7 +1567,7 @@ func TestClassicMinimapShowsOwnProgressOnlyAndClickToJump(t *testing.T) {
 				cx, cy := minimapCellCenter(board, mini, g.Rows, g.Cols, row, col)
 				return sampleCanvasPixel(img, cx, cy, 2)
 			}
-			assertColorNear(t, "idle minimap cell (2,2)", sampleCell(img, 2, 2), mc.Bg)
+			assertColorNear(t, "idle minimap cell (22,20)", sampleCell(img, 22, 20), mc.Bg)
 			for name, forbidden := range map[string]ui.Color{
 				"duel navy":      duelAINavy,
 				"duel AI pink":   duelAIPink,
@@ -1578,24 +1578,24 @@ func TestClassicMinimapShowsOwnProgressOnlyAndClickToJump(t *testing.T) {
 				}
 			}
 
-			// 2. Live progress: open safe numbered cell (1,6) (no flood-fill),
-			// flag mine (1,7), shield mine (3,7), misflag safe (5,2), mark ?
-			// at (8,2), and leave (8,5) unrevealed.
-			g.Reveal(1, 6)
-			g.ToggleFlag(1, 7, false)
-			g.Reveal(3, 7)
-			g.ToggleFlag(5, 2, false)
-			g.ToggleFlag(8, 2, true)
-			g.ToggleFlag(8, 2, true)
+			// 2. Live progress: open safe numbered cell (20,29) (no flood-fill),
+			// flag mine (20,30), shield mine (24,30), misflag safe (26,15), mark ?
+			// at (30,15), and leave (30,22) unrevealed.
+			g.Reveal(20, 29)
+			g.ToggleFlag(20, 30, false)
+			g.Reveal(24, 30)
+			g.ToggleFlag(26, 15, false)
+			g.ToggleFlag(30, 15, true)
+			g.ToggleFlag(30, 15, true)
 			tt.Frame()
 			img = tt.Image()
 
-			assertColorNear(t, "live opened safe (1,6)", sampleCell(img, 1, 6), mc.Opened)
-			assertColorNear(t, "live normal flag (1,7)", sampleCell(img, 1, 7), mc.Flag)
-			assertColorNear(t, "live shield flag (3,7)", sampleCell(img, 3, 7), mc.Flag)
-			assertColorNear(t, "live misflagged safe (5,2) stays flag", sampleCell(img, 5, 2), mc.Flag)
-			assertColorNear(t, "live questioned (8,2) stays bg", sampleCell(img, 8, 2), mc.Bg)
-			assertColorNear(t, "live unrevealed (8,5) stays bg", sampleCell(img, 8, 5), mc.Bg)
+			assertColorNear(t, "live opened safe (20,29)", sampleCell(img, 20, 29), mc.Opened)
+			assertColorNear(t, "live normal flag (20,30)", sampleCell(img, 20, 30), mc.Flag)
+			assertColorNear(t, "live shield flag (24,30)", sampleCell(img, 24, 30), mc.Flag)
+			assertColorNear(t, "live misflagged safe (26,15) stays flag", sampleCell(img, 26, 15), mc.Flag)
+			assertColorNear(t, "live questioned (30,15) stays bg", sampleCell(img, 30, 15), mc.Bg)
+			assertColorNear(t, "live unrevealed (30,22) stays bg", sampleCell(img, 30, 22), mc.Bg)
 			for name, forbidden := range map[string]ui.Color{
 				"duel AI pink":   duelAIPink,
 				"duel contested": duelContested,
@@ -1605,20 +1605,20 @@ func TestClassicMinimapShowsOwnProgressOnlyAndClickToJump(t *testing.T) {
 				}
 			}
 
-			// 3. Loss: hit mine (5,7) and wrong flag (5,2) paint Boom, while unhit
-			// mine (8,8) revealed by finalizeLoss stays Bg (not player progress).
-			g.Reveal(5, 7)
-			if g.Status != StatusLost || !g.Cell(8, 8).Revealed || !g.Cell(5, 2).WrongFlag {
-				t.Fatalf("expected StatusLost with revealed unhit mine and wrong flag, status=%v (8,8)=%+v (5,2)=%+v",
-					g.Status, g.Cell(8, 8), g.Cell(5, 2))
+			// 3. Loss: hit mine (26,30) and wrong flag (26,15) paint Boom, while unhit
+			// mine (30,35) revealed by finalizeLoss stays Bg (not player progress).
+			g.Reveal(26, 30)
+			if g.Status != StatusLost || !g.Cell(30, 35).Revealed || !g.Cell(26, 15).WrongFlag {
+				t.Fatalf("expected StatusLost with revealed unhit mine and wrong flag, status=%v (30,35)=%+v (26,15)=%+v",
+					g.Status, g.Cell(30, 35), g.Cell(26, 15))
 			}
 			tt.Frame()
 			img = tt.Image()
-			assertColorNear(t, "lost exploded mine (5,7)", sampleCell(img, 5, 7), mc.Boom)
-			assertColorNear(t, "lost wrong flag (5,2)", sampleCell(img, 5, 2), mc.Boom)
-			assertColorNear(t, "lost unhit mine (8,8) stays bg", sampleCell(img, 8, 8), mc.Bg)
-			assertColorNear(t, "lost opened safe (1,6) preserved", sampleCell(img, 1, 6), mc.Opened)
-			assertColorNear(t, "lost right flag (1,7) preserved", sampleCell(img, 1, 7), mc.Flag)
+			assertColorNear(t, "lost exploded mine (26,30)", sampleCell(img, 26, 30), mc.Boom)
+			assertColorNear(t, "lost wrong flag (26,15)", sampleCell(img, 26, 15), mc.Boom)
+			assertColorNear(t, "lost unhit mine (30,35) stays bg", sampleCell(img, 30, 35), mc.Bg)
+			assertColorNear(t, "lost opened safe (20,29) preserved", sampleCell(img, 20, 29), mc.Opened)
+			assertColorNear(t, "lost right flag (20,30) preserved", sampleCell(img, 20, 30), mc.Flag)
 
 			// 4. Click-to-jump on a large 50x50 classic board: clicking interior
 			// coordinates on the minimap centers the viewport on that cell and
