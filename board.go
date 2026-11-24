@@ -518,7 +518,7 @@ func (v *boardView) cellAt(g *Game, x, y float32) (int, int, bool) {
 }
 
 func hasMinimap(g *Game) bool {
-	return g != nil && g.Rows > 0 && g.Cols > 0 && (g.Rows >= minimapMinSide || g.Cols >= minimapMinSide)
+	return max(g.Rows, g.Cols) >= minimapMinSide
 }
 
 func (v *boardView) minimapBoundsFor(g *Game) ui.Rect {
