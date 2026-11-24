@@ -176,6 +176,7 @@ func TestChatNoteStableKeysEnterShiftAndEviction(t *testing.T) {
 }
 
 func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		firstTrig   string
@@ -192,7 +193,6 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 			app := newMinesweeperApp(12345)
 			app.darkMode = false
 			tt := ui.NewTester(app.view, 1280, 900)
-			tt.SetScale(2)
 			tt.Frame()
 
 			closedBaseline := image.NewRGBA(tt.Image().Bounds())
@@ -208,6 +208,7 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 				t.Fatalf("expected %s open", tc.firstTrig)
 			}
 			tt.Advance(500 * time.Millisecond)
+			panelRect := app.popoverRects[tc.firstKind]
 
 			// 2. Dismiss via outside left/right click on a board cell: anti-leak shield
 			// must swallow the click (zero reveal/flag) and start a real exit transition.
@@ -233,8 +234,7 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 					tc.firstTrig, app.popoverExiting(tt.Now()), tt.FramePending())
 			}
 			// Visually confirm the exiting ghost is still fading over the closed baseline.
-			fullRect := ui.Rect{X: 0, Y: 0, W: 1280, H: 900}
-			if diff := diffPixelCountInRect(closedBaseline, tt.Image(), fullRect, 2); diff < 500 {
+			if diff := diffPixelCountInRect(closedBaseline, tt.Image(), panelRect, 1); diff < 500 {
 				t.Fatalf("expected visible exiting popover ghost at 45ms, pixel diff=%d", diff)
 			}
 
@@ -251,7 +251,7 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 
 			// 4. Immediately clicking or right-clicking the board while the switched popover is open
 			// (overlapping the old popover's exit) must be caught by popoverWorkspaceShield.
-			if tc.rightClick {
+			if !tc.rightClick {
 				tt.ClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
 			} else {
 				tt.RightClickAt(cellRect.X+cellRect.W/2, cellRect.Y+cellRect.H/2)
@@ -346,7 +346,7 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 		afterSwitch := image.NewRGBA(tt.Image().Bounds())
 		copy(afterSwitch.Pix, tt.Image().Pix)
 		tt.Advance(popoverExitDuration + 20*time.Millisecond)
-		if diff := diffPixelCountInRect(afterSwitch, tt.Image(), setlistRect, 2); diff != 0 {
+		if diff := diffPixelCountInRect(afterSwitch, tt.Image(), setlistRect, 1); diff != 0 {
 			t.Fatalf("setlist track switch left lingering exit ghost pixels: diff=%d", diff)
 		}
 
@@ -371,7 +371,7 @@ func TestPopoverExitMidwaySingleClickMutualSwitchAndShield(t *testing.T) {
 		afterMode := image.NewRGBA(tt.Image().Bounds())
 		copy(afterMode.Pix, tt.Image().Pix)
 		tt.Advance(popoverExitDuration + 20*time.Millisecond)
-		if diff := diffPixelCountInRect(afterMode, tt.Image(), settingsRect, 2); diff != 0 {
+		if diff := diffPixelCountInRect(afterMode, tt.Image(), settingsRect, 1); diff != 0 {
 			t.Fatalf("mode switch mid-exit painted lingering exit ghost on switch frame: diff=%d", diff)
 		}
 

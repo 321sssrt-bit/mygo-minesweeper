@@ -796,9 +796,12 @@ func TestCanvasPointerFlagOnPressAndMinimapRightClick(t *testing.T) {
 						t.Fatalf("expected both shield and flag applied: shield=%v flag=%v",
 							app.game.Cell(18, 18).ShieldSaved, app.game.Cell(19, 19).Flagged)
 					}
-					if app.shakeAmplitude != 4.5 || !app.quoteStrip.Active || app.quoteStrip.MemberID != MemberSoyorin {
-						t.Fatalf("shield feedback was overwritten on canvas: shake=%v stripActive=%v member=%v",
-							app.shakeAmplitude, app.quoteStrip.Active, app.quoteStrip.MemberID)
+					tt.Advance(22 * time.Millisecond)
+					if sx, sy := app.currentShakeOffset(tt.Now()); sx == 0 && sy == 0 {
+						t.Fatal("shield shake was lost when same-frame right press followed left release")
+					}
+					if _, ok := tt.Find("台词"); !ok || !app.quoteStrip.Active || app.quoteStrip.MemberID != MemberSoyorin {
+						t.Fatal("Soyo's quote strip was lost when same-frame right press followed left release")
 					}
 					if !tt.HasText("长崎爽世发动了「温柔的微笑」：这次就当没点过吧！") {
 						t.Fatal("shield toast was lost on canvas when same-frame right press followed left release")

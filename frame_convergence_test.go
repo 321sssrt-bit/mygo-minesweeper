@@ -90,7 +90,7 @@ func newConvergenceView(t *testing.T, app *minesweeperApp) *convergenceView {
 				c.CloseToast("")
 			}
 		})
-	}, 1280, 900)
+	}, 1080, 760)
 	v.tt.Advance(10 * time.Millisecond)
 	requireSilentSound(t, app)
 	return v
@@ -207,6 +207,7 @@ func convergenceClassic(side int, member MemberID) *minesweeperApp {
 }
 
 func TestFrameConvergenceBoardEffects(t *testing.T) {
+	t.Parallel()
 	for _, backend := range []struct {
 		name string
 		side int
@@ -549,7 +550,7 @@ func TestFrameConvergenceCombined(t *testing.T) {
 
 func TestHeadlessEntryPointsUseSilentSound(t *testing.T) {
 	requireSilentSound(t, newMinesweeperApp(7))
-	requireSilentSound(t, newMinesweeperAppWith(appOptions{Seed: 7}))
+	requireSilentSound(t, newMinesweeperAppWith(appOptions{}))
 	for _, scene := range snapshotScenes {
 		t.Run(scene.name, func(t *testing.T) {
 			for _, dark := range []bool{false, true} {
@@ -597,6 +598,7 @@ func desktopAudioViolations(fset *token.FileSet, path string, f *ast.File) []str
 			report(imp.Pos(), "desktop audio import outside the adapter")
 		}
 	}
+	mainCalls := 0
 	for _, decl := range f.Decls {
 		fn, _ := decl.(*ast.FuncDecl)
 		main := path == "main.go" && fn != nil && fn.Recv == nil && fn.Name.Name == "main"
@@ -624,6 +626,10 @@ func desktopAudioViolations(fset *token.FileSet, path string, f *ast.File) []str
 		}
 		ast.Inspect(decl, func(n ast.Node) bool {
 			switch x := n.(type) {
+			case *ast.CallExpr:
+				if id, ok := ast.Unparen(x.Fun).(*ast.Ident); main && ok && id.Name == "newDesktopSound" {
+					mainCalls++
+				}
 			case *ast.Ident:
 				if x.Name == "newDesktopSound" && !main && x != constructor && !(adapter && x == fn.Name) {
 					report(x.Pos(), "desktop sound constructor is only allowed in main or the test's single binding")
@@ -657,6 +663,9 @@ func desktopAudioViolations(fset *token.FileSet, path string, f *ast.File) []str
 			}
 			return true
 		})
+	}
+	if path == "main.go" && mainCalls != 1 {
+		report(f.Package, fmt.Sprintf("main calls newDesktopSound %d times, want exactly 1", mainCalls))
 	}
 	return violations
 }

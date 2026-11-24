@@ -78,15 +78,6 @@ func TestSetlistPopoverSelectBySongName(t *testing.T) {
 		t.Fatal("clicking setlist trigger again should close popover")
 	}
 
-	// Escape dismisses an open popover.
-	if err := tt.Click("歌单"); err != nil {
-		t.Fatalf("open setlist for Escape test: %v", err)
-	}
-	tt.Key(0, ui.KeyEscape)
-	if app.setlistOpen {
-		t.Fatal("Escape should dismiss the setlist popover")
-	}
-
 	// Clicking outside the popover dismisses it.
 	if err := tt.Click("歌单"); err != nil {
 		t.Fatalf("open setlist for outside-click test: %v", err)

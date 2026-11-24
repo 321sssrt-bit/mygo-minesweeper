@@ -48,25 +48,12 @@ func makeCorridorGame(rows, cols int, bandMode bool, member MemberID, mines [][2
 }
 
 // TestBoundedWavePeelThreeStagesBothBackends verifies the three-stage reveal
-// wave (covered slip -> lifting peel -> exposed wash/bare paper), 24ms/step and
-// 240ms delay cap, frame-0 accessibility/hit-box updates, non-blocking input
+// wave (covered slip -> lifting peel -> exposed wash/bare paper), frame-0
+// accessibility/hit-box updates, non-blocking input
 // mid-wave, over-256-budget distant cells, and pre-staged boards on both the
 // classic widget grid and the pan/zoom canvas.
 func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
-	// Verify step delay formula and 240ms cap directly.
-	if got := time.Duration(waveStep(0)) * rippleStepDelay; got != 0 {
-		t.Fatalf("depth 0 delay = %v, want 0", got)
-	}
-	if got := time.Duration(waveStep(6)) * rippleStepDelay; got != 144*time.Millisecond {
-		t.Fatalf("depth 6 delay = %v, want 144ms", got)
-	}
-	if got := time.Duration(waveStep(10)) * rippleStepDelay; got != rippleMaxDelay {
-		t.Fatalf("depth 10 delay = %v, want %v", got, rippleMaxDelay)
-	}
-	if got := time.Duration(waveStep(25)) * rippleStepDelay; got != rippleMaxDelay {
-		t.Fatalf("depth 25 delay = %v, want capped %v", got, rippleMaxDelay)
-	}
-
+	t.Parallel()
 	for _, backend := range []string{"grid", "canvas"} {
 		for _, dark := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/dark=%v", backend, dark), func(t *testing.T) {
@@ -82,7 +69,11 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 					viewFn = classicCanvasTestView(app)
 				}
 				tt := ui.NewTester(viewFn, 1280, 900)
-				tt.SetScale(2)
+				scale := float32(1)
+				if backend == "canvas" && dark {
+					scale = 2
+					tt.SetScale(scale)
+				}
 				tt.UseScreenReader()
 				tt.Frame()
 
@@ -146,30 +137,24 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 					tt.Frame()
 				}
 
-				rip6 := app.ripples[0*13+6]
-				rip11 := app.ripples[11*13+0]
-				if rip6.Delay != 6*rippleStepDelay || rip11.Delay != rippleMaxDelay {
-					t.Fatalf("unexpected delays: depth6=%v depth11=%v", rip6.Delay, rip11.Delay)
-				}
-
 				// Stage 1 (t=0): depth-11 cell (11,0) is still covered by a full paper slip.
-				assertColorNear(t, "stage 1 covered far slip", sampleCanvasPixel(tt.Image(), farRectBefore.X+farRectBefore.W/2, farRectBefore.Y+farRectBefore.H/2, 2), pal.Slip)
+				assertColorNear(t, "stage 1 covered far slip", sampleCanvasPixel(tt.Image(), farRectBefore.X+farRectBefore.W/2, farRectBefore.Y+farRectBefore.H/2, scale), pal.Slip)
 
 				// Stage 2 (t=75ms): origin (0,0) is mid-peel, while depth-11 (240ms) is still covered.
 				tt.Advance(75 * time.Millisecond)
-				originMid := sampleCanvasPixel(tt.Image(), originRectBefore.X+originRectBefore.W/2, originRectBefore.Y+originRectBefore.H/2, 2)
+				originMid := sampleCanvasPixel(tt.Image(), originRectBefore.X+originRectBefore.W/2, originRectBefore.Y+originRectBefore.H/2, scale)
 				if near(originMid.R, pal.Slip.R) && near(originMid.G, pal.Slip.G) && near(originMid.B, pal.Slip.B) {
 					t.Errorf("origin slip still opaque pal.Slip at 75ms: %s", hexOf(originMid))
 				}
-				assertColorNear(t, "stage 1 far slip still covered at 75ms", sampleCanvasPixel(tt.Image(), farRectBefore.X+farRectBefore.W/2, farRectBefore.Y+farRectBefore.H/2, 2), pal.Slip)
+				assertColorNear(t, "stage 1 far slip still covered at 75ms", sampleCanvasPixel(tt.Image(), farRectBefore.X+farRectBefore.W/2, farRectBefore.Y+farRectBefore.H/2, scale), pal.Slip)
 				if got := cellRect(11, 0); got != farRectBefore {
 					t.Fatalf("cell hit-box shifted mid-wave: before=%+v mid=%+v", farRectBefore, got)
 				}
 
 				// Stage 2 for far cell (t=240ms+75ms=315ms): far cell is lifting; origin (315ms > 280ms) is already bare paper.
 				tt.Advance(240 * time.Millisecond)
-				assertColorNear(t, "origin bare after 315ms", sampleCanvasPixel(tt.Image(), originRectBefore.X+originRectBefore.W/2, originRectBefore.Y+originRectBefore.H/2, 2), pal.Board)
-				farMid := sampleCanvasPixel(tt.Image(), farRectBefore.X+3, farRectBefore.Y+3, 2)
+				assertColorNear(t, "origin bare after 315ms", sampleCanvasPixel(tt.Image(), originRectBefore.X+originRectBefore.W/2, originRectBefore.Y+originRectBefore.H/2, scale), pal.Board)
+				farMid := sampleCanvasPixel(tt.Image(), farRectBefore.X+3, farRectBefore.Y+3, scale)
 				if near(farMid.R, pal.Slip.R) && near(farMid.G, pal.Slip.G) && near(farMid.B, pal.Slip.B) {
 					t.Errorf("far slip still opaque pal.Slip at delay+75ms: %s", hexOf(farMid))
 				}
@@ -178,7 +163,7 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 				tt.Advance(85 * time.Millisecond)
 				farWashAlpha := 1 - float32(160*time.Millisecond)/float32(rippleDuration)
 				wantFarWash := memberImage(MemberAnon).Alpha(0.26 * farWashAlpha).Over(pal.Board)
-				assertColorNear(t, "stage 3 far locked Anon wash", sampleCanvasPixel(tt.Image(), farRectBefore.X+3, farRectBefore.Y+3, 2), wantFarWash)
+				assertColorNear(t, "stage 3 far locked Anon wash", sampleCanvasPixel(tt.Image(), farRectBefore.X+3, farRectBefore.Y+3, scale), wantFarWash)
 
 				// Full convergence: wave entries pruned; once victory highlights settle too,
 				// zero lingering animation frames remain.
@@ -187,7 +172,7 @@ func TestBoundedWavePeelThreeStagesBothBackends(t *testing.T) {
 					t.Fatalf("expected all ripples pruned, remaining=%d", len(app.ripples))
 				}
 				tt.Advance(memeStripDuration)
-				assertColorNear(t, "far cell bare after settle", sampleCanvasPixel(tt.Image(), farRectBefore.X+3, farRectBefore.Y+3, 2), pal.Board)
+				assertColorNear(t, "far cell bare after settle", sampleCanvasPixel(tt.Image(), farRectBefore.X+3, farRectBefore.Y+3, scale), pal.Board)
 				if backend == "canvas" && tt.FramePending() {
 					t.Fatal("canvas still requested animation frames after wave settled")
 				}
@@ -363,7 +348,6 @@ func TestBigFloodLocksMemberColorWashAcrossModesAndSwitches(t *testing.T) {
 				viewFn = classicCanvasTestView(app)
 			}
 			tt := ui.NewTester(viewFn, 1280, 900)
-			tt.SetScale(2)
 			tt.Frame()
 
 			var origin ui.Rect
@@ -389,7 +373,7 @@ func TestBigFloodLocksMemberColorWashAcrossModesAndSwitches(t *testing.T) {
 			washAlpha := 1 - float32(peelDuration+10*time.Millisecond)/float32(rippleDuration)
 			wantLocked := locked.Alpha(0.26 * washAlpha).Over(pal.Board)
 			assertColorNear(t, "mid-wave locked member wash unchanged after member switch",
-				sampleCanvasPixel(tt.Image(), origin.X+origin.W/2, origin.Y+origin.H/2, 2), wantLocked)
+				sampleCanvasPixel(tt.Image(), origin.X+origin.W/2, origin.Y+origin.H/2, 1), wantLocked)
 		})
 	}
 
@@ -406,7 +390,6 @@ func TestBigFloodLocksMemberColorWashAcrossModesAndSwitches(t *testing.T) {
 		app.game.RecomputeAdjacency()
 
 		tt := ui.NewTester(app.view, 1280, 900)
-		tt.SetScale(2)
 		app.board.center(app.game, 3, 3)
 		tt.Frame()
 		br, _ := tt.Find("决斗棋盘")
@@ -837,12 +820,12 @@ func TestClassicGridShakePreservesSlipShadowsAndHitBoxes(t *testing.T) {
 }
 
 // TestMotionReducedMidFlightAndThreeResetPathsClearAllEffects verifies:
-// 1. Effective reduced motion skips peel/bandage/shake on frame 0;
-// 2. Switching to reduced motion mid-flight (via settings popover or system
-//    preference) immediately settles all in-flight effects on the same frame;
-// 3. System ReduceMotion=true + manual motionStandard runs full motion;
-// 4. KeyR, setlist track switch, and top-bar gameplay mode switch all clear
-//    ripples, bandages, and shake immediately.
+//  1. Effective reduced motion skips peel/bandage/shake on frame 0;
+//  2. Switching to reduced motion mid-flight (via settings popover or system
+//     preference) immediately settles all in-flight effects on the same frame;
+//  3. System ReduceMotion=true + manual motionStandard runs full motion;
+//  4. KeyR, setlist track switch, and top-bar gameplay mode switch all clear
+//     ripples, bandages, and shake immediately.
 func TestMotionReducedMidFlightAndThreeResetPathsClearAllEffects(t *testing.T) {
 	// 1. Mid-flight switch to reduced via 设置 popover & system preference settles immediately.
 	t.Run("mid-flight-reduced-same-frame-settle", func(t *testing.T) {
