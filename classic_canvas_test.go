@@ -1770,7 +1770,7 @@ func TestClassicBoardSurfaceFollowsThreshold(t *testing.T) {
 	}{
 		{"9x9 mayoiboshi", Difficulties[0], false},
 		{"16x16 hekitenbansou", Difficulties[1], false},
-		{"20x20 taller than default stage", Difficulty{ID: "mid", Gameplay: GameplayClassic, Rows: 20, Cols: 20, Mines: 80}, true},
+		{"24x24 taller than default stage", Difficulty{ID: "mid", Gameplay: GameplayClassic, Rows: 24, Cols: 24, Mines: 100}, true},
 		{"30x30 kageiromai", TrackKageiromai, true},
 		{"30x31", Difficulty{ID: "wide", Gameplay: GameplayClassic, Rows: 30, Cols: 31, Mines: 150}, true},
 		{"31x30", Difficulty{ID: "tall", Gameplay: GameplayClassic, Rows: 31, Cols: 30, Mines: 150}, true},

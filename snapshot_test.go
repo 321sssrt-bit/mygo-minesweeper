@@ -29,6 +29,7 @@ type snapshotScene struct {
 }
 
 var snapshotScenes = []snapshotScene{
+	{name: "classic-open", stage: stageClassicOpenScene},
 	{name: "live", stage: stageLiveScene},
 	{name: "won", stage: stageWonScene},
 	{name: "lost", stage: stageLostScene},
@@ -75,11 +76,22 @@ func TestSnapshot(t *testing.T) {
 }
 
 // pinStartQuote replaces the randomly drawn start quote with the pool's
-// first entry — in the banner and its chat bubble — so shots do not drift
+// first entry — in state and its chat note — so shots do not drift
 // between runs.
 func pinStartQuote(app *minesweeperApp) {
 	app.quote = memberQuotes[app.memberID]["start"][0]
 	app.chatLog[len(app.chatLog)-1].Text = app.quote
+}
+
+// stageClassicOpenScene stages the 16×16 classic track before the first
+// move: the status bar's opening labels and an untouched board.
+func stageClassicOpenScene(dark bool) *minesweeperApp {
+	app := newMinesweeperApp(20261116)
+	app.darkMode = dark
+	app.diffIdx = 1
+	app.resetGame(true)
+	pinStartQuote(app)
+	return app
 }
 
 // stageLiveScene stages a live, mid-game 16×16 band with a hover on a

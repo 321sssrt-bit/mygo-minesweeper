@@ -951,7 +951,7 @@ const (
 	defaultWindowW      = float32(1280)
 	defaultWindowH      = float32(900)
 	defaultStageChromeW = float32(338)
-	defaultStageChromeH = float32(292)
+	defaultStageChromeH = float32(217)
 )
 
 type classicSurfaceState struct {
@@ -3188,6 +3188,80 @@ func (a *minesweeperApp) handleGridTileInput(idx, row, col int, size float32, ev
 	return res.handled
 }
 
+// statusBarHeight keeps the bar above the board the same height in every
+// game state, so the board never shifts when labels change.
+const statusBarHeight = float32(44)
+
+// statusBar is the single row above the board: 剩雷, 用时, 排练完成度, the
+// skill entry and 重开, left to right. It never wraps; only the progress bar
+// gives up width when the window is narrow.
+func (a *minesweeperApp) statusBar(c *ui.Context, pal *palette, memberTheme *ui.Theme, member Member, now time.Time) {
+	t := c.Theme()
+	barBg := t.Background.Alpha(0.75).Over(t.Surface)
+	ui.Row(c.Key("status-bar")).Label("状态栏").Height(statusBarHeight).Shrink(0).Padding(0, 12).Radius(9).
+		Background(barBg).Border(1, t.Border).AlignItems(ui.Center).Gap(10).Children(func() {
+		ui.Badge(c, "剩雷 "+formatDigits(a.game.RemainingMines())).Shrink(0).
+			Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
+		ui.Badge(c, "用时 "+formatDigits(a.elapsed)+" 秒").Shrink(0).
+			Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
+
+		targetProg := a.game.Progress()
+		displayProg, progMoving := a.progressVisual.update(targetProg, now, meterGlideDuration, a.motionReducedActive)
+		if progMoving {
+			c.AnimationFrame()
+		}
+		// Below the minimum window the progress group is clipped rather than
+		// painted over the skill entry.
+		ui.Row(c).Grow(1).MinWidth(0).Clip().AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Text(c, "排练完成度").FontSize(12).TextColor(setlistInk(pal, barBg, pal.InkMuted)).SingleLine().Shrink(0)
+			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+				hatchProgress(c, "排练完成度", targetProg, displayProg, pal.blendInkOf(bandColor), pal)
+			})
+			ui.Textf(c, "%.0f%%", targetProg*100).FontSize(12).Bold().TextColor(setlistAccentInk(pal, barBg)).
+				FontFeatures("tnum").SingleLine().Shrink(0)
+		})
+
+		skillLabel := fmt.Sprintf("发动技能 (E) ×%d", a.game.SkillUsesLeft)
+		canUse := a.bandMode() && !member.Passive && a.game.Status == StatusPlaying && a.game.SkillUsesLeft > 0
+		if !a.bandMode() {
+			skillLabel = "经典模式"
+		} else if member.Passive {
+			if a.game.SkillUsesLeft > 0 {
+				skillLabel = fmt.Sprintf("微笑守护中 ×%d", a.game.SkillUsesLeft)
+			} else {
+				skillLabel = "护盾已耗尽"
+			}
+		}
+		ui.Themed(c.Key("skill-slot"), memberTheme).Shrink(0).Children(func() {
+			if ui.PrimaryButton(c.Key("skill-btn"), skillLabel).Disabled(!canUse).
+				Tooltip(member.SkillDesc).Clicked() {
+				a.useSkill(c, now)
+			}
+		})
+
+		resetLabel := "迷子出发 (R)"
+		switch a.game.Status {
+		case StatusPlaying:
+			resetLabel = "演奏中 · 重开 (R)"
+		case StatusWon:
+			resetLabel = "Live 大成功！再来一首"
+			if a.isDuel() {
+				resetLabel = "决斗结束 · 再来一局 (R)"
+			}
+		case StatusLost:
+			resetLabel = "炸团了 · 再排练一次"
+		}
+		resetBtn := ui.Button(c.Key("reset-btn"), resetLabel).Shrink(0)
+		if a.focusDuelSettlement && !a.haruhikageIntro {
+			a.focusDuelSettlement = false
+			resetBtn.Focus()
+		}
+		if resetBtn.Clicked() {
+			a.resetGame(false)
+		}
+	})
+}
+
 func (a *minesweeperApp) view(c *ui.Context) {
 	now := c.Now()
 	winW, winH := c.Size()
@@ -3247,11 +3321,10 @@ func (a *minesweeperApp) view(c *ui.Context) {
 
 	art := artFor(pal.Dark)
 	member := FindMember(a.memberID)
-	// memberColor is the leader's 代表色, used as a highlighter; memberInk
-	// is it as ink, for text and the skill button on this paper.
+	// memberColor is the leader's 代表色, used as a highlighter; as ink it
+	// themes the skill button on this paper.
 	memberColor := ui.Hex(member.ColorHex)
-	memberInk := pal.blendInkOf(memberColor)
-	memberTheme := baseTheme.WithAccent(memberInk)
+	memberTheme := baseTheme.WithAccent(pal.blendInkOf(memberColor))
 
 	a.haruhikageOverlay(c, pal, baseTheme, now)
 
@@ -3371,16 +3444,8 @@ func (a *minesweeperApp) view(c *ui.Context) {
 					}
 				})
 
-				// Progress & Gravity Meter
+				// Gravity Meter
 				ui.Column(c).Gap(5).Padding(8, 4).Children(func() {
-					targetProg := a.game.Progress()
-					displayProg, progMoving := a.progressVisual.update(targetProg, now, meterGlideDuration, a.motionReducedActive)
-					ui.Row(c).Justify(ui.SpaceBetween).Children(func() {
-						ui.Text(c, "排练完成度").FontSize(12).TextColor(t.TextMuted)
-						ui.Textf(c, "%.0f%%", targetProg*100).FontSize(12).Bold().TextColor(t.Accent)
-					})
-					hatchProgress(c, "排练完成度", targetProg, displayProg, pal.blendInkOf(bandColor), pal)
-
 					targetGrav := float64(a.game.Gravity)
 					displayGrav, gravMoving := a.gravityVisual.update(targetGrav, now, meterGlideDuration, a.motionReducedActive)
 					gravityInk := pal.blendInkOf(memberImage(MemberSoyorin))
@@ -3389,7 +3454,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						ui.Textf(c, "%d%%", a.game.Gravity).FontSize(12).Bold().TextColor(gravityInk)
 					})
 					hatchMeter(c, "乐队重力值", targetGrav, displayGrav, gravityInk, pal)
-					if progMoving || gravMoving {
+					if gravMoving {
 						c.AnimationFrame()
 					}
 				})
@@ -3486,57 +3551,8 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				})
 			})
 
-			// Right Main Stage: Companion Banner + HUD + Board (+ Optional Memes Drawer)
+			// Right Main Stage: Memes Drawer (optional) + Status Bar + Board
 			ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Gap(10).Children(func() {
-				// Active Member Banner themed to the selected member!
-				banner := ui.Themed(c.Key("member-banner"), memberTheme).Padding(10, 12).Radius(4).Background(t.Surface).
-					Shadow(0, 1, 3, 0, pal.SlipShade)
-				tapeColor := banner.AnimateColor("member-tape", memberColor.Alpha(0.5), ui.Animation{
-					Duration: memberHighlightDuration,
-					Ease:     ui.EaseOut,
-				})
-				banner.Draw(func(p *ui.Painter, r ui.Rect) {
-					// A strip of masking tape in her 代表色 holds the note on.
-					tape := ui.Rect{X: r.X + 26, Y: r.Y - 6, W: 64, H: 14}
-					p.Transform(ui.Rotation(-4), tape.X+tape.W/2, tape.Y+tape.H/2, func() {
-						p.Fill(tape, tapeColor, 1)
-					})
-				}).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-						ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(10).Children(func() {
-							memberAvatar(c, member, 38, pal)
-							ui.Column(c).Grow(1).Gap(2).Children(func() {
-								ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-									ui.Text(c, member.Name).FontSize(15).Bold().TextColor(memberInk)
-									ui.Badge(c, member.Role)
-									skillTip := member.SkillName + " · " + member.SkillDesc
-									if !a.bandMode() {
-										skillTip = "纯正经典：关闭技能，仅保留台词应援"
-									}
-									ui.Text(c, skillTip).FontSize(12).TextColor(t.TextMuted).SingleLine()
-								})
-								ui.Text(c, a.quote).FontSize(13).Bold().SingleLine().FixedLineHeight(20)
-							})
-						})
-
-						skillLabel := fmt.Sprintf("发动技能 (E) ×%d", a.game.SkillUsesLeft)
-						canUse := a.bandMode() && !member.Passive && a.game.Status == StatusPlaying && a.game.SkillUsesLeft > 0
-						if !a.bandMode() {
-							skillLabel = "经典模式"
-						} else if member.Passive {
-							if a.game.SkillUsesLeft > 0 {
-								skillLabel = fmt.Sprintf("微笑守护中 ×%d", a.game.SkillUsesLeft)
-							} else {
-								skillLabel = "护盾已耗尽"
-							}
-						}
-						if ui.PrimaryButton(c.Key("skill-btn"), skillLabel).Disabled(!canUse).
-							Tooltip(member.SkillDesc).Clicked() {
-							a.useSkill(c, now)
-						}
-					})
-				})
-
 				// Collapsible Meme Achievements Panel
 				if !a.memeDrawerInit {
 					a.memeDrawerInit = true
@@ -3607,7 +3623,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 							if a.motionReducedActive {
 								drawer.Opacity(0.30 + 0.70*a.memeDrawerValue)
 							} else {
-								drawer.Opacity(0.20 + 0.80*a.memeDrawerValue).Translate(0, -6*(1-a.memeDrawerValue))
+								drawer.Opacity(0.20+0.80*a.memeDrawerValue).Translate(0, -6*(1-a.memeDrawerValue))
 							}
 						}
 						drawer.Children(func() {
@@ -3649,42 +3665,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 
 				// Board Stage
 				ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Padding(12).Gap(10).Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
-					// HUD Bar
-					ui.Row(c).Padding(8, 12).Radius(9).Background(t.Background.Alpha(0.75)).
-						Border(1, t.Border).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							ui.Badge(c, "剩雷 "+formatDigits(a.game.RemainingMines())).
-								Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
-							ui.Badge(c, a.game.Difficulty.Subtitle)
-						})
-
-						resetLabel := "迷子出发 (R)"
-						switch a.game.Status {
-						case StatusPlaying:
-							resetLabel = "演奏中 · 重开 (R)"
-						case StatusWon:
-							resetLabel = "Live 大成功！再来一首"
-							if a.isDuel() {
-								resetLabel = "决斗结束 · 再来一局 (R)"
-							}
-						case StatusLost:
-							resetLabel = "炸团了 · 再排练一次"
-						}
-						resetBtn := ui.Button(c.Key("reset-btn"), resetLabel)
-						if a.focusDuelSettlement && !a.haruhikageIntro {
-							a.focusDuelSettlement = false
-							resetBtn.Focus()
-						}
-						if resetBtn.Clicked() {
-							a.resetGame(false)
-						}
-
-						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							ui.Badge(c, a.bestTimeText(a.game.Difficulty.ID))
-							ui.Badge(c, "用时 "+formatDigits(a.elapsed)+" 秒").
-								Background(t.Accent.Alpha(0.18)).TextColor(t.Accent).FontFeatures("tnum")
-						})
-					})
+					a.statusBar(c, pal, memberTheme, member, now)
 
 					if a.isDuel() {
 						a.duelHUD(c)
