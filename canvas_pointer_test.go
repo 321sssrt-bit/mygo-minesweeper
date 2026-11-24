@@ -785,6 +785,8 @@ func TestCanvasPointerFlagOnPressAndMinimapRightClick(t *testing.T) {
 					safeR := canvasCellRect(board, app.board, 19, 19)
 					mlx, mly := mineR.X-board.X+mineR.W/2, mineR.Y-board.Y+mineR.H/2
 					slx, sly := safeR.X-board.X+safeR.W/2, safeR.Y-board.Y+safeR.H/2
+					untouchedCell := canvasCellRect(board, app.board, 23, 21)
+					still := tt.Image()
 					now := tt.Now()
 
 					app.handleCanvasInput(ui.InputEvent{Kind: ui.InputPointerDown, Button: 0, X: mlx, Y: mly, Time: now}, now)
@@ -797,8 +799,8 @@ func TestCanvasPointerFlagOnPressAndMinimapRightClick(t *testing.T) {
 							app.game.Cell(18, 18).ShieldSaved, app.game.Cell(19, 19).Flagged)
 					}
 					tt.Advance(22 * time.Millisecond)
-					if sx, sy := app.currentShakeOffset(tt.Now()); sx == 0 && sy == 0 {
-						t.Fatal("shield shake was lost when same-frame right press followed left release")
+					if changed := diffPixelCountInRect(still, tt.Image(), untouchedCell, 1); changed < int(untouchedCell.W/2) {
+						t.Fatalf("shield did not visibly shake an untouched cell: %d pixels changed", changed)
 					}
 					if _, ok := tt.Find("台词"); !ok || !app.quoteStrip.Active || app.quoteStrip.MemberID != MemberSoyorin {
 						t.Fatal("Soyo's quote strip was lost when same-frame right press followed left release")

@@ -329,7 +329,9 @@ func TestBigFloodLocksMemberColorWashAcrossModesAndSwitches(t *testing.T) {
 		member   MemberID
 		canvas   bool
 	}{
+		{"grid_band_live_tomori", true, MemberTomori, false},
 		{"grid_band_live_rana", true, MemberRana, false},
+		{"grid_band_live_soyorin", true, MemberSoyorin, false},
 		{"grid_pure_classic_anon", false, MemberAnon, false},
 		{"canvas_pure_classic_taki", false, MemberTaki, true},
 	} {
@@ -366,6 +368,9 @@ func TestBigFloodLocksMemberColorWashAcrossModesAndSwitches(t *testing.T) {
 
 			// Mutate memberID and modeIdx mid-wave: the in-flight wash must remain locked!
 			app.memberID = MemberSoyorin
+			if tc.member == MemberSoyorin {
+				app.memberID = MemberAnon
+			}
 			app.modeIdx = 1 - app.modeIdx
 			tt.Advance(peelDuration + 10*time.Millisecond)
 

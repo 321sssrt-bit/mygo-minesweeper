@@ -601,21 +601,9 @@ func newClockedApp(p prefs) (*minesweeperApp, *soundRecorder, *ui.Tester) {
 	return app, rec, tt
 }
 
-// soundCueTester runs the action and audio frame hooks without painting the game window.
-func soundCueTester(app *minesweeperApp, rec *soundRecorder, duel bool) *ui.Tester {
-	tt := ui.NewTester(func(c *ui.Context) {
-		now := c.Now()
-		app.syncWindowFocus(c)
-		if duel {
-			app.tickDuel(c, now)
-		}
-		if c.Shortcut(0, ui.KeyE) {
-			app.useSkill(c, now)
-		}
-		app.flushPendingActions(c, now)
-		app.flushCues(now)
-		app.scheduleCues(c, now)
-	}, 1, 1)
+// soundCueTester keeps frame ordering and the virtual clock while minimizing raster work.
+func soundCueTester(app *minesweeperApp, rec *soundRecorder) *ui.Tester {
+	tt := ui.NewTester(app.view, 1, 1)
 	rec.clock = tt.Now
 	return tt
 }
@@ -654,7 +642,7 @@ func assertGrainGaps(t *testing.T, at []time.Time) {
 
 func TestSoundFloodGrainsThrottled(t *testing.T) {
 	app, rec := newRecordedApp(7, defaultPrefs())
-	tt := soundCueTester(app, rec, false)
+	tt := soundCueTester(app, rec)
 	g := wallBoard(tt, app, 0)
 	tt.Frame()
 	rec.take()
@@ -888,7 +876,7 @@ func TestSoundVictoryMotifsFollowLeaderInBothModes(t *testing.T) {
 					cornerBoard(tt, app, false)
 					must(t, tt.Click("cell-4-4"))
 				} else {
-					tt := soundCueTester(app, rec, false)
+					tt := soundCueTester(app, rec)
 					cornerBoard(tt, app, false)
 					clickGridForSound(app, tt, 4, 4)
 				}
@@ -904,7 +892,7 @@ func TestSoundVictoryMotifsFollowLeaderInBothModes(t *testing.T) {
 func TestSoundSkillMotifOnlyWhenItTakesEffect(t *testing.T) {
 	for _, id := range []MemberID{MemberTomori, MemberAnon, MemberTaki} {
 		app, rec := newRecordedApp(7, defaultPrefs())
-		tt := soundCueTester(app, rec, false)
+		tt := soundCueTester(app, rec)
 		app.memberID = id
 		g := wallBoard(tt, app, 2)
 		rec.take()
@@ -936,7 +924,7 @@ func TestSoundSkillMotifOnlyWhenItTakesEffect(t *testing.T) {
 		}},
 	} {
 		app, rec := newRecordedApp(7, defaultPrefs())
-		tt := soundCueTester(app, rec, false)
+		tt := soundCueTester(app, rec)
 		g := tc.stage(tt, app)
 		rec.take()
 		before := *g
@@ -1212,9 +1200,27 @@ func TestSoundClassicMineHitClearsQueuedCues(t *testing.T) {
 			label = "haruhikage"
 		}
 
+		t.Run(label+"/pure classic", func(t *testing.T) {
+			app, rec := newRecordedApp(7, defaultPrefs())
+			app.modeIdx = 1
+			tt := soundCueTester(app, rec)
+			g := cornerBoard(tt, app, haruhikage)
+			clickGridForSound(app, tt, 0, 0)
+			if g.Status != StatusLost {
+				t.Fatal("expected clicking a mine to lose in pure classic")
+			}
+			got := rec.take()
+			assertSoundIDs(t, "pure classic mine hit", got, want...)
+			if got[0].Pan != columnPan(0, g.Cols) || got[1].Pan != columnPan(0, g.Cols) {
+				t.Fatalf("mine hit pans = (%v, %v), want column 0", got[0].Pan, got[1].Pan)
+			}
+			tt.Advance(time.Second)
+			assertSoundIDs(t, "pure classic mine hit follow-up", rec.take())
+		})
+
 		t.Run(label+"/after big flood", func(t *testing.T) {
 			app, rec := newRecordedApp(7, defaultPrefs())
-			tt := soundCueTester(app, rec, false)
+			tt := soundCueTester(app, rec)
 			g := wallBoard(tt, app, 0)
 			g.Difficulty.Haruhikage = haruhikage
 			tt.Frame()
@@ -1242,7 +1248,7 @@ func TestSoundClassicMineHitClearsQueuedCues(t *testing.T) {
 
 		t.Run(label+"/after flooding skill", func(t *testing.T) {
 			app, rec := newRecordedApp(7, defaultPrefs())
-			tt := soundCueTester(app, rec, false)
+			tt := soundCueTester(app, rec)
 			app.memberID = MemberRana
 			g := wallBoard(tt, app, 2)
 			g.Difficulty.Haruhikage = haruhikage
@@ -1314,7 +1320,7 @@ func TestSoundDuelSettlement(t *testing.T) {
 		p := defaultPrefs()
 		p.Volume = 80
 		app, rec := newRecordedApp(7, p)
-		tt := soundCueTester(app, rec, true)
+		tt := soundCueTester(app, rec)
 		stageDuelSound(app, tt, 10)
 		return app, rec, tt
 	}

@@ -381,8 +381,7 @@ func findOrPrepareChordable(g *Game, centerRow, centerCol int) (int, int, bool) 
 
 // Duel prompts (gold claim highlighter, leader chord highlighter, 9×9 scan
 // badge, four floating score pills, and milestone chat highlights) stay
-// WCAG-AA readable on both papers and leave no migrated raw hex literals in
-// board.go or main.go.
+// WCAG-AA readable on both papers.
 func TestDuelPromptsContrast(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		pal, dp := paperFor(dark), duelPromptsFor(dark)
@@ -741,7 +740,7 @@ func advanceToStunPulsePeak(tt *ui.Tester) float32 {
 
 // Duel HUD badges (player score, AI score, stun, scan) and the canvas stun
 // banner keep WCAG-AA contrast on both papers, share the scan note palette
-// with duelPromptsFor, and leave zero raw colours in board.go and duelHUD.
+// with duelPromptsFor.
 func TestDuelHUDAndStunContrast(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		pal, dp, hud := paperFor(dark), duelPromptsFor(dark), duelHUDFor(dark)
