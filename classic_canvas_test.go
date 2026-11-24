@@ -1841,8 +1841,8 @@ func TestSetlistSwitchesClassicSurfaceAcrossThreshold(t *testing.T) {
 }
 
 // TestClassicCanvasKeyboardZoomInAppShell: on a classic board past the
-// threshold, Ctrl+= and Ctrl+- zoom the canvas and Ctrl+0 brings the
-// board's centre back into view, as on the duel canvas.
+// threshold, Ctrl+= and Ctrl+- zoom the canvas and Ctrl+0 resets zoom to
+// standard pitch while bringing the board's centre back into view.
 func TestClassicCanvasKeyboardZoomInAppShell(t *testing.T) {
 	app := newMinesweeperApp(7)
 	app.game = NewGame(TrackMayoiuta, app.bandMode(), app.memberID, 7)
@@ -1896,6 +1896,9 @@ func TestClassicCanvasKeyboardZoomInAppShell(t *testing.T) {
 	if v.gliding() {
 		t.Fatal("Ctrl+0 still gliding after 260ms")
 	}
+	if abs32(v.Cell-standardCellPitch) > 0.05 {
+		t.Fatalf("Ctrl+0 settled cell at %.2f, want standard pitch %.2f", v.Cell, standardCellPitch)
+	}
 	if row, col, ok := v.cellAt(g, v.Width/2, v.Height/2); !ok || row != g.Rows/2 || col != g.Cols/2 {
 		t.Fatalf("Ctrl+0 shows (%d,%d) mid-view, want the board centre (%d,%d)", row, col, g.Rows/2, g.Cols/2)
 	}
@@ -1908,7 +1911,7 @@ func TestClassicCanvasKeyboardZoomInAppShell(t *testing.T) {
 func TestClassicCanvasBottomRightClearsMinimapAcrossZoom(t *testing.T) {
 	for _, track := range []Difficulty{TrackUtakotoba, TrackMayoiuta} {
 		for _, vp := range snapshotViewports {
-			for _, cell := range []float32{10, 26, 42} {
+			for _, cell := range []float32{minCanvasCell, standardCellPitch, maxCanvasCell} {
 				name := fmt.Sprintf("%s/%s/cell=%.0f", track.ID, vp.name, cell)
 				t.Run(name, func(t *testing.T) {
 					app := newMinesweeperApp(7)

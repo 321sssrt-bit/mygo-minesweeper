@@ -156,15 +156,17 @@ func TestMinimapBelow50CanvasOmitsMinimapAndActsAsBoard(t *testing.T) {
 				tt.Frame()
 
 				ghost := formerMinimapRect(v)
-				// Pick three distinct cells sitting squarely inside the former minimap rect.
-				p1x, p1y := ghost.X+ghost.W*0.30, ghost.Y+ghost.H*0.35
-				p2x, p2y := ghost.X+ghost.W*0.65, ghost.Y+ghost.H*0.35
-				p3x, p3y := ghost.X+ghost.W*0.50, ghost.Y+ghost.H*0.70
+				// Pick three distinct, mutually non-adjacent cells inside the former minimap rect
+				// so flagging (r2,c2) and (r3,c3) does not turn (r1,c1) into a chordable hint center.
+				p1x, p1y := ghost.X+ghost.W*0.18, ghost.Y+ghost.H*0.20
+				p2x, p2y := ghost.X+ghost.W*0.82, ghost.Y+ghost.H*0.20
+				p3x, p3y := ghost.X+ghost.W*0.50, ghost.Y+ghost.H*0.82
 				r1, c1, ok1 := v.cellAt(g, p1x, p1y)
 				r2, c2, ok2 := v.cellAt(g, p2x, p2y)
 				r3, c3, ok3 := v.cellAt(g, p3x, p3y)
-				if !ok1 || !ok2 || !ok3 || (r1 == r2 && c1 == c2) || (r1 == r3 && c1 == c3) || (r2 == r3 && c2 == c3) {
-					t.Fatalf("failed to pick 3 distinct cells in former minimap area: (%d,%d,%v) (%d,%d,%v) (%d,%d,%v)",
+				if !ok1 || !ok2 || !ok3 || (r1 == r2 && c1 == c2) || (r1 == r3 && c1 == c3) || (r2 == r3 && c2 == c3) ||
+					(absInt(r2-r1) <= 1 && absInt(c2-c1) <= 1) || (absInt(r3-r1) <= 1 && absInt(c3-c1) <= 1) {
+					t.Fatalf("failed to pick 3 distinct non-adjacent cells in former minimap area: (%d,%d,%v) (%d,%d,%v) (%d,%d,%v)",
 						r1, c1, ok1, r2, c2, ok2, r3, c3, ok3)
 				}
 				// Place a mine at (r1-1, c1-1) so (r1, c1) is a numbered safe cell (Adjacent=1),
