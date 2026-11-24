@@ -696,9 +696,9 @@ func (a *minesweeperApp) paintPopoverExitContents(p *ui.Painter, box ui.Rect, ki
 						if _, ok := a.bestTimes[entry.Diff.ID]; ok {
 							bestInk = t.Text
 						}
-						best := ui.Span{Text: a.bestTimeText(entry.Diff.ID), Size: 11, Color: bestInk}
+						best := ui.Span{Text: a.bestTimeText(entry.Diff.ID), Size: 11, Color: bestInk, Features: "tnum"}
 						bw, _ := p.MeasureText(0, best)
-						p.RichText(inner.X+inner.W-10-bw, y+21, 0, best)
+						p.RichText(inner.X+inner.W-31-bw, y+21, 0, best)
 					}
 					y += rowH + 2
 				}
@@ -2505,8 +2505,11 @@ func (a *minesweeperApp) setlistControl(c *ui.Context, pal *palette, t *ui.Theme
 											}
 										})
 									})
+									// Unselected rows keep the check's slot so records line up in one column.
 									if selected {
 										ui.Icon(c, setlistCheckIcon).Size(13, 13).TextColor(selectedInk).PassThrough()
+									} else {
+										ui.Box(c).Size(13, 13).PassThrough()
 									}
 								})
 							})
