@@ -1122,7 +1122,6 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 		"排练完成度",
 		"乐队重力值",
 		"剩雷 10",
-		"最快 --",
 		"用时 0 秒",
 	} {
 		if !tt.HasText(want) {
@@ -1138,6 +1137,7 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 		"标旗模式",
 		"夜间台灯",
 		"? 标记",
+		"最快 --",
 	} {
 		if tt.HasText(avoid) {
 			t.Errorf("classic view still contains retired or moved copy %q", avoid)
@@ -1207,16 +1207,17 @@ func TestUILabelsAndButtonsCopyContract(t *testing.T) {
 	if err := tt.Click("纯正经典"); err != nil {
 		t.Fatalf("switching to 纯正经典 failed: %v", err)
 	}
-	if !tt.HasText("纯正经典：关闭技能，仅保留台词应援") || tt.HasText("语音应援") {
-		t.Error("classic mode skill tip did not drop 语音应援")
+	if !tt.HasText("经典模式") || tt.HasText("语音应援") {
+		t.Error("纯正经典 skill entry did not read 经典模式")
 	}
 
-	// Best time badge formats in Chinese seconds once recorded.
+	// The status bar formats elapsed seconds in Chinese and leaves the best
+	// time to the setlist.
 	app.bestTimes[app.game.Difficulty.ID] = 23
 	app.elapsed = 23
 	tt.Frame()
-	if !tt.HasText("最快 23 秒") || !tt.HasText("用时 23 秒") {
-		t.Error("HUD missing formatted 最快 23 秒 / 用时 23 秒 badges")
+	if !tt.HasText("用时 23 秒") || tt.HasText("最快 23 秒") {
+		t.Error("status bar should show 用时 23 秒 without the 最快 23 秒 setlist record")
 	}
 
 	// Duel view: finalized HUD labels, buttons, and board accessibility label.
@@ -1541,7 +1542,8 @@ func TestProgressAndGravityMeterA11yAndHatching(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			pal := paperFor(dark)
 			progInk := pal.InkOf(bandColor)
-			progWash := progInk.Alpha(0.22).Over(pal.Sheet)
+			// The progress bar sits in the status bar, a desk tint over the sheet.
+			progWash := progInk.Alpha(0.22).Over(pal.Desk.Alpha(0.75).Over(pal.Sheet))
 			gravInk := pal.InkOf(memberImage(MemberSoyorin))
 			gravWash := gravInk.Alpha(0.22).Over(pal.Sheet)
 
