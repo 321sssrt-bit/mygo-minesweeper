@@ -121,10 +121,6 @@ func TestTopBarSingleRowAllViewportsTracksAndThemes(t *testing.T) {
 						t.Fatalf("名场面图鉴 a11y info = %+v (ok=%v), want Description containing %q", memeInfo, ok, wantProg)
 					}
 
-					if !dark && diffIdx == 1 {
-						t.Logf("%s (%dx%d): barH=%.1f gap=%.1f stageChromeH=%.1f",
-							vp.name, vp.width, vp.height, bar.H, live.X-(setlist.X+setlist.W), app.stageChromeH)
-					}
 				})
 			}
 		}
