@@ -59,6 +59,7 @@ type boardView struct {
 	lastToolbarZoomed  bool
 	lastToolbarCanvasW float32
 	toolbarW, toolbarH float32
+	toolbarBottom      float32
 }
 
 const (
@@ -165,21 +166,23 @@ func (v *boardView) panBoundsFor(g *Game, cell float32) (minX, maxX, minY, maxY 
 	} else {
 		maxY = boardH - v.Height
 	}
+	boardLeft := -minX
+	boardRight := boardW - minX
+	boardBottom := boardH - minY
 	if g.duel == nil {
-		// Reserve overscroll past the bottom corner overlays (bottom-right
-		// minimap and bottom-left camera toolbar) so corner cells of classic
-		// boards can always be dragged clear and clicked, even when a smaller
-		// centered board still reaches behind an overlay.
-		boardLeft := -minX
-		boardRight := boardW - minX
-		boardBottom := boardH - minY
+		// Reserve overscroll past the bottom-right minimap so corner cells of
+		// large classic boards can always be dragged clear and clicked, even
+		// when a smaller centered board still reaches into the minimap corner.
 		if mini := v.minimapBoundsFor(g); mini.W > 0 && mini.H > 0 && boardRight > mini.X && boardBottom > mini.Y {
 			maxX = max(maxX, boardW-max(float32(0), mini.X-minimapMargin))
 			maxY = max(maxY, boardH-max(float32(0), mini.Y-minimapMargin))
 		}
-		if tb := v.toolbarBounds(); tb.W > 0 && tb.H > 0 && boardLeft < tb.X+tb.W && boardBottom > tb.Y {
-			maxY = max(maxY, boardH-max(float32(0), tb.Y-canvasToolbarMargin))
-		}
+	}
+	// Reserve vertical overscroll past the bottom-left camera toolbar on both
+	// classic and duel canvases so bottom-left cells (and edge "定位高松灯"
+	// targets) can always be scrolled clear of the toolbar.
+	if tb := v.toolbarBounds(); tb.W > 0 && tb.H > 0 && boardLeft < tb.X+tb.W && boardBottom > tb.Y {
+		maxY = max(maxY, boardH-max(float32(0), tb.Y-canvasToolbarMargin))
 	}
 	return minX, maxX, minY, maxY
 }
@@ -464,6 +467,12 @@ func (v *boardView) glideCenter(g *Game, row, col int, now time.Time, reduced bo
 	v.startGlide(g, tgtX, tgtY, tgtCell, now, reduced)
 }
 
+func (v *boardView) glideVisible(g *Game, row, col int, now time.Time, reduced bool) {
+	tgtCell := v.targetCellForGlide(g, now)
+	tgtX, tgtY := v.visibleTarget(g, row, col, tgtCell)
+	v.startGlide(g, tgtX, tgtY, tgtCell, now, reduced)
+}
+
 func (v *boardView) ensureVisible(g *Game, row, col int, now time.Time, reduced bool, onReady func(time.Time)) {
 	if v.shows(g, row, col) {
 		onReady(now)
@@ -626,9 +635,13 @@ func (v *boardView) toolbarBounds() ui.Rect {
 	if v.toolbarW <= 0 || v.toolbarH <= 0 || v.Width <= 0 || v.Height <= 0 {
 		return ui.Rect{}
 	}
+	bottom := v.toolbarBottom
+	if bottom <= 0 {
+		bottom = canvasToolbarMargin
+	}
 	return ui.Rect{
 		X: canvasToolbarMargin,
-		Y: max(float32(0), v.Height-canvasToolbarMargin-v.toolbarH),
+		Y: max(float32(0), v.Height-bottom-v.toolbarH),
 		W: v.toolbarW,
 		H: v.toolbarH,
 	}
@@ -1029,9 +1042,24 @@ func (a *minesweeperApp) canvasToolbar(c *ui.Context, pal *palette, now time.Tim
 		}
 	}
 	endInset := canvasToolbarMargin
-	if hasMinimap(a.game) && stageW >= minimapSize+minimapMargin*2+canvasToolbarMargin+150 {
-		endInset = minimapSize + minimapMargin*2
+	bottomInset := canvasToolbarMargin
+	if hasMinimap(a.game) {
+		miniW, miniH := minimapSize, minimapSize
+		if v.Width > 100 {
+			if mini := v.minimapBoundsFor(a.game); mini.W > 0 && mini.H > 0 {
+				miniW, miniH = mini.W, mini.H
+			}
+		}
+		if stageW >= miniW+minimapMargin*2+canvasToolbarMargin+150 {
+			endInset = miniW + minimapMargin*2
+		} else {
+			// When the stage is too narrow to place the toolbar beside the
+			// bottom-right minimap, lift it above the minimap so neither
+			// buttons nor minimap clicks are obscured.
+			bottomInset = miniH + minimapMargin*2
+		}
 	}
+	v.toolbarBottom = bottomInset
 	availW := stageW - canvasToolbarMargin - endInset
 	singleRowMinW := float32(260)
 	if a.isDuel() {
@@ -1073,7 +1101,7 @@ func (a *minesweeperApp) canvasToolbar(c *ui.Context, pal *palette, now time.Tim
 		return btn
 	}
 
-	ui.Row(c.Key("canvas-toolbar-host")).Absolute().Bottom(canvasToolbarMargin).
+	ui.Row(c.Key("canvas-toolbar-host")).Absolute().Bottom(bottomInset).
 		Start(canvasToolbarMargin).End(endInset).PassThrough().Children(func() {
 		bar := ui.Row(c.Key("canvas-toolbar")).MaxWidthPercent(100).Wrap().
 			Padding(4, 5).Gap(4).Radius(8).AlignItems(ui.Center).
@@ -1115,7 +1143,7 @@ func (a *minesweeperApp) canvasToolbar(c *ui.Context, pal *palette, now time.Tim
 			if a.isDuel() {
 				if toolbarBtn("canvas-follow", "定位高松灯", "", canvasFollowIcon, tomoriColor, nil).Clicked() && a.game.duel.LastAI >= 0 {
 					last := a.game.duel.LastAI
-					v.glideCenter(a.game, last/a.game.Cols, last%a.game.Cols, now, a.motionReducedActive)
+					v.glideVisible(a.game, last/a.game.Cols, last%a.game.Cols, now, a.motionReducedActive)
 				}
 				if showDividers {
 					ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()

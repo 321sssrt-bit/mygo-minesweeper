@@ -1183,8 +1183,7 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 
 			// Click bottom-right corner of minimap -> 3-stage glide converging to (maxX, maxY).
 			tt.ClickAt(r.X+localMini.X+localMini.W-1, r.Y+localMini.Y+localMini.H-1)
-			wantMaxX := max(float32(0), float32(tc.cols)*app.board.Cell-app.board.Width)
-			wantMaxY := max(float32(0), float32(tc.rows)*app.board.Cell-app.board.Height)
+			wantMaxX, wantMaxY := app.board.panLimit(app.game)
 			if !app.board.gliding() || (math.Abs(float64(app.board.X-wantMaxX)) <= 0.5 && math.Abs(float64(app.board.Y-wantMaxY)) <= 0.5) {
 				t.Fatalf("minimap bottom-right jump did not glide: (%v,%v) want=(%v,%v) gliding=%v",
 					app.board.X, app.board.Y, wantMaxX, wantMaxY, app.board.gliding())

@@ -117,11 +117,9 @@ func TestMinimapThresholdVisibilityAndBounds(t *testing.T) {
 			baseMaxY := max(float32(0), float32(g.Rows)*v.Cell-v.Height)
 			if !tc.wantMinimap {
 				wantY := baseMaxY
-				if !tc.isDuel {
-					tb := v.toolbarBounds()
-					if tb.W > 0 && tb.H > 0 {
-						wantY = max(wantY, float32(g.Rows)*v.Cell-max(float32(0), tb.Y-canvasToolbarMargin))
-					}
+				tb := v.toolbarBounds()
+				if tb.W > 0 && tb.H > 0 {
+					wantY = max(wantY, float32(g.Rows)*v.Cell-max(float32(0), tb.Y-canvasToolbarMargin))
 				}
 				if maxX != baseMaxX || maxY != wantY {
 					t.Fatalf("%dx%d added minimap overscroll: got (%v,%v), want (%v,%v)",

@@ -669,10 +669,50 @@ func TestCanvasCornerToolbarSkillVisibilityClearsOverlay(t *testing.T) {
 			t.Fatalf("visibleTarget(29,2) = (%v,%v) still behind toolbar %+v", tx, ty, v.toolbarBounds())
 		}
 	})
+	t.Run("duel_follow_bottom_left_edge_clears_toolbar", func(t *testing.T) {
+		app := newMinesweeperApp(42)
+		app.diffIdx = findDifficultyIdx("duel")
+		app.resetGame(true)
+		app.game.duel.NextAI = 1e9
+		tt := ui.NewTester(app.view, 960, 640)
+		tt.Frame()
+		v, g := app.board, app.game
+
+		for range 3 {
+			tt.Key(ui.Ctrl, ui.KeyMinus)
+			tt.Advance(260 * time.Millisecond)
+		}
+		tt.Frame()
+
+		// Place Tomori's latest move at bottom-left edge (998, 5) and click 定位高松灯.
+		g.duel.LastAI = 998*g.Cols + 5
+		if err := tt.Click("定位高松灯"); err != nil {
+			t.Fatalf("click 定位高松灯: %v", err)
+		}
+		tt.Advance(260 * time.Millisecond)
+		if v.gliding() {
+			t.Fatal("定位高松灯 glide did not settle")
+		}
+		if !v.shows(g, 998, 5) {
+			t.Fatalf("定位高松灯 landed with (998,5) still occluded by toolbar %+v (pos=(%v,%v) cell=%.2f)",
+				v.toolbarBounds(), v.X, v.Y, v.Cell)
+		}
+		// Entire cell rect must sit clear of the toolbar, not just its center.
+		tb := v.toolbarBounds()
+		cellRect := ui.Rect{
+			X: 5*v.Cell - v.X,
+			Y: 998*v.Cell - v.Y,
+			W: v.Cell,
+			H: v.Cell,
+		}
+		if toolbarRectsOverlap(cellRect, tb) {
+			t.Fatalf("定位高松灯 cell rect %+v overlaps toolbar %+v", cellRect, tb)
+		}
+	})
 }
 
 func TestCanvasCornerToolbarNarrowViewportWrapping(t *testing.T) {
-	t.Run("520x640_duel_all_buttons_inside_and_clickable", func(t *testing.T) {
+	t.Run("520x640_duel_all_buttons_inside_clear_of_minimap_and_clickable", func(t *testing.T) {
 		app := newMinesweeperApp(42)
 		app.diffIdx = findDifficultyIdx("duel")
 		app.resetGame(true)
@@ -685,6 +725,18 @@ func TestCanvasCornerToolbarNarrowViewportWrapping(t *testing.T) {
 		if !ok {
 			t.Fatal("决斗棋盘 missing")
 		}
+		barInfo, ok := tt.AccessByRole(ui.RoleToolbar, "画布镜头")
+		if !ok {
+			t.Fatal("narrow viewport toolbar missing")
+		}
+		if !toolbarRectInside(barInfo.Bounds, boardRect) {
+			t.Fatalf("narrow viewport toolbar %+v escaped board %+v", barInfo.Bounds, boardRect)
+		}
+		mini := app.board.minimapBoundsFor(app.game)
+		miniScreen := ui.Rect{X: boardRect.X + mini.X, Y: boardRect.Y + mini.Y, W: mini.W, H: mini.H}
+		if toolbarRectsOverlap(barInfo.Bounds, miniScreen) {
+			t.Fatalf("520x640 toolbar %+v overlapped minimap %+v", barInfo.Bounds, miniScreen)
+		}
 		for _, name := range []string{"回到中心", "定位高松灯", "回标准大小"} {
 			btn, ok := tt.AccessByRole(ui.RoleButton, name)
 			if !ok {
@@ -695,8 +747,21 @@ func TestCanvasCornerToolbarNarrowViewportWrapping(t *testing.T) {
 			}
 		}
 
-		// Zoom out and click 回标准大小 directly via mouse to prove it is unclipped and hittable.
+		// Clicking the lower-right quadrant of the minimap must jump the camera (never blocked by toolbar).
 		v, g := app.board, app.game
+		v.center(g, 0, 0)
+		tt.Frame()
+		beforeX, beforeY := v.X, v.Y
+		tt.ClickAt(miniScreen.X+miniScreen.W*0.8, miniScreen.Y+miniScreen.H*0.8)
+		if !v.gliding() {
+			t.Fatal("520x640 click on lower-right minimap did not start camera glide")
+		}
+		tt.Advance(260 * time.Millisecond)
+		if v.X == beforeX && v.Y == beforeY {
+			t.Fatalf("520x640 lower-right minimap click did not move camera from (%v,%v)", beforeX, beforeY)
+		}
+
+		// Zoom out and click 回标准大小 directly via mouse to prove it is unclipped and hittable.
 		v.zoom(g, boardRect.W/2, boardRect.H/2, 0.7)
 		tt.Frame()
 		if err := tt.Click("回标准大小"); err != nil {
