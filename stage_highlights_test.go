@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"image"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -90,13 +91,19 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 			}, true, MemberAnon, 99)
 
 			viewFn := app.view
-			winH := 830
 			if backend == "canvas" {
 				viewFn = classicCanvasTestView(app)
-				winH = 900
 			}
-			tt := ui.NewTester(viewFn, 1280, winH)
+			tt := ui.NewTester(viewFn, 1280, 900)
 			tt.Frame()
+			if backend == "grid" {
+				// Size the window tightly above 16x16's standard-pitch footprint using
+				// this platform's measured chrome so the board stays on Grid while row 0
+				// sits directly underneath the top quote strip's avatar glyph.
+				_, needH := gridBoardOuterSize(rows, cols)
+				tt.SetSize(1280, int(math.Ceil(float64(needH+app.stageChromeH+12))))
+				tt.Frame()
+			}
 
 			// Idle KeyE must be a complete noop: no quote strip, no skill pulses.
 			tt.Key(0, ui.KeyE)

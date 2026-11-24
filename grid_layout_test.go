@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -493,13 +494,15 @@ func TestGridLayoutResizeEdgeCases(t *testing.T) {
 			t.Fatal("9x9 should start on grid at 1280x900")
 		}
 
-		// Narrow window wraps the top toolbar so stage height drops below 9x9's 310px
-		// even though defaultStageChromeH would predict a fit; Invalidate must rebuild
-		// the widget tree to canvas without any stopwatch timer running.
-		tt.SetSize(650, 610)
+		// Narrow window wraps the top toolbar so stage height drops below 9x9's footprint
+		// even though the previous wide chrome would predict a fit; Invalidate must
+		// rebuild the widget tree to canvas without any stopwatch timer running.
+		_, needH := gridBoardOuterSize(app.game.Rows, app.game.Cols)
+		narrowH := int(math.Ceil(float64(needH + app.stageChromeH + 10)))
+		tt.SetSize(650, narrowH)
 		tt.Frame()
 		if !app.classicOnCanvas() {
-			t.Fatal("9x9 should switch to canvas when wrapped toolbar shrinks stage")
+			t.Fatalf("9x9 should switch to canvas when wrapped toolbar shrinks stage at 650x%d", narrowH)
 		}
 		if _, hasCanvas := tt.Find("经典棋盘"); !hasCanvas {
 			t.Fatal("widget tree stayed on grid after measureClassicStage flipped to canvas")
@@ -543,13 +546,28 @@ func TestGridLayoutResizeEdgeCases(t *testing.T) {
 	})
 
 	t.Run("resizing while memes drawer is open rechecks once drawer closes", func(t *testing.T) {
+		// Measure this platform's unwrapped wide chrome so targetH sits comfortably
+		// above 16x16's footprint at width 1280, yet below it under wrapped narrow chrome.
+		probe := newMinesweeperApp(42)
+		probe.diffIdx = 1
+		probe.resetGame(true)
+		probeTT := ui.NewTester(probe.view, 1280, 900)
+		probeTT.Frame()
+		wideChromeH := probe.stageChromeH
+		_, needH := gridBoardOuterSize(probe.game.Rows, probe.game.Cols)
+		targetH := int(math.Ceil(float64(needH + wideChromeH + 12)))
+
 		app := newMinesweeperApp(42)
 		app.diffIdx = 1
 		app.resetGame(true)
-		tt := ui.NewTester(app.view, 960, 640)
+		tt := ui.NewTester(app.view, 640, 640)
 		tt.Frame()
 		if !app.classicOnCanvas() {
-			t.Fatal("16x16 should start on canvas at 960x640")
+			t.Fatal("16x16 should start on canvas at 640x640")
+		}
+		if float32(targetH)-app.stageChromeH >= needH {
+			t.Fatalf("precondition failed: narrow wrapped chrome %.1f did not exceed wide chrome %.1f enough for targetH=%d",
+				app.stageChromeH, wideChromeH, targetH)
 		}
 
 		if err := tt.Click("名场面图鉴"); err != nil {
@@ -557,7 +575,7 @@ func TestGridLayoutResizeEdgeCases(t *testing.T) {
 		}
 		tt.Advance(drawerOpenDuration + 20*time.Millisecond)
 
-		tt.SetSize(1280, 830)
+		tt.SetSize(1280, targetH)
 		tt.Frame()
 
 		if err := tt.Click("名场面图鉴"); err != nil {
@@ -567,10 +585,10 @@ func TestGridLayoutResizeEdgeCases(t *testing.T) {
 		tt.Frame()
 
 		if app.classicOnCanvas() {
-			t.Fatal("16x16 stayed stuck on canvas after closing memes drawer at 1280x830")
+			t.Fatalf("16x16 stayed stuck on canvas after closing memes drawer at 1280x%d", targetH)
 		}
 		if _, ok := tt.Find("cell-0-0"); !ok {
-			t.Fatal("grid cells not mounted after closing memes drawer at 1280x830")
+			t.Fatalf("grid cells not mounted after closing memes drawer at 1280x%d", targetH)
 		}
 	})
 

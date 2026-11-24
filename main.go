@@ -3515,7 +3515,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 									}
 									ui.Text(c, skillTip).FontSize(12).TextColor(t.TextMuted).SingleLine()
 								})
-								ui.Text(c, a.quote).FontSize(13).Bold().SingleLine()
+								ui.Text(c, a.quote).FontSize(13).Bold().SingleLine().FixedLineHeight(20)
 							})
 						})
 
