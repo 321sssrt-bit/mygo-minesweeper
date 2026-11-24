@@ -1135,7 +1135,15 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 			if row, col, ok := app.board.cellAt(app.game, -5, 10); ok {
 				t.Fatalf("cellAt accepted negative x: (%d,%d)", row, col)
 			}
-			if row, col, ok := app.board.cellAt(app.game, float32(tc.cols)*app.board.Cell+5, 10); ok {
+			effX, effY := app.board.viewOffset(app.game)
+			boardW := float32(tc.cols) * app.board.Cell
+			if boardW < app.board.Width {
+				leftEdge := -effX
+				if row, col, ok := app.board.cellAt(app.game, leftEdge-5, 10); ok {
+					t.Fatalf("cellAt accepted x in left margin: (%d,%d)", row, col)
+				}
+			}
+			if row, col, ok := app.board.cellAt(app.game, boardW-effX+5, 10); ok {
 				t.Fatalf("cellAt accepted x past board edge: (%d,%d)", row, col)
 			}
 
@@ -1143,7 +1151,7 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 			mini := app.board.minimapBoundsFor(app.game)
 			mini.X += r.X
 			mini.Y += r.Y
-			vp := minimapViewportRect(mini, tc.rows, tc.cols, app.board.X, app.board.Y, r.W, r.H, app.board.Cell)
+			vp := minimapViewportRect(mini, tc.rows, tc.cols, effX, effY, r.W, r.H, app.board.Cell)
 			if vp.X < mini.X || vp.Y < mini.Y || vp.X+vp.W > mini.X+mini.W+0.01 || vp.Y+vp.H > mini.Y+mini.H+0.01 {
 				t.Fatalf("minimap viewport escaped mini bounds at min zoom: vp=%+v mini=%+v", vp, mini)
 			}

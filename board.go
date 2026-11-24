@@ -144,6 +144,30 @@ func (v *boardView) updateHover(g *Game) {
 	}
 }
 
+// viewOffsetFor returns the effective camera offset (effX, effY) for mapping
+// between board pixels and stage-local coordinates (stage = world - eff).
+// When the board is smaller than the stage on an axis, eff is negative so the
+// board is centered with symmetric paper margins while v.X and v.Y stay >= 0.
+func (v *boardView) viewOffsetFor(g *Game, xOff, yOff, cell float32) (float32, float32) {
+	if g == nil || g.Rows <= 0 || g.Cols <= 0 {
+		return xOff, yOff
+	}
+	boardW := float32(g.Cols) * cell
+	boardH := float32(g.Rows) * cell
+	effX, effY := xOff, yOff
+	if boardW < v.Width {
+		effX = (boardW - v.Width) / 2
+	}
+	if boardH < v.Height {
+		effY = (boardH - v.Height) / 2
+	}
+	return effX, effY
+}
+
+func (v *boardView) viewOffset(g *Game) (float32, float32) {
+	return v.viewOffsetFor(g, v.X, v.Y, v.Cell)
+}
+
 func (v *boardView) panLimit(g *Game) (float32, float32) {
 	return v.panLimitFor(g, v.Cell)
 }
@@ -156,9 +180,21 @@ func (v *boardView) panLimitFor(g *Game, cell float32) (float32, float32) {
 	if g.duel == nil {
 		// Reserve overscroll past the bottom-right minimap so corner cells of
 		// large classic boards can always be dragged clear and clicked.
-		if mini := v.minimapBoundsFor(g); mini.W > 0 && mini.H > 0 && boardW > mini.X && boardH > mini.Y {
-			maxX = max(maxX, boardW-max(float32(0), mini.X-minimapMargin))
-			maxY = max(maxY, boardH-max(float32(0), mini.Y-minimapMargin))
+		boardRight := boardW
+		if boardW < v.Width {
+			boardRight = (v.Width + boardW) / 2
+		}
+		boardBottom := boardH
+		if boardH < v.Height {
+			boardBottom = (v.Height + boardH) / 2
+		}
+		if mini := v.minimapBoundsFor(g); mini.W > 0 && mini.H > 0 && boardRight > mini.X && boardBottom > mini.Y {
+			if boardW >= v.Width {
+				maxX = max(maxX, boardW-max(float32(0), mini.X-minimapMargin))
+			}
+			if boardH >= v.Height {
+				maxY = max(maxY, boardH-max(float32(0), mini.Y-minimapMargin))
+			}
 		}
 	}
 	return maxX, maxY
@@ -230,8 +266,9 @@ func (v *boardView) centerTarget(g *Game, row, col int, cell float32) (float32, 
 func (v *boardView) zoomTarget(g *Game, baseX, baseY, baseCell, atX, atY, factor float32) (float32, float32, float32) {
 	old := max(minCanvasCell, min(maxCanvasCell, baseCell))
 	next := max(minCanvasCell, min(maxCanvasCell, old*factor))
-	worldX := (baseX + atX) / old
-	worldY := (baseY + atY) / old
+	effX, effY := v.viewOffsetFor(g, baseX, baseY, old)
+	worldX := (effX + atX) / old
+	worldY := (effY + atY) / old
 	rawX := worldX*next - atX
 	rawY := worldY*next - atY
 	maxX, maxY := v.panLimitFor(g, next)
@@ -263,11 +300,13 @@ func (v *boardView) startGlide(g *Game, targetX, targetY, targetCell float32, no
 
 	w, h := float64(v.Width), float64(v.Height)
 	curCell := float64(v.Cell)
-	curWX := (float64(v.X) + w/2) / curCell
-	curWY := (float64(v.Y) + h/2) / curCell
+	curEffX, curEffY := v.viewOffsetFor(g, v.X, v.Y, v.Cell)
+	curWX := (float64(curEffX) + w/2) / curCell
+	curWY := (float64(curEffY) + h/2) / curCell
 	tgtCell := float64(targetCell)
-	tgtWX := (float64(targetX) + w/2) / tgtCell
-	tgtWY := (float64(targetY) + h/2) / tgtCell
+	tgtEffX, tgtEffY := v.viewOffsetFor(g, targetX, targetY, targetCell)
+	tgtWX := (float64(tgtEffX) + w/2) / tgtCell
+	tgtWY := (float64(tgtEffY) + h/2) / tgtCell
 
 	// Measure pan distance in current viewport spans so in-place zooms never
 	// trigger the clamp and combined zoom+recenter glides stay within 1.5 spans.
@@ -283,8 +322,9 @@ func (v *boardView) startGlide(g *Game, targetX, targetY, targetCell float32, no
 		v.X = float32(curWX*curCell - w/2)
 		v.Y = float32(curWY*curCell - h/2)
 		v.clamp(g)
-		curWX = (float64(v.X) + w/2) / curCell
-		curWY = (float64(v.Y) + h/2) / curCell
+		curEffX, curEffY = v.viewOffsetFor(g, v.X, v.Y, v.Cell)
+		curWX = (float64(curEffX) + w/2) / curCell
+		curWY = (float64(curEffY) + h/2) / curCell
 	}
 
 	v.glide = cameraGlide{
@@ -498,10 +538,11 @@ func (v *boardView) zoom(g *Game, atX, atY, factor float32) {
 	if !isFinite32(v.Cell) {
 		v.Cell = standardCellPitch
 	}
-	old := max(minCanvasCell, v.Cell)
+	old := max(minCanvasCell, min(maxCanvasCell, v.Cell))
 	next := max(minCanvasCell, min(maxCanvasCell, old*factor))
-	worldX := (v.X + atX) / old
-	worldY := (v.Y + atY) / old
+	effX, effY := v.viewOffsetFor(g, v.X, v.Y, old)
+	worldX := (effX + atX) / old
+	worldY := (effY + atY) / old
 	v.Cell = next
 	v.X = worldX*next - atX
 	v.Y = worldY*next - atY
@@ -516,7 +557,8 @@ func (v *boardView) cellAt(g *Game, x, y float32) (int, int, bool) {
 	if x < 0 || y < 0 || (v.Width > 0 && x >= v.Width) || (v.Height > 0 && y >= v.Height) {
 		return -1, -1, false
 	}
-	wx, wy := v.X+x, v.Y+y
+	effX, effY := v.viewOffset(g)
+	wx, wy := effX+x, effY+y
 	if wx < 0 || wy < 0 {
 		return -1, -1, false
 	}
@@ -564,8 +606,9 @@ func (v *boardView) minimapFor(g *Game, x, y float32) bool {
 }
 
 func (v *boardView) showsAt(g *Game, row, col int, xOff, yOff, cell float32) bool {
-	x := (float32(col)+0.5)*cell - xOff
-	y := (float32(row)+0.5)*cell - yOff
+	effX, effY := v.viewOffsetFor(g, xOff, yOff, cell)
+	x := (float32(col)+0.5)*cell - effX
+	y := (float32(row)+0.5)*cell - effY
 	return x >= 0 && y >= 0 && x < v.Width && y < v.Height && !v.minimapFor(g, x, y)
 }
 
@@ -907,6 +950,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 
 func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 	v, g := a.board, a.game
+	effX, effY := v.viewOffset(g)
 	t := p.Theme()
 	now := p.Now()
 	hoverHint := g.InspectNumberHover(v.HoverRow, v.HoverCol, a.flagMode)
@@ -960,27 +1004,27 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 		p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {
 			// One cell of margin before the view too: a shake (at most a
 			// cell) must not bare the page along the top or left edge.
-			firstCol, lastCol := int(v.X/v.Cell)-1, min(g.Cols, int((v.X+r.W)/v.Cell)+2)
-			firstRow, lastRow := int(v.Y/v.Cell)-1, min(g.Rows, int((v.Y+r.H)/v.Cell)+2)
+			firstCol, lastCol := int(effX/v.Cell)-1, min(g.Cols, int((effX+r.W)/v.Cell)+2)
+			firstRow, lastRow := int(effY/v.Cell)-1, min(g.Rows, int((effY+r.H)/v.Cell)+2)
 			// Ruled lines run along the cell edges, only as far as the board,
 			// and past the view by the shake so its edges keep their lines.
 			sx, sy := abs32(shakeX), abs32(shakeY)
-			top, bottom := max(r.Y-sy, r.Y-v.Y), min(r.Y+r.H+sy, r.Y+float32(g.Rows)*v.Cell-v.Y)
-			left, right := max(r.X-sx, r.X-v.X), min(r.X+r.W+sx, r.X+float32(g.Cols)*v.Cell-v.X)
+			top, bottom := max(r.Y-sy, r.Y-effY), min(r.Y+r.H+sy, r.Y+float32(g.Rows)*v.Cell-effY)
+			left, right := max(r.X-sx, r.X-effX), min(r.X+r.W+sx, r.X+float32(g.Cols)*v.Cell-effX)
 			for col := max(0, firstCol); col <= lastCol; col++ {
-				x := r.X + float32(col)*v.Cell - v.X
+				x := r.X + float32(col)*v.Cell - effX
 				p.Line(x, top, x, bottom, 1, pal.Grid)
 			}
 			for row := max(0, firstRow); row <= lastRow; row++ {
-				y := r.Y + float32(row)*v.Cell - v.Y
+				y := r.Y + float32(row)*v.Cell - effY
 				p.Line(left, y, right, y, 1, pal.Grid)
 			}
 			for row := max(0, firstRow); row < lastRow; row++ {
 				for col := max(0, firstCol); col < lastCol; col++ {
 					cell := g.Cell(row, col)
 					idx := row*g.Cols + col
-					x := r.X + float32(col)*v.Cell - v.X
-					y := r.Y + float32(row)*v.Cell - v.Y
+					x := r.X + float32(col)*v.Cell - effX
+					y := r.Y + float32(row)*v.Cell - effY
 					tile := ui.Rect{X: x + 1, Y: y + 1, W: v.Cell - 2, H: v.Cell - 2}
 					isHovered := row == v.HoverRow && col == v.HoverCol
 					isHintCenter := hoverHint.Kind != HintNone && idx == hoverHint.Center
@@ -1172,14 +1216,14 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 				paintBandagePeel(p, pb.tile, bmp, 0.86, pb.peelT)
 			}
 			if _, ok := g.ScanAt(v.HoverRow, v.HoverCol); ok {
-				x := r.X + float32(v.HoverCol-4)*v.Cell - v.X
-				y := r.Y + float32(v.HoverRow-4)*v.Cell - v.Y
+				x := r.X + float32(v.HoverCol-4)*v.Cell - effX
+				y := r.Y + float32(v.HoverRow-4)*v.Cell - effY
 				p.Stroke(ui.Rect{X: x, Y: y, W: 9 * v.Cell, H: 9 * v.Cell}, dp.ScanFrame, 5, 2)
 			}
 			if g.duel != nil && g.Cols > 0 && g.duel.LastAI >= 0 {
 				row, col := g.duel.LastAI/g.Cols, g.duel.LastAI%g.Cols
-				x := r.X + float32(col)*v.Cell - v.X
-				y := r.Y + float32(row)*v.Cell - v.Y
+				x := r.X + float32(col)*v.Cell - effX
+				y := r.Y + float32(row)*v.Cell - effY
 				p.Stroke(ui.Rect{X: x, Y: y, W: v.Cell, H: v.Cell}, duelPalette.AI, 4, 2)
 			}
 			if !a.motionReducedActive && v.EffectCell >= 0 && g.Cols > 0 {
@@ -1188,8 +1232,8 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 					row, col := v.EffectCell/g.Cols, v.EffectCell%g.Cols
 					k := float32(elapsed) / float32(350*time.Millisecond)
 					size := v.Cell * (1 + k*1.5)
-					x := r.X + (float32(col)+0.5)*v.Cell - v.X - size/2
-					y := r.Y + (float32(row)+0.5)*v.Cell - v.Y - size/2
+					x := r.X + (float32(col)+0.5)*v.Cell - effX - size/2
+					y := r.Y + (float32(row)+0.5)*v.Cell - effY - size/2
 					p.Stroke(ui.Rect{X: x, Y: y, W: size, H: size}, t.Accent.Alpha(1-k), 6, 2)
 					p.AnimationFrame()
 				}
@@ -1204,8 +1248,8 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 					if row < firstRow-2 || row > lastRow+2 || col < firstCol-2 || col > lastCol+2 {
 						continue
 					}
-					x := r.X + float32(col)*v.Cell - v.X
-					y := r.Y + float32(row)*v.Cell - v.Y
+					x := r.X + float32(col)*v.Cell - effX
+					y := r.Y + float32(row)*v.Cell - effY
 					tile := ui.Rect{X: x + 1, Y: y + 1, W: v.Cell - 2, H: v.Cell - 2}
 					paintSkillTargetPulse(p, tile, radius, pulse.MemberID, pal, float32(elapsed)/float32(skillPulseDuration))
 				}
@@ -1220,8 +1264,8 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 					if row < firstRow-2 || row > lastRow+2 || col < firstCol-2 || col > lastCol+2 {
 						continue
 					}
-					x := r.X + float32(col)*v.Cell - v.X
-					y := r.Y + float32(row)*v.Cell - v.Y
+					x := r.X + float32(col)*v.Cell - effX
+					y := r.Y + float32(row)*v.Cell - effY
 					tile := ui.Rect{X: x + 1, Y: y + 1, W: v.Cell - 2, H: v.Cell - 2}
 					paintKnotBurst(p, tile, pal, float32(elapsed)/float32(knotBurstDuration))
 				}
@@ -1253,10 +1297,10 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 			mini.Y += r.Y
 			if classic {
 				plot := classicMinimapPlot(mini)
-				view := minimapViewportRect(plot, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
+				view := minimapViewportRect(plot, g.Rows, g.Cols, effX, effY, r.W, r.H, v.Cell)
 				paintClassicMinimap(p, g, mini, plot, view, pal, classicMinimapForPaper(pal))
 			} else {
-				view := minimapViewportRect(mini, g.Rows, g.Cols, v.X, v.Y, r.W, r.H, v.Cell)
+				view := minimapViewportRect(mini, g.Rows, g.Cols, effX, effY, r.W, r.H, v.Cell)
 				paintDuelMinimap(p, g, mini, view, t.Border)
 			}
 		}
@@ -1325,6 +1369,7 @@ func (a *minesweeperApp) pruneAndDrawPopups(p *ui.Painter, r ui.Rect, now time.T
 		return
 	}
 	v := a.board
+	effX, effY := v.viewOffset(a.game)
 	pal := a.renderedPaper()
 	dp := duelPromptsFor(pal.Dark)
 	kept := a.duelPopups[:0]
@@ -1335,12 +1380,12 @@ func (a *minesweeperApp) pruneAndDrawPopups(p *ui.Painter, r ui.Rect, now time.T
 		}
 		kept = append(kept, pop)
 		k := float32(elapsed) / float32(duelPopupDuration)
-		px := r.X + (float32(pop.Col)+0.5)*v.Cell - v.X - float32(len([]rune(pop.Text)))*3.5
+		px := r.X + (float32(pop.Col)+0.5)*v.Cell - effX - float32(len([]rune(pop.Text)))*3.5
 		lift := k * 28
 		if a.motionReducedActive {
 			lift = 0
 		}
-		py := r.Y + float32(pop.Row)*v.Cell - v.Y - 16 - lift
+		py := r.Y + float32(pop.Row)*v.Cell - effY - 16 - lift
 		px = max(r.X+8, min(r.X+r.W-120, px))
 		py = max(r.Y+8, min(r.Y+r.H-28, py))
 		alpha := 1 - k*0.85
