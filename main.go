@@ -996,7 +996,7 @@ func (a *minesweeperApp) estimatedStageSize(winW, winH float32) (float32, float3
 // widget grid or falls back to the pan/zoom canvas. It re-evaluates only when
 // the track/game or window size changes, preserving in-progress game state on
 // resize transitions.
-func (a *minesweeperApp) syncClassicSurface(winW, winH float32) {
+func (a *minesweeperApp) syncClassicSurface(winW, winH float32, now time.Time) {
 	if a.isDuel() {
 		return
 	}
@@ -1031,11 +1031,11 @@ func (a *minesweeperApp) syncClassicSurface(winW, winH float32) {
 		needsMeasure: true,
 	}
 	if sameGame && prevCanvas != useCanvas {
-		a.onClassicSurfaceSwitch(useCanvas)
+		a.onClassicSurfaceSwitch(useCanvas, now)
 	}
 }
 
-func (a *minesweeperApp) onClassicSurfaceSwitch(toCanvas bool) {
+func (a *minesweeperApp) onClassicSurfaceSwitch(toCanvas bool, now time.Time) {
 	if toCanvas {
 		a.gridPress.downActive = false
 		a.gridPress.cancel()
@@ -1045,15 +1045,21 @@ func (a *minesweeperApp) onClassicSurfaceSwitch(toCanvas bool) {
 		a.board = newBoardView()
 		return
 	}
+	onArrive := a.board.glide.onArrive
 	a.board.Pressed = false
 	a.board.Dragging = false
 	a.board.cancelPress()
 	a.board.stopGlide()
 	a.board.HasHover = false
 	a.board.HoverRow, a.board.HoverCol = -1, -1
+	if onArrive != nil {
+		// All cells are immediately visible on the grid, so deliver any
+		// deferred skill pulse callback instead of dropping it with the glide.
+		onArrive(now)
+	}
 }
 
-func (a *minesweeperApp) measureClassicStage(p *ui.Painter, stage ui.Rect, winW, winH float32) {
+func (a *minesweeperApp) measureClassicStage(services ui.Services, stage ui.Rect, winW, winH float32, now time.Time) {
 	s := &a.classicSurface
 	if !s.valid || !s.needsMeasure || a.isDuel() {
 		return
@@ -1061,20 +1067,20 @@ func (a *minesweeperApp) measureClassicStage(p *ui.Painter, stage ui.Rect, winW,
 	if s.game != a.game || s.winW != winW || s.winH != winH {
 		return
 	}
-	s.needsMeasure = false
-	// Skip chrome calibration while the inline memes drawer is open so a
-	// temporary panel cannot skew the baseline stage size.
+	// Defer calibration while the inline memes drawer is open so its temporary
+	// height neither skews chrome measurement nor drops a pending recheck.
 	if a.showMemes || a.memeDrawerValue > 0 {
 		return
 	}
+	s.needsMeasure = false
 	if stage.W > 0 && stage.H > 0 {
 		a.stageChromeW = winW - stage.W
 		a.stageChromeH = winH - stage.H
 		useCanvas := !classicGridFitsStage(a.game.Rows, a.game.Cols, stage.W, stage.H)
 		if useCanvas != s.useCanvas {
 			s.useCanvas = useCanvas
-			a.onClassicSurfaceSwitch(useCanvas)
-			p.After(time.Millisecond)
+			a.onClassicSurfaceSwitch(useCanvas, now)
+			services.Invalidate()
 		}
 	}
 }
@@ -1355,10 +1361,6 @@ func bandageBounceTransform(elapsed time.Duration) (scale float32, rotDeg float3
 	osc := math.Cos(u * 2 * math.Pi * 0.95)
 	impulse := env * osc
 	return float32(1 + 0.25*impulse), float32(10 * impulse)
-}
-
-func tileSlipTilt(cellIndex int) float32 {
-	return float32((cellIndex*37)%7-3) * 0.22
 }
 
 // paintPeelOverlay draws a waiting or lifting paper slip decoration over an
@@ -3197,7 +3199,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 	a.flushCues(now)
 	a.systemReduceMotion = c.Preferences().ReduceMotion
 	a.syncMotionState(a.reducedMotion(c))
-	a.syncClassicSurface(winW, winH)
+	a.syncClassicSurface(winW, winH, now)
 	a.flushPendingActions(c, now)
 	if a.isDuel() {
 		a.tickDuel(c, now)
@@ -3304,9 +3306,9 @@ func (a *minesweeperApp) view(c *ui.Context) {
 		})
 
 		// Main 2-Column Workspace: Left Sidebar + Right Stage
-		ui.Row(c).Grow(1).Gap(12).AlignItems(ui.Stretch).Children(func() {
+		ui.Row(c).Grow(1).MinHeight(0).Gap(12).AlignItems(ui.Stretch).Children(func() {
 			// Left Sidebar: Member Roster + Live Meters + Band Group Chat
-			ui.Column(c).Width(272).Padding(10).Gap(10).Radius(12).
+			ui.Column(c).Width(272).Shrink(0).MinHeight(0).Padding(10).Gap(10).Radius(12).
 				Background(t.Surface).Border(1, t.Border).Children(func() {
 				ui.Text(c, "乐队成员").FontSize(13).Bold().TextColor(t.TextMuted)
 
@@ -3485,7 +3487,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 			})
 
 			// Right Main Stage: Companion Banner + HUD + Board (+ Optional Memes Drawer)
-			ui.Column(c).Grow(1).Gap(10).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Gap(10).Children(func() {
 				// Active Member Banner themed to the selected member!
 				banner := ui.Themed(c.Key("member-banner"), memberTheme).Padding(10, 12).Radius(4).Background(t.Surface).
 					Shadow(0, 1, 3, 0, pal.SlipShade)
@@ -3646,7 +3648,7 @@ func (a *minesweeperApp) view(c *ui.Context) {
 				}
 
 				// Board Stage
-				ui.Column(c).Grow(1).Padding(12).Gap(10).Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
+				ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Padding(12).Gap(10).Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
 					// HUD Bar
 					ui.Row(c).Padding(8, 12).Radius(9).Background(t.Background.Alpha(0.75)).
 						Border(1, t.Border).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
@@ -3689,9 +3691,10 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						a.duelBoard(c)
 						return
 					}
-					a.syncClassicSurface(winW, winH)
-					ui.Column(c.Key("classic-stage-host")).Grow(1).FillWidth().Draw(func(p *ui.Painter, r ui.Rect) {
-						a.measureClassicStage(p, r, winW, winH)
+					a.syncClassicSurface(winW, winH, now)
+					services := c.Services()
+					ui.Column(c.Key("classic-stage-host")).Grow(1).FillWidth().MinWidth(0).MinHeight(0).Draw(func(p *ui.Painter, r ui.Rect) {
+						a.measureClassicStage(services, r, winW, winH, p.Now())
 					}).Children(func() {
 						if a.classicOnCanvas() {
 							a.classicBoard(c)
@@ -3713,11 +3716,11 @@ func (a *minesweeperApp) view(c *ui.Context) {
 						hintColor := memberColor
 						nextHoverRow, nextHoverCol := -1, -1
 
-						ui.Column(c.Key("classic-grid-stage")).Grow(1).FillWidth().Clip().
+						ui.Column(c.Key("classic-grid-stage")).Grow(1).FillWidth().MinWidth(0).MinHeight(0).Clip().
 							Padding(gridStageMargin).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
 							// Graph paper: ruled lines run through the gaps between cells at standardCellPitch.
 							rows, cols := a.game.Rows, a.game.Cols
-							grid := ui.Grid(c.Key("classic-grid")).Columns(cols).Gap(gridCellGap).Padding(gridBoardPad).Radius(gridCellRadius).
+							grid := ui.Grid(c.Key("classic-grid")).Shrink(0).Columns(cols).Gap(gridCellGap).Padding(gridBoardPad).Radius(gridCellRadius).
 								Shadow(0, 1, 3, 0, pal.SlipShade)
 							grid.Draw(func(p *ui.Painter, r ui.Rect) {
 								p.Transform(ui.Translation(shakeX, shakeY), 0, 0, func() {

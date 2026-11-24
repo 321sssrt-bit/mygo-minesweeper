@@ -483,3 +483,153 @@ func TestGridAndCanvasSlipAppearanceParity(t *testing.T) {
 		})
 	}
 }
+
+func TestGridLayoutResizeEdgeCases(t *testing.T) {
+	t.Run("wrapped toolbar shrinks stage and rebuilds to canvas in idle state", func(t *testing.T) {
+		app := newMinesweeperApp(42)
+		tt := ui.NewTester(app.view, 1280, 900)
+		tt.Frame()
+		if app.classicOnCanvas() {
+			t.Fatal("9x9 should start on grid at 1280x900")
+		}
+
+		// Narrow window wraps the top toolbar so stage height drops below 9x9's 310px
+		// even though defaultStageChromeH would predict a fit; Invalidate must rebuild
+		// the widget tree to canvas without any stopwatch timer running.
+		tt.SetSize(650, 610)
+		tt.Frame()
+		if !app.classicOnCanvas() {
+			t.Fatal("9x9 should switch to canvas when wrapped toolbar shrinks stage")
+		}
+		if _, hasCanvas := tt.Find("经典棋盘"); !hasCanvas {
+			t.Fatal("widget tree stayed on grid after measureClassicStage flipped to canvas")
+		}
+		if _, hasGrid := tt.Find("cell-0-0"); hasGrid {
+			t.Fatal("stale grid widgets remained mounted after canvas fallback")
+		}
+	})
+
+	t.Run("stage fit at 800x900 is path-independent and never shrinks sidebar", func(t *testing.T) {
+		// Shrinking directly from 1280x900 to 800x900.
+		appDown := newMinesweeperApp(42)
+		appDown.diffIdx = 1
+		appDown.resetGame(true)
+		ttDown := ui.NewTester(appDown.view, 1280, 900)
+		ttDown.Frame()
+		ttDown.SetSize(800, 900)
+		ttDown.Frame()
+
+		// Shrinking to 640x900 first, then enlarging to 800x900.
+		appUp := newMinesweeperApp(42)
+		appUp.diffIdx = 1
+		appUp.resetGame(true)
+		ttUp := ui.NewTester(appUp.view, 1280, 900)
+		ttUp.Frame()
+		ttUp.SetSize(640, 900)
+		ttUp.Frame()
+		ttUp.SetSize(800, 900)
+		ttUp.Frame()
+
+		if !appDown.classicOnCanvas() || !appUp.classicOnCanvas() {
+			t.Fatalf("16x16 at 800x900 must use canvas regardless of path: down=%v up=%v",
+				appDown.classicOnCanvas(), appUp.classicOnCanvas())
+		}
+		if _, ok := ttUp.Find("经典棋盘"); !ok {
+			t.Fatal("enlarging 640x900 -> 800x900 failed to mount canvas")
+		}
+		if _, ok := ttUp.Find("cell-0-0"); ok {
+			t.Fatal("enlarging 640x900 -> 800x900 left grid mounted by crushing sidebar")
+		}
+	})
+
+	t.Run("resizing while memes drawer is open rechecks once drawer closes", func(t *testing.T) {
+		app := newMinesweeperApp(42)
+		app.diffIdx = 1
+		app.resetGame(true)
+		tt := ui.NewTester(app.view, 960, 640)
+		tt.Frame()
+		if !app.classicOnCanvas() {
+			t.Fatal("16x16 should start on canvas at 960x640")
+		}
+
+		if err := tt.Click("名场面图鉴"); err != nil {
+			t.Fatalf("open memes drawer: %v", err)
+		}
+		tt.Advance(drawerOpenDuration + 20*time.Millisecond)
+
+		tt.SetSize(1280, 830)
+		tt.Frame()
+
+		if err := tt.Click("名场面图鉴"); err != nil {
+			t.Fatalf("close memes drawer: %v", err)
+		}
+		tt.Advance(drawerCloseDuration + 30*time.Millisecond)
+		tt.Frame()
+
+		if app.classicOnCanvas() {
+			t.Fatal("16x16 stayed stuck on canvas after closing memes drawer at 1280x830")
+		}
+		if _, ok := tt.Find("cell-0-0"); !ok {
+			t.Fatal("grid cells not mounted after closing memes drawer at 1280x830")
+		}
+	})
+
+	t.Run("canvas to grid switch during skill glide preserves skill target pulses", func(t *testing.T) {
+		app := newMinesweeperApp(99)
+		app.memberID = MemberAnon
+		app.diffIdx = 1
+		app.resetGame(true)
+		g := app.game
+		g.FirstClick = true
+		g.Status = StatusPlaying
+		for i := range g.Cells {
+			g.Cells[i].IsMine = false
+			g.Cells[i].Revealed = false
+		}
+		// Place mines so (0,0), (0,2), and (0,4) are isolated numbered safe cells;
+		// Anon's skill then reliably opens 2 off-viewport targets without flood-filling.
+		g.Cell(0, 1).IsMine = true
+		g.Cell(0, 3).IsMine = true
+		g.Cell(15, 15).IsMine = true
+		g.Mines = 3
+		g.RecomputeAdjacency()
+		for i := range g.Cells {
+			c := &g.Cells[i]
+			if !c.IsMine && !(c.Row == 0 && (c.Col == 0 || c.Col == 2 || c.Col == 4)) {
+				c.Revealed = true
+				g.RevealedSafe++
+			}
+		}
+
+		tt := ui.NewTester(app.view, 960, 640)
+		tt.Frame()
+		if !app.classicOnCanvas() {
+			t.Fatal("16x16 should start on canvas at 960x640")
+		}
+
+		// Pan to bottom-right so row 0 is well off-viewport.
+		app.board.center(g, 15, 15)
+		tt.Frame()
+		if app.board.shows(g, 0, 0) {
+			t.Fatal("precondition failed: (0,0) should be off-viewport before skill")
+		}
+
+		tt.Key(0, ui.KeyE)
+		if !app.board.gliding() {
+			t.Fatal("expected skill to trigger off-viewport camera glide before resize")
+		}
+		if len(app.skillPulses) != 0 {
+			t.Fatalf("expected skill pulses deferred during glide, got %d", len(app.skillPulses))
+		}
+
+		// Enlarge mid-glide so the board switches back to Grid: deferred pulses must appear.
+		tt.SetSize(1280, 900)
+		tt.Frame()
+		if app.classicOnCanvas() {
+			t.Fatal("expected 16x16 to switch back to grid at 1280x900")
+		}
+		if len(app.skillPulses) != 2 {
+			t.Fatalf("canvas->grid switch mid-glide lost skill target pulses: got %d, want 2", len(app.skillPulses))
+		}
+	})
+}
