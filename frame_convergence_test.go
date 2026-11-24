@@ -478,7 +478,11 @@ func TestFrameConvergenceCamera(t *testing.T) {
 		name    string
 		trigger func()
 	}{
-		{"zoom-button", func() { v.click("放大") }},
+		{"reset-standard-pitch", func() {
+			board.Cell = 22
+			v.tt.Frame()
+			v.click("回标准大小")
+		}},
 		{"zoom-shortcut", func() { v.tt.Key(ui.Ctrl, ui.KeyMinus) }},
 		{"return-to-center", func() {
 			board.center(g, 500, 520)

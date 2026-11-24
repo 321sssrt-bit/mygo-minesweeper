@@ -52,9 +52,11 @@ type boardView struct {
 	pressRow       int
 	pressCol       int
 	pressRevealed  bool
-	LastEffect     time.Time
-	EffectCell     int
-	LastHoverHint  HoverHint
+	LastEffect        time.Time
+	EffectCell        int
+	LastHoverHint     HoverHint
+	lastToolbarZoom   string
+	lastToolbarZoomed bool
 }
 
 const (
@@ -248,15 +250,20 @@ func (v *boardView) centerTarget(g *Game, row, col int, cell float32) (float32, 
 	return v.clampOffsetFor(g, cell, rawX, rawY)
 }
 
-func (v *boardView) zoomTarget(g *Game, baseX, baseY, baseCell, atX, atY, factor float32) (float32, float32, float32) {
+func (v *boardView) zoomToTarget(g *Game, baseX, baseY, baseCell, atX, atY, targetCell float32) (float32, float32, float32) {
 	old := max(minCanvasCell, min(maxCanvasCell, baseCell))
-	next := max(minCanvasCell, min(maxCanvasCell, old*factor))
+	next := max(minCanvasCell, min(maxCanvasCell, targetCell))
 	worldX := (baseX + atX) / old
 	worldY := (baseY + atY) / old
 	rawX := worldX*next - atX
 	rawY := worldY*next - atY
 	tx, ty := v.clampOffsetFor(g, next, rawX, rawY)
 	return tx, ty, next
+}
+
+func (v *boardView) zoomTarget(g *Game, baseX, baseY, baseCell, atX, atY, factor float32) (float32, float32, float32) {
+	old := max(minCanvasCell, min(maxCanvasCell, baseCell))
+	return v.zoomToTarget(g, baseX, baseY, baseCell, atX, atY, old*factor)
 }
 
 func stepCriticalSpring(pos, vel, target, omega, dt float64) (float64, float64) {
@@ -463,7 +470,7 @@ func (v *boardView) glideResetView(g *Game, now time.Time, reduced bool) {
 	v.startGlide(g, tgtX, tgtY, standardCellPitch, now, reduced)
 }
 
-func (v *boardView) glideZoom(g *Game, atX, atY, factor float32, now time.Time, reduced bool) {
+func (v *boardView) glideZoomBase(g *Game, now time.Time) (float32, float32, float32) {
 	v.clamp(g)
 	baseX, baseY, baseCell := v.X, v.Y, v.Cell
 	if v.glide.active {
@@ -475,6 +482,17 @@ func (v *boardView) glideZoom(g *Game, atX, atY, factor float32, now time.Time, 
 			baseY = float32(v.glide.targetWY*v.glide.targetCell - float64(v.Height)/2)
 		}
 	}
+	return baseX, baseY, baseCell
+}
+
+func (v *boardView) glideStandardPitch(g *Game, now time.Time, reduced bool) {
+	baseX, baseY, baseCell := v.glideZoomBase(g, now)
+	tgtX, tgtY, tgtCell := v.zoomToTarget(g, baseX, baseY, baseCell, v.Width/2, v.Height/2, standardCellPitch)
+	v.startGlide(g, tgtX, tgtY, tgtCell, now, reduced)
+}
+
+func (v *boardView) glideZoom(g *Game, atX, atY, factor float32, now time.Time, reduced bool) {
+	baseX, baseY, baseCell := v.glideZoomBase(g, now)
 	tgtX, tgtY, tgtCell := v.zoomTarget(g, baseX, baseY, baseCell, atX, atY, factor)
 	v.startGlide(g, tgtX, tgtY, tgtCell, now, reduced)
 }
@@ -880,6 +898,7 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 			v.HoverRow, v.HoverCol = -1, -1
 		}
 		v.WasHovered = hovered
+		services := c.Services()
 		boardBox.HandleInput(func(ev ui.InputEvent) bool {
 			return a.handleCanvasInput(ev, c.Now())
 		}).Draw(func(p *ui.Painter, r ui.Rect) {
@@ -892,6 +911,9 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				p.AnimationFrame()
 			} else {
 				v.clamp(a.game)
+			}
+			if v.zoomLabel() != v.lastToolbarZoom || v.isZoomed() != v.lastToolbarZoomed {
+				services.Invalidate()
 			}
 			a.paintBoard(p, r)
 		})
@@ -920,7 +942,106 @@ func (a *minesweeperApp) canvasBoard(c *ui.Context, stageKey, boardKey, label st
 				})
 			})
 		}
+		a.canvasToolbar(c, a.renderedPaper(), c.Now())
 		a.stageHighlightsOverlay(c, a.renderedPaper(), c.Now())
+	})
+}
+
+var (
+	canvasHomeIcon      = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`))
+	canvasFollowIcon    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 14s4.2-3.6 4.2-7.2a4.2 4.2 0 1 0-8.4 0C3.8 10.4 8 14 8 14Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="8" cy="6.8" r="1.5" fill="currentColor"/></svg>`))
+	canvasResetZoomIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M2.5 5.5V3.5a1 1 0 0 1 1-1h2M10.5 2.5h2a1 1 0 0 1 1 1v2M13.5 10.5v2a1 1 0 0 1-1 1h-2M5.5 13.5h-2a1 1 0 0 1-1-1v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="6" y="6" width="4" height="4" rx="0.8" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`))
+)
+
+func (a *minesweeperApp) canvasToolbar(c *ui.Context, pal *palette, now time.Time) {
+	sc := settingsColorsForPaper(pal)
+	zoomText := a.board.zoomLabel()
+	zoomed := a.board.isZoomed()
+	a.board.lastToolbarZoom = zoomText
+	a.board.lastToolbarZoomed = zoomed
+	tomoriColor := memberImage(MemberTomori)
+
+	toolbarBtn := func(key, label, value string, icon *ui.SVG, accentBase ui.Color, trailing func()) ui.Element {
+		btn := ui.ButtonBase(c.Key(key)).Padding(4, 8).Radius(6).Cursor(ui.CursorPointer).Label(label)
+		if value != "" {
+			btn.Value(value)
+		}
+		bg := pal.Sheet
+		textCol, iconCol := sc.LabelInk, sc.MutedInk
+		switch {
+		case btn.Pressed():
+			bg = pal.Slip
+			btn.Background(bg)
+			textCol = autoInkOn(bg, dayPaper.Ink, nightPaper.Ink)
+			iconCol = autoInkOn(bg, dayPaper.InkOf(bandColor), nightPaper.InkOf(bandColor))
+		case btn.Hovered():
+			bg = sc.TriggerHoverBg
+			btn.Background(bg)
+			textCol = sc.TriggerHoverText
+			iconCol = sc.TriggerHoverInk
+		}
+		if accentBase.A > 0 {
+			iconCol = autoInkOn(bg, dayPaper.InkOf(accentBase), nightPaper.InkOf(accentBase))
+		}
+		btn.Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(5).PassThrough().Children(func() {
+				ui.Icon(c, icon).Size(12, 12).TextColor(iconCol).PassThrough()
+				ui.Text(c, label).FontSize(12).FixedLineHeight(16).TextColor(textCol).SingleLine().PassThrough()
+				if trailing != nil {
+					trailing()
+				}
+			})
+		})
+		return btn
+	}
+
+	bar := ui.Row(c.Key("canvas-toolbar")).Absolute().Bottom(10).Start(10).
+		Padding(4, 5).Gap(4).Radius(8).AlignItems(ui.Center).
+		Background(pal.Sheet).Border(1, pal.Rule.Alpha(1.6)).
+		Shadow(0, 2, 7, 0, pal.SlipShade).
+		Role(ui.RoleToolbar).Label("画布镜头").
+		HandleInput(func(ev ui.InputEvent) bool {
+			// Consume scroll, pinch, and non-left pointer events over the toolbar
+			// while letting left clicks reach child ButtonBase controls.
+			switch ev.Kind {
+			case ui.InputScroll, ui.InputZoom:
+				return true
+			case ui.InputPointerDown, ui.InputPointerUp:
+				if ev.Button != 0 {
+					return true
+				}
+			}
+			return false
+		})
+
+	bar.Children(func() {
+		if toolbarBtn("canvas-home", "回到中心", "", canvasHomeIcon, ui.Color{}, nil).Clicked() {
+			a.board.glideCenterBoard(a.game, now, a.motionReducedActive)
+		}
+
+		ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()
+
+		if a.isDuel() {
+			if toolbarBtn("canvas-follow", "定位高松灯", "", canvasFollowIcon, tomoriColor, nil).Clicked() && a.game.duel.LastAI >= 0 {
+				last := a.game.duel.LastAI
+				a.board.glideCenter(a.game, last/a.game.Cols, last%a.game.Cols, now, a.motionReducedActive)
+			}
+			ui.Box(c).Size(1, 14).Background(pal.Rule).PassThrough()
+		}
+
+		if toolbarBtn("canvas-reset-zoom", "回标准大小", zoomText, canvasResetZoomIcon, ui.Color{}, func() {
+			if zoomed {
+				ui.Box(c).Padding(1, 5).Radius(4).Background(sc.TriggerOpenBg).PassThrough().Children(func() {
+					ui.Text(c, zoomText).FontSize(11).FixedLineHeight(14).Bold().TextColor(sc.TriggerOpenInk).
+						FontFeatures("tnum").SingleLine().PassThrough()
+				})
+				return
+			}
+			ui.Text(c, zoomText).FontSize(11).FixedLineHeight(14).TextColor(sc.MutedInk).
+				FontFeatures("tnum").SingleLine().PassThrough()
+		}).Clicked() {
+			a.board.glideStandardPitch(a.game, now, a.motionReducedActive)
+		}
 	})
 }
 
@@ -1279,20 +1400,19 @@ func (a *minesweeperApp) paintBoard(p *ui.Painter, r ui.Rect) {
 				paintDuelMinimap(p, g, mini, view, t.Border)
 			}
 		}
-		// The caption sits on a scrap of the sheet so it reads over slips.
-		caption := ui.Span{Text: v.zoomCaption(), Size: 12, Color: t.TextMuted}
-		cw, ch := p.MeasureText(0, caption)
-		p.Fill(ui.Rect{X: r.X + 8, Y: r.Y + r.H - 36, W: cw + 12, H: ch + 8}, pal.Sheet.Alpha(0.92), 6)
-		p.RichText(r.X+14, r.Y+r.H-32, 0, caption)
 	})
 }
 
-func (v *boardView) zoomCaption() string {
-	text := fmt.Sprintf("%.0f%% · 拖动平移 / 滚轮缩放", v.Cell/standardCellPitch*100)
-	if v.HoverRow >= 0 && v.HoverCol >= 0 {
-		return fmt.Sprintf("(%d, %d) · %s", v.HoverRow, v.HoverCol, text)
-	}
-	return text
+func (v *boardView) isZoomed() bool {
+	return abs32(v.Cell-standardCellPitch) > 0.05
+}
+
+func (v *boardView) zoomPercent() float32 {
+	return v.Cell / standardCellPitch * 100
+}
+
+func (v *boardView) zoomLabel() string {
+	return fmt.Sprintf("%.0f%%", v.zoomPercent())
 }
 
 // cellDigits are the numbers a revealed cell can show, by count.
