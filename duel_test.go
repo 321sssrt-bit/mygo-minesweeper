@@ -943,15 +943,18 @@ func TestDuelRecenterUsesBoardCenter(t *testing.T) {
 		})
 	}
 
-	// Small board fully inside viewport clamps cleanly to (0,0) without panic or negative offsets.
+	// Small board fully inside viewport centers cleanly with symmetric margins.
 	app := newMinesweeperApp(42)
 	app.diffIdx = findDifficultyIdx("duel")
 	app.game = NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 12, Cols: 12, Mines: 1}, true, MemberAnon, 42)
 	tt := ui.NewTester(app.view, 1280, 900)
 	tt.Frame()
 	tt.Key(ui.Ctrl, ui.Key0)
-	if app.board.X != 0 || app.board.Y != 0 {
-		t.Fatalf("expected small board recenter clamped to (0,0), got (%v,%v)", app.board.X, app.board.Y)
+	wantSmallX := (float32(app.game.Cols)*app.board.Cell - app.board.Width) / 2
+	wantSmallY := (float32(app.game.Rows)*app.board.Cell - app.board.Height) / 2
+	if abs32(app.board.X-wantSmallX) > 0.01 || abs32(app.board.Y-wantSmallY) > 0.01 {
+		t.Fatalf("expected small board recenter centered at (%v,%v), got (%v,%v)",
+			wantSmallX, wantSmallY, app.board.X, app.board.Y)
 	}
 }
 
@@ -1127,23 +1130,22 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 			if app.board.Cell != 10 {
 				t.Fatalf("expected min cell size 10, got %v", app.board.Cell)
 			}
-			maxX := max(float32(0), float32(tc.cols)*app.board.Cell-app.board.Width)
-			maxY := max(float32(0), float32(tc.rows)*app.board.Cell-app.board.Height)
-			if app.board.X < 0 || app.board.Y < 0 || app.board.X > maxX || app.board.Y > maxY {
-				t.Fatalf("clamped offset out of bounds: (%v,%v) max=(%v,%v)", app.board.X, app.board.Y, maxX, maxY)
+			minX, maxX, minY, maxY := app.board.panBoundsFor(app.game, app.board.Cell)
+			if app.board.X < minX || app.board.Y < minY || app.board.X > maxX || app.board.Y > maxY {
+				t.Fatalf("clamped offset out of bounds: (%v,%v) bounds=([%v,%v],[%v,%v])",
+					app.board.X, app.board.Y, minX, maxX, minY, maxY)
 			}
 			if row, col, ok := app.board.cellAt(app.game, -5, 10); ok {
 				t.Fatalf("cellAt accepted negative x: (%d,%d)", row, col)
 			}
-			effX, effY := app.board.viewOffset(app.game)
 			boardW := float32(tc.cols) * app.board.Cell
 			if boardW < app.board.Width {
-				leftEdge := -effX
+				leftEdge := -app.board.X
 				if row, col, ok := app.board.cellAt(app.game, leftEdge-5, 10); ok {
 					t.Fatalf("cellAt accepted x in left margin: (%d,%d)", row, col)
 				}
 			}
-			if row, col, ok := app.board.cellAt(app.game, boardW-effX+5, 10); ok {
+			if row, col, ok := app.board.cellAt(app.game, boardW-app.board.X+5, 10); ok {
 				t.Fatalf("cellAt accepted x past board edge: (%d,%d)", row, col)
 			}
 
@@ -1151,7 +1153,7 @@ func TestBoardCanvasSupports50And100Sizes(t *testing.T) {
 			mini := app.board.minimapBoundsFor(app.game)
 			mini.X += r.X
 			mini.Y += r.Y
-			vp := minimapViewportRect(mini, tc.rows, tc.cols, effX, effY, r.W, r.H, app.board.Cell)
+			vp := minimapViewportRect(mini, tc.rows, tc.cols, app.board.X, app.board.Y, r.W, r.H, app.board.Cell)
 			if vp.X < mini.X || vp.Y < mini.Y || vp.X+vp.W > mini.X+mini.W+0.01 || vp.Y+vp.H > mini.Y+mini.H+0.01 {
 				t.Fatalf("minimap viewport escaped mini bounds at min zoom: vp=%+v mini=%+v", vp, mini)
 			}
