@@ -2963,21 +2963,6 @@ func (a *minesweeperApp) duelHUD(c *ui.Context) {
 			ui.Badge(c, fmt.Sprintf("高松灯 %d", d.AIScore)).Background(hud.AI.Bg).TextColor(hud.AI.Text)
 			ui.Badge(c, "剩余 "+formatClock(int(d.remaining()))).Background(c.Theme().Accent.Alpha(0.18))
 		})
-		now := c.Now()
-		ui.Row(c).Gap(6).Children(func() {
-			if ui.Button(c.Key("duel-home"), "回到中心").Clicked() {
-				a.board.glideCenterBoard(a.game, now, a.motionReducedActive)
-			}
-			if ui.Button(c.Key("duel-follow"), "定位高松灯").Clicked() && d.LastAI >= 0 {
-				a.board.glideCenter(a.game, d.LastAI/a.game.Cols, d.LastAI%a.game.Cols, now, a.motionReducedActive)
-			}
-			if ui.Button(c.Key("duel-zoom-out"), "−").Label("缩小").Clicked() {
-				a.board.glideZoom(a.game, a.board.Width/2, a.board.Height/2, 1/1.2, now, a.motionReducedActive)
-			}
-			if ui.Button(c.Key("duel-zoom-in"), "+").Label("放大").Clicked() {
-				a.board.glideZoom(a.game, a.board.Width/2, a.board.Height/2, 1.2, now, a.motionReducedActive)
-			}
-		})
 	})
 	ui.Row(c).Padding(4, 8).Gap(8).Children(func() {
 		ui.Badge(c, fmt.Sprintf("连击 ×%d", d.PlayerCombo))

@@ -2,7 +2,6 @@ package main
 
 import (
 	"math"
-	"strings"
 	"testing"
 	"time"
 
@@ -205,69 +204,66 @@ func TestCanvasCameraSpringGlideAllInteractiveTriggers(t *testing.T) {
 	app, tt, boardRect := setupCameraDuelApp(t)
 	v, g := app.board, app.game
 
-	// 1. Zoom-in ("放大") and zoom-out ("缩小") buttons at (500,500) on 1000x1000:
+	// 1. Ctrl+= / Ctrl+- zoom and "回标准大小" button at (500,500) on 1000x1000:
 	// must glide smoothly over ~200ms without triggering far-jump pan drift.
 	v.center(g, 500, 500)
 	tt.Frame()
 	cell0 := v.Cell
-	wantIn := min(float32(42), cell0*1.2)
-	if err := tt.Click("放大"); err != nil {
-		t.Fatalf("click 放大: %v", err)
-	}
+	wantIn := min(maxCanvasCell, cell0*1.15)
+	tt.Key(ui.Ctrl, ui.KeyEqual)
 	if !v.gliding() || v.Cell != cell0 {
-		t.Fatalf("放大 frame 0: cell=%.2f gliding=%v, want %.2f gliding=true", v.Cell, v.gliding(), cell0)
+		t.Fatalf("Ctrl+= frame 0: cell=%.2f gliding=%v, want %.2f gliding=true", v.Cell, v.gliding(), cell0)
 	}
 	tt.Advance(60 * time.Millisecond)
 	if !v.gliding() || v.Cell <= cell0 || v.Cell >= wantIn {
-		t.Fatalf("放大 mid-glide: cell=%.2f gliding=%v, want in (%.2f, %.2f)", v.Cell, v.gliding(), cell0, wantIn)
+		t.Fatalf("Ctrl+= mid-glide: cell=%.2f gliding=%v, want in (%.2f, %.2f)", v.Cell, v.gliding(), cell0, wantIn)
 	}
 	midR, midC, ok := v.cellAt(g, boardRect.W/2, boardRect.H/2)
 	if !ok || midR != 500 || midC != 500 {
-		t.Fatalf("放大 mid-glide drifted center to (%d,%d), want (500,500)", midR, midC)
+		t.Fatalf("Ctrl+= mid-glide drifted center to (%d,%d), want (500,500)", midR, midC)
 	}
 	tt.Advance(180 * time.Millisecond)
 	if v.gliding() || abs32(v.Cell-wantIn) > 0.05 {
-		t.Fatalf("放大 settled: cell=%.2f gliding=%v, want %.2f gliding=false", v.Cell, v.gliding(), wantIn)
+		t.Fatalf("Ctrl+= settled: cell=%.2f gliding=%v, want %.2f gliding=false", v.Cell, v.gliding(), wantIn)
 	}
 	if rEnd, cEnd, ok := v.cellAt(g, boardRect.W/2, boardRect.H/2); !ok || rEnd != 500 || cEnd != 500 {
-		t.Fatalf("放大 settled center = (%d,%d), want (500,500)", rEnd, cEnd)
+		t.Fatalf("Ctrl+= settled center = (%d,%d), want (500,500)", rEnd, cEnd)
 	}
 
 	cellIn := v.Cell
-	wantOut := max(float32(10), cellIn/1.2)
-	if err := tt.Click("缩小"); err != nil {
-		t.Fatalf("click 缩小: %v", err)
+	if err := tt.Click("回标准大小"); err != nil {
+		t.Fatalf("click 回标准大小: %v", err)
 	}
 	if !v.gliding() || v.Cell != cellIn {
-		t.Fatalf("缩小 frame 0: cell=%.2f gliding=%v, want %.2f gliding=true", v.Cell, v.gliding(), cellIn)
+		t.Fatalf("回标准大小 frame 0: cell=%.2f gliding=%v, want %.2f gliding=true", v.Cell, v.gliding(), cellIn)
 	}
 	tt.Advance(60 * time.Millisecond)
-	if !v.gliding() || v.Cell >= cellIn || v.Cell <= wantOut {
-		t.Fatalf("缩小 mid-glide: cell=%.2f gliding=%v, want in (%.2f, %.2f)", v.Cell, v.gliding(), wantOut, cellIn)
+	if !v.gliding() || v.Cell >= cellIn || v.Cell <= standardCellPitch {
+		t.Fatalf("回标准大小 mid-glide: cell=%.2f gliding=%v, want in (%.2f, %.2f)", v.Cell, v.gliding(), standardCellPitch, cellIn)
 	}
 	tt.Advance(180 * time.Millisecond)
-	if v.gliding() || abs32(v.Cell-wantOut) > 0.05 {
-		t.Fatalf("缩小 settled: cell=%.2f gliding=%v, want %.2f gliding=false", v.Cell, v.gliding(), wantOut)
+	if v.gliding() || v.Cell != standardCellPitch {
+		t.Fatalf("回标准大小 settled: cell=%.2f gliding=%v, want %.2f gliding=false", v.Cell, v.gliding(), standardCellPitch)
+	}
+	if rEnd, cEnd, ok := v.cellAt(g, boardRect.W/2, boardRect.H/2); !ok || rEnd != 500 || cEnd != 500 {
+		t.Fatalf("回标准大小 settled center = (%d,%d), want (500,500)", rEnd, cEnd)
 	}
 
-	// Ctrl+= and Ctrl+- keyboard zoom shortcuts keep gliding zoom behavior intact.
 	keyCell0 := v.Cell
-	tt.Key(ui.Ctrl, ui.KeyEqual)
-	if !v.gliding() {
-		t.Fatal("Ctrl+= did not start zoom-in glide")
-	}
-	tt.Advance(240 * time.Millisecond)
-	if v.gliding() || v.Cell <= keyCell0 {
-		t.Fatalf("Ctrl+= settled: cell=%.2f gliding=%v, want > %.2f gliding=false", v.Cell, v.gliding(), keyCell0)
-	}
-	keyCellIn := v.Cell
 	tt.Key(ui.Ctrl, ui.KeyMinus)
 	if !v.gliding() {
 		t.Fatal("Ctrl+- did not start zoom-out glide")
 	}
 	tt.Advance(240 * time.Millisecond)
-	if v.gliding() || v.Cell >= keyCellIn || abs32(v.Cell-keyCell0) > 0.05 {
-		t.Fatalf("Ctrl+- settled: cell=%.2f gliding=%v, want ~%.2f (< %.2f) gliding=false", v.Cell, v.gliding(), keyCell0, keyCellIn)
+	if v.gliding() || v.Cell >= keyCell0 {
+		t.Fatalf("Ctrl+- settled: cell=%.2f gliding=%v, want < %.2f gliding=false", v.Cell, v.gliding(), keyCell0)
+	}
+	if err := tt.Click("回标准大小"); err != nil {
+		t.Fatalf("click 回标准大小 after zoom-out: %v", err)
+	}
+	tt.Advance(240 * time.Millisecond)
+	if v.gliding() || v.Cell != standardCellPitch {
+		t.Fatalf("回标准大小 after zoom-out: cell=%.2f gliding=%v, want %.2f gliding=false", v.Cell, v.gliding(), standardCellPitch)
 	}
 
 	// 2. "回到中心" button from a mid-range offset (~0.9 viewport spans).
@@ -432,9 +428,7 @@ func TestCanvasCameraFarJumpClampsToViewportSpan(t *testing.T) {
 	v.Cell = 42
 	v.center(g, 0, 0)
 	tt.Frame()
-	if err := tt.Click("缩小"); err != nil {
-		t.Fatalf("click 缩小 before Ctrl+0: %v", err)
-	}
+	tt.Key(ui.Ctrl, ui.KeyMinus)
 	tt.Advance(20 * time.Millisecond)
 	if v.Cell >= 42 || v.Cell <= 35 {
 		t.Fatalf("precondition failed: expected mid-glide zoom-out cell in (35, 42), got %.2f", v.Cell)
@@ -675,10 +669,8 @@ func TestCanvasCameraMidGlideManualInputTakeover(t *testing.T) {
 	zv.center(zg, 500, 500)
 	zTT.Frame()
 	zCell0 := zv.Cell
-	zWantIn := min(maxCanvasCell, zCell0*1.2)
-	if err := zTT.Click("放大"); err != nil {
-		t.Fatalf("click 放大 before mid-glide minimap click: %v", err)
-	}
+	zWantIn := min(maxCanvasCell, zCell0*1.15)
+	zTT.Key(ui.Ctrl, ui.KeyEqual)
 	zTT.Advance(50 * time.Millisecond)
 	if !zv.gliding() {
 		t.Fatal("expected zoom glide active at 50ms")
@@ -1522,8 +1514,8 @@ func TestCanvasStandardPitchInitialCenterAndCtrl0Reset(t *testing.T) {
 			if v.Cell != standardCellPitch {
 				t.Fatalf("initial Cell = %.2f, want standard pitch %.2f", v.Cell, standardCellPitch)
 			}
-			if got := v.zoomCaption(); !strings.HasPrefix(got, "100% · ") {
-				t.Fatalf("initial zoom caption = %q, want 100%% prefix", got)
+			if got := v.zoomLabel(); got != "100%" {
+				t.Fatalf("initial zoom label = %q, want 100%%", got)
 			}
 			wantCenterX, wantCenterY := v.centerTarget(g, g.Rows/2, g.Cols/2, standardCellPitch)
 			if abs32(v.X-wantCenterX) > 0.5 || abs32(v.Y-wantCenterY) > 0.5 {
@@ -1539,15 +1531,15 @@ func TestCanvasStandardPitchInitialCenterAndCtrl0Reset(t *testing.T) {
 			if v.Cell != maxCanvasCell {
 				t.Fatalf("max zoom Cell = %.2f, want %.2f", v.Cell, maxCanvasCell)
 			}
-			if got := v.zoomCaption(); !strings.HasPrefix(got, "131% · ") {
-				t.Fatalf("max zoom caption = %q, want 131%% prefix", got)
+			if got := v.zoomLabel(); got != "131%" {
+				t.Fatalf("max zoom label = %q, want 131%%", got)
 			}
 			v.zoom(g, boardRect.W/2, boardRect.H/2, 0.01)
 			if v.Cell != minCanvasCell {
 				t.Fatalf("min zoom Cell = %.2f, want %.2f", v.Cell, minCanvasCell)
 			}
-			if got := v.zoomCaption(); !strings.HasPrefix(got, "31% · ") {
-				t.Fatalf("min zoom caption = %q, want 31%% prefix", got)
+			if got := v.zoomLabel(); got != "31%" {
+				t.Fatalf("min zoom label = %q, want 31%%", got)
 			}
 
 			// Zoom and pan away, then Ctrl+0 glides back to standard pitch and board center.
@@ -1568,8 +1560,8 @@ func TestCanvasStandardPitchInitialCenterAndCtrl0Reset(t *testing.T) {
 			if abs32(v.Cell-standardCellPitch) > 0.05 {
 				t.Fatalf("Ctrl+0 settled Cell = %.2f, want %.2f", v.Cell, standardCellPitch)
 			}
-			if got := v.zoomCaption(); !strings.HasPrefix(got, "100% · ") {
-				t.Fatalf("Ctrl+0 settled zoom caption = %q, want 100%% prefix", got)
+			if got := v.zoomLabel(); got != "100%" {
+				t.Fatalf("Ctrl+0 settled zoom label = %q, want 100%%", got)
 			}
 			gotR, gotC, ok = v.cellAt(g, boardRect.W/2, boardRect.H/2)
 			if !ok || gotR != g.Rows/2 || gotC != g.Cols/2 {

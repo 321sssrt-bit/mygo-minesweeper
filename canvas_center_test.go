@@ -492,9 +492,15 @@ func TestCanvasZoomThresholdSmoothnessAndResize(t *testing.T) {
 
 	// 3. Glide zoom out into centered state and back up to 100% via Ctrl+0
 	// settle cleanly with no lingering animation frames or drift.
-	// Derive the starting pitch from the laid-out stage so one Ctrl+- step
-	// reliably crosses into dual-axis centering regardless of platform font metrics.
-	fitCell := min(board.W/float32(g.Cols), board.H/float32(g.Rows))
+	// Derive the starting pitch from the laid-out stage (clearing bottom corner
+	// overlays) so one Ctrl+- step reliably crosses into dual-axis locked centering
+	// regardless of platform font metrics.
+	tb := v.toolbarBounds()
+	clearH := board.H
+	if tb.H > 0 {
+		clearH = max(float32(100), board.H-2*(board.H-tb.Y))
+	}
+	fitCell := min(board.W/float32(g.Cols), clearH/float32(g.Rows))
 	v.Cell = max(minCanvasCell*1.1, fitCell*1.05)
 	v.centerBoard(g)
 	tt.Frame()
