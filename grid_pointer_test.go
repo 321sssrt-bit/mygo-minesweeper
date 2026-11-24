@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -521,6 +522,8 @@ func TestGridPointerFlagOnPressNoDoubleToggle(t *testing.T) {
 		tt := ui.NewTester(app.view, 1280, 900)
 		r00 := mustFindCell(t, tt, "cell-0-0")
 		r11 := mustFindCell(t, tt, "cell-1-1")
+		untouchedCell := mustFindCell(t, tt, "cell-3-2")
+		still := tt.Image()
 		now := tt.Now()
 
 		// Left press+release on mine (0,0) triggers Soyorin shield; right press on (1,1) arrives before the next frame.
@@ -539,9 +542,12 @@ func TestGridPointerFlagOnPressNoDoubleToggle(t *testing.T) {
 			t.Fatalf("expected both shield and flag applied: shield=%v flag=%v",
 				app.game.Cell(0, 0).ShieldSaved, app.game.Cell(1, 1).Flagged)
 		}
-		if app.shakeAmplitude != 4.5 || !app.quoteStrip.Active || app.quoteStrip.MemberID != MemberSoyorin {
-			t.Fatalf("shield feedback was overwritten by same-frame right press: shake=%v stripActive=%v member=%v",
-				app.shakeAmplitude, app.quoteStrip.Active, app.quoteStrip.MemberID)
+		tt.Advance(22 * time.Millisecond)
+		if changed := diffPixelCountInRect(still, tt.Image(), untouchedCell, 1); changed < int(untouchedCell.W/2) {
+			t.Fatalf("shield did not visibly shake an untouched cell: %d pixels changed", changed)
+		}
+		if _, ok := tt.Find("台词"); !ok || !app.quoteStrip.Active || app.quoteStrip.MemberID != MemberSoyorin {
+			t.Fatal("Soyo's quote strip was lost when same-frame right press followed left release")
 		}
 		if !tt.HasText("长崎爽世发动了「温柔的微笑」：这次就当没点过吧！") {
 			t.Fatal("shield toast was lost when same-frame right press followed left release")

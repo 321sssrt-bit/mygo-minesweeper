@@ -9,6 +9,7 @@ import (
 )
 
 func TestCopyRules(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		text  string
@@ -77,6 +78,7 @@ func TestCopyRules(t *testing.T) {
 // found with positions, sanctioned colour files and _test.go files are
 // skipped, and clean literals produce no findings.
 func TestScan(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	files := map[string]string{
 		"game.go": "package x\n" +
@@ -93,7 +95,8 @@ func TestScan(t *testing.T) {
 			"var j = ui.Hex(\"#FFF\")\n" +
 			"var k = ui.Color{}\n" +
 			"var l = ui.Hex(m.ColorHex)\n" +
-			"func fakes(ui interface{ RGB(int, int, int) int }) { ui.RGB(1, 2, 3) }\n",
+			"func fakes(ui interface{ RGB(int, int, int) int }) { ui.RGB(1, 2, 3) }\n" +
+			"var m = []ui.Color{{R: 1}}\n",
 		"aliased.go": "package x\nimport _ \"github.com/egoist/mygo/ui\"\nimport paint \"github.com/egoist/mygo/ui\"\nvar a = paint.RGB(1, 2, 3)\n",
 		"dot.go": `package x
 import . "github.com/egoist/mygo/ui"
@@ -105,7 +108,7 @@ var e = map[Color][]Color{{R: 3}: {{R: 4}, {}}}
 var f = []Color{{}}
 func local(RGB func(int, int, int) int) { _ = RGB(1, 2, 3) }
 `,
-		"palette.go": "package x\nimport \"github.com/egoist/mygo/ui\"\nvar p = ui.Hex(\"#AABBCC\")\nvar q = ui.Color{R: 1}\n",
+		"palette.go": "package x\nimport \"github.com/egoist/mygo/ui\"\nvar p = ui.Hex(\"#AABBCC\")\nvar q = ui.Color{R: 1}\nvar r = ui.Hex(\"百万格决斗\")\n",
 		// The member table is exempt from the colour report only;
 		// its copy is still scanned.
 		"memes.go":     "package x\nvar m = \"#77BBDD\"\nvar q = \"「百万格超大舞台」\"\n",
@@ -141,8 +144,11 @@ func local(RGB func(int, int, int) int) { _ = RGB(1, 2, 3) }
 	if rules := copyAt(filepath.Join(dir, "memes.go"), 3, "百万格"); !slices.Equal(rules, []string{RuleDuelSpec}) {
 		t.Errorf("memes.go:3: got %v, want [%s]", rules, RuleDuelSpec)
 	}
-	if len(rep.Copy) != 3 {
-		t.Errorf("copy findings = %d, want 3: %+v", len(rep.Copy), rep.Copy)
+	if rules := copyAt(filepath.Join(dir, "palette.go"), 5, "百万格决斗"); !slices.Equal(rules, []string{RuleAvoidTerm}) {
+		t.Errorf("palette.go:5: got %v, want [%s]", rules, RuleAvoidTerm)
+	}
+	if len(rep.Copy) != 4 {
+		t.Errorf("copy findings = %d, want 4: %+v", len(rep.Copy), rep.Copy)
 	}
 	for _, list := range [][]Finding{rep.Copy, rep.Colors} {
 		for _, f := range list {
@@ -169,6 +175,7 @@ func local(RGB func(int, int, int) int) { _ = RGB(1, 2, 3) }
 		{game, 10, []string{RuleRawColor}, "ui.RGBA(1, 2, 3, 0.5)"},
 		{game, 11, []string{RuleRawColor}, "ui.Color{R: 1}"},
 		{game, 12, []string{RuleRawColor}, "#FFF"},
+		{game, 16, []string{RuleRawColor}, "{R: 1}"},
 	}
 	if !slices.EqualFunc(rep.Colors, wantColors, func(got, want Finding) bool {
 		return got.Path == want.Path && got.Line == want.Line && got.Text == want.Text && slices.Equal(got.Rules, want.Rules)

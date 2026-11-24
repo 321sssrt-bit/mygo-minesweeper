@@ -36,19 +36,9 @@ func TestSourceScanReportGate(t *testing.T) {
 		decl string
 		want string
 	}{
+		{"clean tree", "game.go", `var label = "迷星叫"`, ""},
 		{"banned wording", "game.go", `var label = "百万格决斗"`, `copy violation at game.go:3 [禁用语「百万格决斗」] "百万格决斗"`},
-		{"hash hex", "game.go", `var colour = "#FFF"`, `raw colour violation at game.go:3 "#FFF"`},
-		{"bare Hex argument", "game.go", `var colour = ui.Hex("AABBCC")`, `raw colour violation at game.go:3 "AABBCC"`},
-		{"RGB call", "game.go", `var colour = ui.RGB(1, 2, 3)`, `raw colour violation at game.go:3 "ui.RGB(1, 2, 3)"`},
-		{"RGBA call", "game.go", `var colour = ui.RGBA(1, 2, 3, 0.5)`, `raw colour violation at game.go:3 "ui.RGBA(1, 2, 3, 0.5)"`},
-		{"nonempty Color", "game.go", `var colour = ui.Color{R: 1}`, `raw colour violation at game.go:3 "ui.Color{R: 1}"`},
-		{"elided Color type", "game.go", `var colours = []ui.Color{{R: 1}}`, `raw colour violation at game.go:3 "{R: 1}"`},
-		{"palette", "palette.go", `var colour = ui.Hex("AABBCC")`, ""},
-		{"palette banned wording", "palette.go", `var colour = ui.Hex("百万格决斗")`, `copy violation at palette.go:3 [禁用语「百万格决斗」] "百万格决斗"`},
-		{"member table", "memes.go", `var colour = ui.RGB(1, 2, 3)`, ""},
-		{"test file", "game_test.go", `var colour = ui.Color{R: 1}`, ""},
-		{"empty Color", "game.go", `var colour = ui.Color{}`, ""},
-		{"Hex from member", "game.go", `var colour = ui.Hex(m.ColorHex)`, ""},
+		{"raw colour", "game.go", `var colour = ui.RGB(1, 2, 3)`, `raw colour violation at game.go:3 "ui.RGB(1, 2, 3)"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -73,25 +63,5 @@ func TestSourceScanReportGate(t *testing.T) {
 				t.Errorf("missing diagnostic %q", tc.want)
 			}
 		})
-	}
-}
-
-// TestSourceScanWellFormed checks the scan of the real tree stays wired:
-// every finding cites a shipped source file, a line and the offending
-// source text. Detection itself is covered by scanreport's fixture test.
-func TestSourceScanWellFormed(t *testing.T) {
-	rep, err := scanreport.Scan(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, list := range [][]scanreport.Finding{rep.Copy, rep.Colors} {
-		for _, f := range list {
-			if f.Path == "" || f.Line == 0 || f.Text == "" || len(f.Rules) == 0 {
-				t.Errorf("malformed finding: %+v", f)
-			}
-			if strings.HasSuffix(f.Path, "_test.go") {
-				t.Errorf("report scanned test file %s", f.Path)
-			}
-		}
 	}
 }

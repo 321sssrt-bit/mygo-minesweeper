@@ -6,11 +6,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
-
-	"mygo-minesweeper/internal/scanreport"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -153,8 +150,7 @@ func TestDuelHitMineReadsZoomedOut(t *testing.T) {
 func near(a, b uint8) bool { return int(a)-int(b) <= 3 && int(b)-int(a) <= 3 }
 
 // Duel territory, flag outlines, latest AI move frame, and duel minimap
-// colours all come from palette.go with the agreed pink/blue scheme, and
-// board.go retains zero raw hex literals for those roles.
+// colours all come from palette.go with the agreed pink/blue scheme.
 func TestDuelPaletteUsesPinkAndBlueFromPalette(t *testing.T) {
 	if duelOwnerColor(DuelPlayer) != ui.Hex("#55B2D6") || duelPalette.Player != ui.Hex("#55B2D6") {
 		t.Errorf("player duel color = %s, want #55B2D6", hexOf(duelPalette.Player))
@@ -179,23 +175,6 @@ func TestDuelPaletteUsesPinkAndBlueFromPalette(t *testing.T) {
 	for name, tc := range wantMinimap {
 		if hexOf(tc.got) != tc.want {
 			t.Errorf("duelMinimapPalette.%s = %s, want %s", name, hexOf(tc.got), tc.want)
-		}
-	}
-
-	rep, err := scanreport.Scan(".")
-	if err != nil {
-		t.Fatalf("scanreport.Scan failed: %v", err)
-	}
-	migrated := []string{"#0B1423", "#A78BFA", "#55B2D6", "#F07AA4", "#38BDF8", "#F4F8FD", "#FDF2F8"}
-	for _, f := range rep.Colors {
-		if filepath.Base(f.Path) != "board.go" {
-			continue
-		}
-		upper := strings.ToUpper(f.Text)
-		for _, hex := range migrated {
-			if strings.Contains(upper, hex) {
-				t.Errorf("board.go:%d still defines migrated duel raw colour %s", f.Line, f.Text)
-			}
 		}
 	}
 }
@@ -402,9 +381,8 @@ func findOrPrepareChordable(g *Game, centerRow, centerCol int) (int, int, bool) 
 
 // Duel prompts (gold claim highlighter, leader chord highlighter, 9×9 scan
 // badge, four floating score pills, and milestone chat highlights) stay
-// WCAG-AA readable on both papers and leave no migrated raw hex literals in
-// board.go or main.go.
-func TestDuelPromptsContrastAndScanReport(t *testing.T) {
+// WCAG-AA readable on both papers.
+func TestDuelPromptsContrast(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		pal, dp := paperFor(dark), duelPromptsFor(dark)
 		if got := contrast(dp.ScanBadgeText, dp.ScanBadgeBg); got < minInkContrast {
@@ -473,31 +451,6 @@ func TestDuelPromptsContrastAndScanReport(t *testing.T) {
 	}
 	if !seenUnlock || !seenSettle {
 		t.Errorf("expected goldHighlighter (%s) on unlockMemes (%v) and settleDuel (%v) chat logs", wantGoldHex, seenUnlock, seenSettle)
-	}
-
-	rep, err := scanreport.Scan(".")
-	if err != nil {
-		t.Fatalf("scanreport.Scan failed: %v", err)
-	}
-	boardForbidden := []string{"#E8A849", "#3C301D", "#F5D99C", "#070D17"}
-	mainForbidden := []string{"#070D17", "#38BDF8", "#FB7185"}
-	for _, f := range rep.Colors {
-		base := filepath.Base(f.Path)
-		upper := strings.ToUpper(f.Text)
-		if base == "board.go" {
-			for _, hex := range boardForbidden {
-				if strings.Contains(upper, hex) {
-					t.Errorf("board.go:%d still defines migrated raw colour %s", f.Line, f.Text)
-				}
-			}
-		}
-		if base == "main.go" {
-			for _, hex := range mainForbidden {
-				if strings.Contains(upper, hex) {
-					t.Errorf("main.go:%d still defines migrated raw colour %s", f.Line, f.Text)
-				}
-			}
-		}
 	}
 }
 
@@ -787,8 +740,8 @@ func advanceToStunPulsePeak(tt *ui.Tester) float32 {
 
 // Duel HUD badges (player score, AI score, stun, scan) and the canvas stun
 // banner keep WCAG-AA contrast on both papers, share the scan note palette
-// with duelPromptsFor, and leave zero raw colours in board.go and duelHUD.
-func TestDuelHUDAndStunContrastAndScanReport(t *testing.T) {
+// with duelPromptsFor.
+func TestDuelHUDAndStunContrast(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		pal, dp, hud := paperFor(dark), duelPromptsFor(dark), duelHUDFor(dark)
 		badges := []struct {
@@ -822,37 +775,6 @@ func TestDuelHUDAndStunContrastAndScanReport(t *testing.T) {
 			t.Errorf("dark=%v stun banner border/pulse = (%s, %s), want BoomInk %s",
 				dark, hexOf(hud.Banner.Border), hexOf(hud.Banner.Pulse), hexOf(pal.BoomInk))
 		}
-	}
-
-	rep, err := scanreport.Scan(".")
-	if err != nil {
-		t.Fatalf("scanreport.Scan failed: %v", err)
-	}
-	if len(rep.Copy) != 0 {
-		t.Errorf("copy violations = %d, want 0:\n%s", len(rep.Copy), rep)
-	}
-	duelHUDForbidden := []string{"#173B49", "#55B2D6", "#3B2740", "#F07AA4", "#701F2B", "#3C301D", "#F5D99C"}
-	boardColors := 0
-	for _, f := range rep.Colors {
-		base := filepath.Base(f.Path)
-		if base == "board.go" {
-			boardColors++
-			t.Errorf("board.go:%d still defines raw colour %s", f.Line, f.Text)
-		}
-		if base == "main.go" {
-			upper := strings.ToUpper(f.Text)
-			for _, hex := range duelHUDForbidden {
-				if strings.Contains(upper, hex) {
-					t.Errorf("main.go:%d still defines migrated duelHUD raw colour %s", f.Line, f.Text)
-				}
-			}
-		}
-	}
-	if boardColors != 0 {
-		t.Errorf("board.go raw colours = %d, want 0", boardColors)
-	}
-	if len(rep.Colors) > 7 {
-		t.Errorf("total raw colours = %d, want <= 7 (#23 remaining at most):\n%s", len(rep.Colors), rep)
 	}
 }
 

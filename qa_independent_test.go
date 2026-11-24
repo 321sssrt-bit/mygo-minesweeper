@@ -1,13 +1,12 @@
 package main
 
 import (
-	"github.com/egoist/mygo/ui"
 	"math"
 	"math/rand/v2"
-	"runtime"
 	"testing"
 	"time"
-	"unsafe"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func qaApp(t *testing.T) (*minesweeperApp, *ui.Tester, ui.Rect) {
@@ -24,10 +23,29 @@ func qaApp(t *testing.T) (*minesweeperApp, *ui.Tester, ui.Rect) {
 }
 
 func TestQAFirstFlag(t *testing.T) {
-	g := NewGame(Difficulties[findDifficultyIdx("duel")], true, MemberAnon, 42)
-	g.ToggleFlag(500, 500, false)
-	if !g.Cell(500, 500).IsMine && g.duel.PlayerScore == -30 && g.FirstClick {
-		t.Fatalf("first flag forced safe and penalized: score=%d status=%v", g.duel.PlayerScore, g.Status)
+	t.Parallel()
+	diff := Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 5, Mines: 4, DuelDuration: 60, AIInterval: 10}
+	g := NewGame(diff, true, MemberAnon, 42)
+	const row, col = 0, 0
+	if res := g.ToggleFlag(row, col, false); res.Kind != ActionFlagged || res.ScoreDelta != 0 {
+		t.Fatalf("first flag = %+v, want a flag with no immediate score", res)
+	}
+	if c := g.Cell(row, col); !c.Flagged || c.FlagOwner != DuelPlayer || c.Revealed {
+		t.Fatalf("first flag did not mark a covered cell for the player: %+v", c)
+	}
+	if g.duel.PlayerScore != 0 {
+		t.Fatalf("first flag scored %d before settlement", g.duel.PlayerScore)
+	}
+	if g.FirstClick || g.Status != StatusIdle {
+		t.Fatalf("flag started the game before the first reveal: firstClick=%v status=%v", g.FirstClick, g.Status)
+	}
+
+	g.Reveal(4, 4)
+	if !g.FirstClick || !g.Cell(4, 4).Revealed || g.Cell(4, 4).IsMine {
+		t.Fatal("the first reveal must still start safely after a flag")
+	}
+	if !g.Cell(row, col).Flagged {
+		t.Fatal("first reveal erased the flag placed before it")
 	}
 }
 
@@ -111,26 +129,26 @@ func TestQAInputNavigationReset(t *testing.T) {
 }
 
 func TestQAFrontierFlood(t *testing.T) {
-	g := NewGame(Difficulties[findDifficultyIdx("duel")], true, MemberAnon, 42)
-	g.Reveal(500, 500)
-	actual, missing := 0, 0
-	for i := range g.Cells {
-		c := &g.Cells[i]
-		if c.Revealed || c.Flagged {
-			continue
-		}
-		for _, n := range g.Neighbors(c.Row, c.Col) {
-			if n.Revealed && !n.IsMine {
-				actual++
-				if _, ok := g.duel.frontier[i]; !ok {
-					missing++
-				}
-				break
-			}
-		}
+	t.Parallel()
+	// The left half floods into a wall of mines. The opened numbers give
+	// the AI enough information to flag a mine instead of making a blind move.
+	g := NewGame(Difficulty{Gameplay: GameplayDuel, Rows: 5, Cols: 7, Mines: 5, DuelDuration: 60, AIInterval: 1}, true, MemberAnon, 42)
+	g.FirstClick, g.Status = true, StatusPlaying
+	for row := range g.Rows {
+		g.Cell(row, 4).IsMine = true
 	}
-	if missing > 0 {
-		t.Fatalf("flood frontier actual=%d missing=%d stored=%d", actual, missing, len(g.duel.frontier))
+	g.RecomputeAdjacency()
+	if res := g.Reveal(2, 0); res.Kind != ActionRevealed || res.RevealedCount != 20 {
+		t.Fatalf("reveal produced %+v, want a flood of 20 safe cells", res)
+	}
+	g.duel.NextAI = 1
+	tick := g.TickDuel(1.1)
+	if tick.AITurn == nil || tick.AITurn.Kind != ActionFlagged {
+		t.Fatalf("AI turn = %+v, want a flag deduced from the newly opened numbers", tick.AITurn)
+	}
+	c := g.Cell(tick.AICell/g.Cols, tick.AICell%g.Cols)
+	if c.Col != 4 || !c.Flagged || c.FlagOwner != DuelAI {
+		t.Fatalf("AI flagged %+v, want its flag on a mine in the wall", c)
 	}
 }
 
@@ -188,19 +206,13 @@ func TestQAEarlySettlement(t *testing.T) {
 	}
 }
 
-func TestQAMemory(t *testing.T) {
-	runtime.GC()
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	start := time.Now()
-	g := NewGame(Difficulties[findDifficultyIdx("duel")], true, MemberAnon, 42)
-	construct := time.Since(start)
-	start = time.Now()
-	g.Reveal(500, 500)
-	first := time.Since(start)
-	runtime.ReadMemStats(&after)
-	t.Logf("cell=%d bytes cells=%.2f MiB allocated=%.2f MiB construct=%s first reveal=%s", unsafe.Sizeof(Cell{}), float64(len(g.Cells))*float64(unsafe.Sizeof(Cell{}))/(1<<20), float64(after.TotalAlloc-before.TotalAlloc)/(1<<20), construct, first)
-	runtime.KeepAlive(g)
+func BenchmarkQADuelConstructionAndFirstReveal(b *testing.B) {
+	diff := Difficulties[findDifficultyIdx("duel")]
+	b.ReportAllocs()
+	for b.Loop() {
+		g := NewGame(diff, true, MemberAnon, 42)
+		g.Reveal(500, 500)
+	}
 }
 
 func TestQAAIKnownExplodedMine(t *testing.T) {

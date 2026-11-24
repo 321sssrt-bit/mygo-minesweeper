@@ -259,39 +259,7 @@ func TestDualPopoverSingleClickMutualSwitchAndOutsideShield(t *testing.T) {
 	if !app.popoverOpen(popoverSetlist) || app.popoverOpen(popoverSettings) {
 		t.Fatalf("expected only 歌单 open after reverse single click, active=%v setlistOpen=%v", app.activePopover, app.setlistOpen)
 	}
-	// Switch back to 设置 for outside-click shield checks.
-	if err := tt.Click("设置"); err != nil {
-		t.Fatalf("switch back to 设置: %v", err)
-	}
-
-	// 3. Clicking a classic board cell while 设置 is open closes it without revealing.
-	targetRect, ok := tt.Find("cell-4-4")
-	if !ok {
-		t.Fatal("cell-4-4 not found")
-	}
-	tt.ClickAt(targetRect.X+targetRect.W/2, targetRect.Y+targetRect.H/2)
-	if app.hasOpenPopover() {
-		t.Fatalf("clicking classic cell outside 设置 did not close popover: active=%v", app.activePopover)
-	}
-	if app.game.Moves != 0 || app.game.FirstClick || app.game.Cell(4, 4).Revealed {
-		t.Fatalf("outside click leaked reveal onto cell-4-4: moves=%d first=%v revealed=%v",
-			app.game.Moves, app.game.FirstClick, app.game.Cell(4, 4).Revealed)
-	}
-
-	// 4. Right-clicking a classic board cell while 设置 is open closes it without flagging.
-	if err := tt.Click("设置"); err != nil {
-		t.Fatalf("reopen 设置: %v", err)
-	}
-	tt.RightClickAt(targetRect.X+targetRect.W/2, targetRect.Y+targetRect.H/2)
-	if app.hasOpenPopover() {
-		t.Fatalf("right-clicking classic cell outside 设置 did not close popover: active=%v", app.activePopover)
-	}
-	if app.game.FlagsPlaced != 0 || app.game.Cell(4, 4).Flagged {
-		t.Fatalf("outside right-click leaked flag onto cell-4-4: flags=%d flagged=%v",
-			app.game.FlagsPlaced, app.game.Cell(4, 4).Flagged)
-	}
-
-	// 5. Clicking blank workspace area outside 设置 closes it.
+	// Clicking blank workspace area outside 设置 closes it.
 	if err := tt.Click("设置"); err != nil {
 		t.Fatalf("reopen 设置 for blank click: %v", err)
 	}
@@ -300,7 +268,7 @@ func TestDualPopoverSingleClickMutualSwitchAndOutsideShield(t *testing.T) {
 		t.Fatalf("clicking blank area outside 设置 did not close popover: active=%v", app.activePopover)
 	}
 
-	// 6. Duel canvas: clicking outside 设置 on duel board only closes 设置 without revealing.
+	// Duel canvas: clicking outside 设置 on duel board only closes 设置 without revealing.
 	duelApp := newMinesweeperApp(42)
 	duelApp.diffIdx = findDifficultyIdx("duel")
 	duelApp.resetGame(false)

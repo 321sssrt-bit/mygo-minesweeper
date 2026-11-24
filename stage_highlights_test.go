@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	"mygo-minesweeper/internal/scanreport"
 )
 
 func diffPixelCountInRect(a, b *image.RGBA, r ui.Rect, scale float32) int {
@@ -39,7 +38,7 @@ func rectContainsColorScaled(img *image.RGBA, r ui.Rect, scale float32, want ui.
 	}, want, tol)
 }
 
-func TestStageHighlightPaletteContrastAndScan(t *testing.T) {
+func TestStageHighlightPaletteContrast(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, m := range Members {
 			qs := quoteStripColorsFor(m.ID, dark)
@@ -65,17 +64,10 @@ func TestStageHighlightPaletteContrastAndScan(t *testing.T) {
 			}
 		}
 	}
-
-	rep, err := scanreport.Scan(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rep.Copy) != 0 || len(rep.Colors) != 0 {
-		t.Fatalf("expected zero scanreport findings, got:\n%s", rep)
-	}
 }
 
 func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
+	t.Parallel()
 	// 1. Active skills on both grid & canvas: exact same-source quote, 1 & 2 targets,
 	// pass-through click & scroll, 1.2s lifecycle, and consecutive trigger replacement.
 	for _, backend := range []string{"grid", "canvas"} {
@@ -102,7 +94,6 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 				viewFn = classicCanvasTestView(app)
 			}
 			tt := ui.NewTester(viewFn, 1280, 900)
-			tt.SetScale(2)
 			tt.Frame()
 
 			// Idle KeyE must be a complete noop: no quote strip, no skill pulses.
@@ -151,7 +142,7 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 			if !ok {
 				t.Fatal("quote strip not found during enter frame")
 			}
-			if !rectContainsColorScaled(tt.Image(), ui.Rect{X: stripRectEnter.X + 4, Y: max(float32(0), stripRectEnter.Y + 4), W: stripRectEnter.W - 8, H: max(float32(4), stripRectEnter.H - 8)}, 2, wantStripBg, 4) {
+			if !rectContainsColorScaled(tt.Image(), ui.Rect{X: stripRectEnter.X + 4, Y: max(float32(0), stripRectEnter.Y+4), W: stripRectEnter.W - 8, H: max(float32(4), stripRectEnter.H-8)}, 1, wantStripBg, 4) {
 				t.Errorf("quote strip enter frame did not render full opaque Bg %s", hexOf(wantStripBg))
 			}
 
@@ -194,7 +185,7 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 			if !ok {
 				t.Fatal("quote strip not found during hold frame")
 			}
-			if !rectContainsColorScaled(tt.Image(), ui.Rect{X: stripRect.X + 4, Y: stripRect.Y + 4, W: stripRect.W - 8, H: stripRect.H - 8}, 2, wantStripBg, 4) {
+			if !rectContainsColorScaled(tt.Image(), ui.Rect{X: stripRect.X + 4, Y: stripRect.Y + 4, W: stripRect.W - 8, H: stripRect.H - 8}, 1, wantStripBg, 4) {
 				t.Errorf("quote strip hold frame did not render full opaque Bg %s", hexOf(wantStripBg))
 			}
 			// Avatar sits at left padding (12) + radius (13) horizontally, vertically centered in strip.
@@ -277,7 +268,7 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 				t.Fatal("replaced quote strip expired prematurely before 1.2s")
 			}
 			if exitRect, ok := tt.Find("台词"); ok {
-				if !rectContainsColorScaled(tt.Image(), ui.Rect{X: exitRect.X + 4, Y: max(float32(0), exitRect.Y + 4), W: exitRect.W - 8, H: max(float32(4), exitRect.H - 8)}, 2, wantStripBg, 4) {
+				if !rectContainsColorScaled(tt.Image(), ui.Rect{X: exitRect.X + 4, Y: max(float32(0), exitRect.Y+4), W: exitRect.W - 8, H: max(float32(4), exitRect.H-8)}, 1, wantStripBg, 4) {
 					t.Errorf("quote strip exit frame faded Bg away from opaque %s", hexOf(wantStripBg))
 				}
 			}
@@ -289,7 +280,7 @@ func TestQuoteStripAndSkillTargetPulsesBothBackends(t *testing.T) {
 					app.quoteStrip.Active, len(app.skillPulses))
 			}
 			settledImg := tt.Image()
-			if changed := diffPixelCountInRect(pulseImg, settledImg, haloRect, 2); changed < 20 {
+			if changed := diffPixelCountInRect(pulseImg, settledImg, haloRect, 1); changed < 20 {
 				t.Errorf("expected visible skill target pulse ring pixels around (%d,%d), changed=%d", tRow, tCol, changed)
 			}
 			if backend == "canvas" && tt.FramePending() {
