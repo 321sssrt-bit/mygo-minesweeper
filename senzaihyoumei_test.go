@@ -256,8 +256,8 @@ func TestSenzaihyoumeiSetlistSelectionAndFullGame(t *testing.T) {
 		t.Fatalf("《潜在表明》 did not settle at 03:00: ended=%v status=%v settled=%v rem=%v",
 			app.duelEnded, app.game.Status, app.game.duel.Settled, app.game.duel.remaining())
 	}
-	if !tt.HasText("决斗结束 · 再来一局 (R)") || !tt.HasText("剩余 00:00") {
-		t.Fatal("settled 《潜在表明》 HUD missing end-of-duel label or 00:00 timer")
+	if !tt.HasText("决斗结束 · 再来一局 (R)") || !tt.HasText("惜败 · 这局别发 SNS") || tt.HasText("剩余 00:00") {
+		t.Fatal("settled 《潜在表明》 status bar should swap the timer for the end-of-duel verdict")
 	}
 	if app.haruhikageIntro || app.haruhikageAlert || app.unlockedMemes[MemeHaruhikage] {
 		t.Fatalf("《潜在表明》 score loss must not trigger Haruhikage drama: intro=%v alert=%v", app.haruhikageIntro, app.haruhikageAlert)

@@ -778,7 +778,7 @@ func TestDuelHUDAndStunContrast(t *testing.T) {
 	}
 }
 
-// Rendered duel HUD badges (player, AI, stun, scan), the canvas stun warning
+// Rendered status-bar score badges (player, AI), the canvas stun warning
 // banner (bg, border, title, sub), and the pulsing canvas stun border all
 // paint their palette colours in both day and night themes.
 func TestDuelHUDAndStunPaintPaletteColors(t *testing.T) {
@@ -804,7 +804,16 @@ func TestDuelHUDAndStunPaintPaletteColors(t *testing.T) {
 			img := tt.Image()
 			pal, hud := paperFor(dark), duelHUDFor(dark)
 
-			// 1. Verify all four duel HUD badges paint palette bg and text.
+			// 1. Verify both status-bar score badges paint palette bg and
+			// text; stun and scan time live on the board, not above it.
+			for _, gone := range []string{
+				fmt.Sprintf("硬直 %.1f 秒", g.duel.StunnedUntil-g.duel.Elapsed),
+				fmt.Sprintf("扫描 %.1f 秒", g.duel.ScanUntil-g.duel.Elapsed),
+			} {
+				if tt.HasText(gone) {
+					t.Errorf("retired duel HUD badge %q still above the board", gone)
+				}
+			}
 			badgeCases := []struct {
 				name  string
 				label string
@@ -812,8 +821,6 @@ func TestDuelHUDAndStunPaintPaletteColors(t *testing.T) {
 			}{
 				{"player", fmt.Sprintf("你 %d", g.duel.PlayerScore), hud.Player},
 				{"ai", fmt.Sprintf("高松灯 %d", g.duel.AIScore), hud.AI},
-				{"stun", fmt.Sprintf("硬直 %.1f 秒", g.duel.StunnedUntil-g.duel.Elapsed), hud.Stun},
-				{"scan", fmt.Sprintf("扫描 %.1f 秒", g.duel.ScanUntil-g.duel.Elapsed), hud.Scan},
 			}
 			for _, tc := range badgeCases {
 				r, ok := tt.Find(tc.label)

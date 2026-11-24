@@ -35,6 +35,8 @@ var snapshotScenes = []snapshotScene{
 	{name: "lost", stage: stageLostScene},
 	{name: "duel", stage: stageDuelScene},
 	{name: "duel-open", stage: stageDuelOpenScene},
+	{name: "duel-stun", stage: stageDuelStunScene},
+	{name: "duel-result", stage: stageDuelResultScene},
 	{name: "senzaihyoumei", stage: stageSenzaihyoumeiScene},
 	{name: "setlist-shipped", stage: stageShippedSetlistScene},
 	{name: "settings-shipped", stage: stageShippedSettingsScene},
@@ -165,6 +167,29 @@ func stageDuelOpenScene(dark bool) *minesweeperApp {
 	app.diffIdx = findDifficultyIdx("duel")
 	app.resetGame(true)
 	pinStartQuote(app)
+	return app
+}
+
+// stageDuelStunScene stages the mid-fight duel right after the player hit a
+// mine: the stun banner and pulsing border are up and a scan is running.
+func stageDuelStunScene(dark bool) *minesweeperApp {
+	app := stageDuelScene(dark)
+	d := app.game.duel
+	d.PlayerCombo = 0
+	d.StunnedUntil = d.Elapsed + 2.1
+	d.ScanUntil = d.Elapsed + 6.4
+	return app
+}
+
+// stageDuelResultScene stages the mid-fight duel run out to the final
+// whistle, already settled so the shot shows the result without the
+// one-off toast and confetti.
+func stageDuelResultScene(dark bool) *minesweeperApp {
+	app := stageDuelScene(dark)
+	g := app.game
+	g.duel.Elapsed = g.duel.Duration
+	g.finishDuel()
+	app.duelEnded = true
 	return app
 }
 
