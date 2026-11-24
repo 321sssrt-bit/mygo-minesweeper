@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,8 +117,8 @@ func TestTopBarSingleRowAllViewportsTracksAndThemes(t *testing.T) {
 						t.Fatalf("memes toggle missing progress copy %q; texts=%q", "名场面图鉴 "+wantProg, tt.Texts())
 					}
 					memeInfo, ok := tt.Access("名场面图鉴")
-					if !ok || memeInfo.Value != wantProg {
-						t.Fatalf("名场面图鉴 a11y info = %+v (ok=%v), want Value=%q", memeInfo, ok, wantProg)
+					if !ok || !strings.Contains(memeInfo.Description, wantProg) {
+						t.Fatalf("名场面图鉴 a11y info = %+v (ok=%v), want Description containing %q", memeInfo, ok, wantProg)
 					}
 
 					if !dark && diffIdx == 1 {
@@ -192,6 +193,9 @@ func TestTopBarControlsClickKeyboardAndShortcuts(t *testing.T) {
 	if !tt.HasText("名场面图鉴 1/6") {
 		t.Fatalf("memes toggle did not update to 1/6 after unlock; texts=%q", tt.Texts())
 	}
+	if info, ok := tt.Access("名场面图鉴"); !ok || !strings.Contains(info.Description, "1/6") {
+		t.Fatalf("名场面图鉴 a11y Description did not update to 1/6: ok=%v info=%+v", ok, info)
+	}
 	if err := tt.Click("名场面图鉴"); err != nil {
 		t.Fatalf("open memes drawer: %v", err)
 	}
@@ -233,6 +237,17 @@ func TestTopBarControlsClickKeyboardAndShortcuts(t *testing.T) {
 				visited[target] = true
 			}
 		}
+		if tt.Focused("乐队 Live") && !visited["模式键盘"] {
+			tt.Key(0, ui.KeyRight)
+			if app.modeIdx != 1 {
+				t.Fatalf("ArrowRight on focused 游戏模式 gave modeIdx=%d, want 1", app.modeIdx)
+			}
+			tt.Key(0, ui.KeyLeft)
+			if app.modeIdx != 0 {
+				t.Fatalf("ArrowLeft on focused 游戏模式 gave modeIdx=%d, want 0", app.modeIdx)
+			}
+			visited["模式键盘"] = true
+		}
 		if tt.Focused("名场面图鉴") {
 			tt.Key(0, ui.KeyLeft)
 			if !tt.Focused("插旗模式 (F)") {
@@ -262,7 +277,7 @@ func TestTopBarControlsClickKeyboardAndShortcuts(t *testing.T) {
 		}
 		tt.Key(0, ui.KeyTab)
 	}
-	for _, target := range []string{"歌单", "乐队 Live", "插旗模式 (F)", "名场面图鉴", "设置"} {
+	for _, target := range []string{"歌单", "乐队 Live", "模式键盘", "插旗模式 (F)", "名场面图鉴", "设置"} {
 		if !visited[target] {
 			t.Errorf("keyboard Tab traversal never reached %q in merged top bar", target)
 		}

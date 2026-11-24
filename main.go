@@ -3262,20 +3262,23 @@ func (a *minesweeperApp) duelStatusItems(c *ui.Context, pal *palette, barBg ui.C
 	})
 }
 
-// topBarCompactWidth is the window width below which the setlist trigger drops
-// its prefix and track label so the merged top bar stays single-line down to
-// the minimum window width.
-const topBarCompactWidth = float32(1060)
+const (
+	topBarIconSize = 30
+	// topBarCompactWidth is the window width below which the setlist trigger drops
+	// its prefix and track label so the merged top bar stays single-line down to
+	// the minimum window width.
+	topBarCompactWidth = float32(1060)
+)
 
 func topBarCompactSetlist(winW float32) bool {
-	return winW > 0 && winW < topBarCompactWidth
+	return winW < topBarCompactWidth
 }
 
 func (a *minesweeperApp) topBar(c *ui.Context, pal *palette, t *ui.Theme) {
 	ui.Row(c.Key("top-bar")).Label("顶部栏").AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Wrap().Children(func() {
 		ui.Row(c.Key("top-bar-left")).AlignItems(ui.Center).Gap(10).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-				bandMark(c, 30)
+				bandMark(c, topBarIconSize)
 				ui.Text(c, "MyGO!!!!! 迷子扫雷").FontSize(17).Bold().SingleLine()
 			})
 			a.setlistControl(c, pal, t)
@@ -3292,7 +3295,9 @@ func (a *minesweeperApp) topBar(c *ui.Context, pal *palette, t *ui.Theme) {
 				}
 				memeProgress := fmt.Sprintf("%d/%d", len(a.unlockedMemes), len(AllMemes))
 				if ui.Toggle(c, &a.showMemes, fmt.Sprintf("名场面图鉴 %s", memeProgress)).
-					Label("名场面图鉴").Value(memeProgress).FontFeatures("tnum").
+					Label("名场面图鉴").
+					Description(fmt.Sprintf("已收集 %s，展开或收起已解锁的 MyGO!!!!! 名场面", memeProgress)).
+					FontFeatures("tnum").
 					Tooltip("展开或收起已解锁的 MyGO!!!!! 名场面").Changed() {
 					a.playSound(SoundToggle, 1, 0)
 				}

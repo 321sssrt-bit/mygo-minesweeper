@@ -1253,14 +1253,21 @@ func TestCanvasCameraSkillTargetGlide(t *testing.T) {
 			t.Fatalf("minimap-occluded target = (%d,%d) shows=%v, want (98,99) visible", tr, tc, mv.shows(mg, tr, tc))
 		}
 
-		// Narrow viewport (640x520) where the canvas centre itself falls inside the minimap:
-		// landing must still clear the minimap so shows(row, col) holds on arrival.
+		// Narrow viewport where the canvas centre itself falls inside the minimap:
+		// derive height from measured chrome so landing still clears the minimap across platforms.
 		nApp := newMinesweeperApp(42)
 		nApp.diffIdx = findDifficultyIdx(TrackMayoiuta.ID)
 		nApp.resetGame(true)
 		nTT := ui.NewTester(nApp.view, 640, 520)
 		nTT.Frame()
 		nv, ng := nApp.board, nApp.game
+		if !nv.minimapFor(ng, nv.Width/2, nv.Height/2) {
+			mini := nv.minimapBoundsFor(ng)
+			chromeH := 520 - nv.Height
+			wantCanvasH := mini.H * 1.7
+			nTT.SetSize(640, int(math.Ceil(float64(chromeH+wantCanvasH))))
+			nTT.Frame()
+		}
 		if !nv.minimapFor(ng, nv.Width/2, nv.Height/2) {
 			t.Fatalf("precondition failed: expected narrow canvas centre (%.1f,%.1f) inside minimap", nv.Width/2, nv.Height/2)
 		}
