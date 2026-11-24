@@ -305,9 +305,10 @@ func TestCanvasZoomOutSingleAxisCenteringAndMinimapOverscroll(t *testing.T) {
 	})
 
 	t.Run("wide_short_centers_Y_and_pans_X", func(t *testing.T) {
-		// 16x80 at Cell=16 (1280x256) is wider than the stage and shorter than
-		// the stage without reaching into the bottom-right minimap vertically.
-		app, label := makeCenterTestBoard(16, 80, false, false)
+		// 14x80 at Cell=16 (1280x224) is wider than the stage and shorter than
+		// the stage with clear vertical margin above the bottom-right minimap
+		// across platform font metrics.
+		app, label := makeCenterTestBoard(14, 80, false, false)
 		tt := ui.NewTester(app.view, 1280, 900)
 		tt.Frame()
 		board, ok := tt.Find(label)
@@ -491,7 +492,10 @@ func TestCanvasZoomThresholdSmoothnessAndResize(t *testing.T) {
 
 	// 3. Glide zoom out into centered state and back up to 100% via Ctrl+0
 	// settle cleanly with no lingering animation frames or drift.
-	v.Cell = 14
+	// Derive the starting pitch from the laid-out stage so one Ctrl+- step
+	// reliably crosses into dual-axis centering regardless of platform font metrics.
+	fitCell := min(board.W/float32(g.Cols), board.H/float32(g.Rows))
+	v.Cell = max(minCanvasCell*1.1, fitCell*1.05)
 	v.centerBoard(g)
 	tt.Frame()
 	tt.Key(ui.Ctrl, ui.KeyMinus)
@@ -501,6 +505,10 @@ func TestCanvasZoomThresholdSmoothnessAndResize(t *testing.T) {
 	tt.Advance(260 * time.Millisecond)
 	if v.gliding() {
 		t.Fatal("glide zoom into centered state did not settle")
+	}
+	if float32(g.Cols)*v.Cell >= board.W || float32(g.Rows)*v.Cell >= board.H {
+		t.Fatalf("precondition failed: post-glide board %.1fx%.1f not smaller than stage %.1fx%.1f",
+			float32(g.Cols)*v.Cell, float32(g.Rows)*v.Cell, board.W, board.H)
 	}
 	wantX := (float32(g.Cols)*v.Cell - board.W) / 2
 	wantY := (float32(g.Rows)*v.Cell - board.H) / 2
