@@ -3222,8 +3222,6 @@ func (a *minesweeperApp) classicStatusItems(c *ui.Context, pal *palette, barBg u
 	})
 }
 
-// duelStatusItems fills the status bar's leading slot during a duel. Once the
-// duel is settled the countdown and combo give way to the verdict.
 func (a *minesweeperApp) duelStatusItems(c *ui.Context, pal *palette, barBg ui.Color) {
 	t := c.Theme()
 	d := a.game.duel

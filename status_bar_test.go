@@ -242,9 +242,6 @@ func duelStatusBarApp(t *testing.T, w, h int) (*minesweeperApp, *ui.Tester) {
 	return app, tt
 }
 
-// duelStatusBarItems checks the bar holds both scores, then the countdown
-// and combo (or the verdict once settled), the skill entry and 重开 on one
-// line, left to right, with nothing else between the bar and the board.
 func duelStatusBarItems(t *testing.T, app *minesweeperApp, tt *ui.Tester, middle []string, resetLabel string) ui.Rect {
 	t.Helper()
 	d := app.game.duel
