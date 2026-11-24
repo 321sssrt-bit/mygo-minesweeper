@@ -157,9 +157,13 @@ func stageSenzaihyoumeiScene(dark bool) *minesweeperApp {
 
 // stageShippedSetlistScene stages the live scene with the shipped setlist
 // popover expanded, showing the real Difficulties groups and duel entries.
+// The two smallest classic tracks carry fixed records so the shot shows both
+// a recorded entry and the placeholder on unplayed tracks.
 func stageShippedSetlistScene(dark bool) *minesweeperApp {
 	app := stageLiveScene(dark)
 	app.classicHoverRow, app.classicHoverCol = -1, -1
+	app.bestTimes["easy"] = 23
+	app.bestTimes["normal"] = 87
 	app.setlistOpen = true
 	return app
 }

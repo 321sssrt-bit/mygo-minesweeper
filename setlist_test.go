@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -654,7 +656,7 @@ func TestSetlistScreenReaderSemantics(t *testing.T) {
 				t.Fatalf("track option %q (RoleOption) missing from accessibility tree", d.Song)
 			}
 			wantSelected := entry.Index == app.diffIdx
-			if opt.Name != d.Song || opt.Description != setlistTrackSpec(d) ||
+			if opt.Name != d.Song || opt.Description != app.setlistTrackDescription(d) ||
 				opt.Selected != wantSelected || opt.PosInSet != trackNo || opt.SetSize != len(Difficulties) || !opt.Focusable {
 				t.Fatalf("unexpected option AccessInfo for %q: %+v", d.Song, opt)
 			}
@@ -845,5 +847,97 @@ func TestSnapshotSetlistPopover(t *testing.T) {
 		app.setlistOpen = true
 		name := fmt.Sprintf("setlist-popover-default-%s.png", suffix)
 		writeSnapshot(t, app, false, 1280, 900, filepath.Join(dir, name))
+	}
+}
+
+// TestSetlistShowsBestRecordPerClassicTrack clears 《迷星叫》 through the
+// headless grid, then reopens the setlist from another track and reads the
+// new record on 《迷星叫》's entry while unplayed classic tracks keep the
+// placeholder and duel tracks show no record at all.
+func TestSetlistShowsBestRecordPerClassicTrack(t *testing.T) {
+	app := newMinesweeperApp(7)
+	tt := ui.NewTester(app.view, 1280, 900)
+	tt.UseScreenReader()
+	easy := Difficulties[0]
+
+	checkEntries := func(phase string, recorded map[string]string) {
+		t.Helper()
+		for _, d := range Difficulties {
+			opt, ok := tt.AccessByRole(ui.RoleOption, d.Song)
+			if !ok {
+				t.Fatalf("%s: option %q missing", phase, d.Song)
+			}
+			if d.Gameplay == GameplayDuel {
+				if opt.Description != setlistTrackSpec(d) {
+					t.Fatalf("%s: duel option %q description = %q, want spec only", phase, d.Song, opt.Description)
+				}
+				continue
+			}
+			want := "最快 --"
+			if rec, ok := recorded[d.ID]; ok {
+				want = rec
+			}
+			if !strings.HasSuffix(opt.Description, " · "+want) {
+				t.Fatalf("%s: option %q description = %q, want suffix %q", phase, d.Song, opt.Description, want)
+			}
+		}
+	}
+
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("open setlist: %v", err)
+	}
+	checkEntries("before any clear", nil)
+	if err := tt.Click(easy.Song); err != nil {
+		t.Fatalf("close setlist on current track: %v", err)
+	}
+
+	if err := tt.Click("cell-4-4"); err != nil {
+		t.Fatalf("start 《%s》: %v", easy.Song, err)
+	}
+	var remainingSafe []int
+	for i := range app.game.Cells {
+		if c := &app.game.Cells[i]; !c.IsMine && !c.Revealed {
+			remainingSafe = append(remainingSafe, i)
+		}
+	}
+	if len(remainingSafe) == 0 || app.game.Status != StatusPlaying {
+		t.Fatalf("expected safe cells left while playing: rem=%d status=%v", len(remainingSafe), app.game.Status)
+	}
+	for _, idx := range remainingSafe[:len(remainingSafe)-1] {
+		c := &app.game.Cells[idx]
+		app.game.Reveal(c.Row, c.Col)
+	}
+	last := &app.game.Cells[remainingSafe[len(remainingSafe)-1]]
+	tt.Advance(7200 * time.Millisecond)
+	if err := tt.Click(fmt.Sprintf("cell-%d-%d", last.Row, last.Col)); err != nil {
+		t.Fatalf("click final safe cell: %v", err)
+	}
+	if app.game.Status != StatusWon {
+		t.Fatalf("expected 《%s》 won, got %v", easy.Song, app.game.Status)
+	}
+
+	// Switch to another track so the status bar no longer shows 《迷星叫》's
+	// record and the only 「最快 7 秒」 on screen is the setlist entry.
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("reopen setlist: %v", err)
+	}
+	if err := tt.Click(Difficulties[1].Song); err != nil {
+		t.Fatalf("select 《%s》: %v", Difficulties[1].Song, err)
+	}
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatalf("reopen setlist after switching: %v", err)
+	}
+	checkEntries("after clearing easy", map[string]string{easy.ID: "最快 7 秒"})
+
+	row, ok := tt.Find(easy.Song)
+	if !ok {
+		t.Fatalf("entry %q missing", easy.Song)
+	}
+	rec, ok := tt.Find("最快 7 秒")
+	if !ok {
+		t.Fatal("record 「最快 7 秒」 not visible in the setlist")
+	}
+	if rec.X < row.X || rec.Y < row.Y || rec.X+rec.W > row.X+row.W || rec.Y+rec.H > row.Y+row.H {
+		t.Fatalf("record rect %+v lies outside 《%s》 entry %+v", rec, easy.Song, row)
 	}
 }
